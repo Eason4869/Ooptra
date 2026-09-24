@@ -15,6 +15,7 @@
 - 身份映射持久化到 SQLite，保证对端看到的群号与成员编号稳定。
 - `start_silent.vbs`：Windows 静默后台启动脚本，可放入「启动」文件夹实现开机自启。
 - 版本号单一来源 `src/core/version.py`，并随状态接口与界面展示。
+- 单元测试（`tests/`）与 GitHub Actions CI：ruff 检查 + 多平台多版本 pytest。
 
 ### 变更
 
