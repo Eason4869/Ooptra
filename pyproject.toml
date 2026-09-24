@@ -12,6 +12,11 @@ allowed-confusables = ["，", "。", "：", "；", "（", "）"]
 # 入口必须先按脚本位置注入 sys.path，之后才能 import src/* 下的项目模块。
 "main.py" = ["E402"]
 
+# 显式声明项目自身的一级模块，避免 config.py / private_key.py 这类
+# 不随仓库分发的模块在 CI 上被误判为第三方而改变 import 分组。
+[tool.ruff.lint.isort]
+known-first-party = ["bridge", "config", "core", "onebot_v11", "oopz", "oopz_sdk", "private_key", "webui"]
+
 [tool.pyright]
 typeCheckingMode = "standard"
 pythonVersion = "3.10"
