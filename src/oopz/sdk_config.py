@@ -1,4 +1,4 @@
-"""把 Oopzbot 的现有配置装配成 Oopz-SDK 配置。"""
+"""把 Ooptra 的现有配置装配成 Oopz-SDK 配置。"""
 
 from __future__ import annotations
 
@@ -70,7 +70,8 @@ async def _onebot_v11_config() -> OneBotV11Config:
         post_timeout = 10.0
     return OneBotV11Config(
         enabled=current.enabled,
-        auto_start_server=True,
+        # 由 bridge.app 自行构造带状态上报的 server 子类，所以这里只装 adapter。
+        auto_start_server=False,
         platform="oopz",
         self_id=str(OOPZ_CONFIG.get("person_uid") or ""),
         db_path=current.db_path,

@@ -1,16 +1,21 @@
-"""
-Shared proxy helpers for requests, websocket-client, Playwright, and Selenium.
+"""config.py 里 ``proxy`` 字段的解析。
+
+支持四种写法：
+
+- ``""`` / 未设置：系统代理。aiohttp 会读 ``HTTP_PROXY`` / ``HTTPS_PROXY`` /
+  ``ALL_PROXY`` / ``NO_PROXY`` 环境变量；
+- ``False`` 或 ``"direct"`` / ``"off"`` 等：直连，忽略系统代理；
+- 别名 ``"clash"`` / ``"mihomo"`` 等：按 ``PROXY_ALIAS_CONFIG`` 拼出本机代理地址；
+- 显式地址 ``http://host:port`` / ``socks5://host:port``，可带用户名密码。
+
+这里只负责解析，真正装配到 SDK 传输层的是 ``src/oopz/proxy_transport.py``。
 """
 
 from __future__ import annotations
 
-import ipaddress
-import logging
 import os
 from dataclasses import dataclass
 from urllib.parse import unquote, urlparse
-
-_log = logging.getLogger("ProxyUtils")
 
 _DIRECT_VALUES = {"0", "false", "no", "none", "off", "direct"}
 
@@ -53,53 +58,6 @@ def _build_proxy_aliases() -> dict[str, str]:
 
 _PROXY_ALIASES = _build_proxy_aliases()
 
-# Clash / mihomo 的 fake-ip 模式会给每个查询到的域名分配一个占位地址，本机 DNS
-# 返回的就是这个占位地址，真实解析发生在代理侧。这些段在 ipaddress 里被判为
-# private，会让「解析后校验是否公网」的 SSRF 防护把所有域名都误杀。
-# 默认取 Clash 出厂 fake-ip 段，可用 config.PROXY_ALIAS_CONFIG["fake_ip_ranges"] 覆盖。
-_DEFAULT_FAKE_IP_RANGES = ("198.18.0.0/15", "fdfe:dcba:9876::/64")
-
-
-def _build_fake_ip_networks() -> tuple:
-    """构建 fake-ip 占位段列表；config 不可用或配置非法时回退默认值。"""
-    raw = _DEFAULT_FAKE_IP_RANGES
-    try:
-        from config import PROXY_ALIAS_CONFIG  # type: ignore
-
-        configured = PROXY_ALIAS_CONFIG.get("fake_ip_ranges")
-        if configured:
-            raw = tuple(configured)
-    except Exception:
-        pass
-
-    networks = []
-    for item in raw:
-        try:
-            networks.append(ipaddress.ip_network(str(item).strip(), strict=False))
-        except ValueError:
-            _log.warning("忽略无法解析的 fake-ip 段: %s", item)
-    return tuple(networks)
-
-
-_FAKE_IP_NETWORKS = _build_fake_ip_networks()
-
-
-def is_fake_ip(ip) -> bool:
-    """判断地址是否落在代理的 fake-ip 占位段内。
-
-    占位地址只是 DNS 层的临时映射，不代表真实目标，因此不能据此判断内外网。
-    接受 ``ipaddress`` 对象或可解析为地址的字符串；无法解析时返回 False。
-    """
-    if isinstance(ip, (ipaddress.IPv4Address, ipaddress.IPv6Address)):
-        addr = ip
-    else:
-        try:
-            addr = ipaddress.ip_address(str(ip))
-        except ValueError:
-            return False
-    return any(addr in network for network in _FAKE_IP_NETWORKS)
-
-
 _DEFAULT_PORTS = {
     "http": 80,
     "https": 443,
@@ -117,7 +75,6 @@ _PROXY_ENV_KEYS = (
     "https_proxy",
     "http_proxy",
 )
-_NO_PROXY_DEFAULTS = "localhost,127.0.0.1,::1,redis,netease-api"
 
 
 @dataclass(frozen=True)
@@ -134,6 +91,10 @@ class ProxySettings:
     @property
     def enabled(self) -> bool:
         return self.mode == "explicit" and bool(self.server)
+
+    @property
+    def is_socks(self) -> bool:
+        return self.enabled and str(self.scheme or "").startswith("socks")
 
 
 def _config_proxy_value():
@@ -215,128 +176,4 @@ def resolve_proxy_settings_with_env(proxy_value=None) -> ProxySettings:
     return settings
 
 
-def get_websocket_proxy_kwargs(proxy_value=None) -> dict:
-    settings = resolve_proxy_settings_with_env(proxy_value)
-    if not settings.enabled:
-        return {}
-
-    proxy_type = "http" if settings.scheme in {"http", "https"} else settings.scheme
-    kwargs = {
-        "http_proxy_host": settings.host,
-        "http_proxy_port": settings.port,
-        "proxy_type": proxy_type,
-        "http_proxy_timeout": 10,
-    }
-    if settings.username:
-        kwargs["http_proxy_auth"] = (settings.username, settings.password or "")
-    return kwargs
-
-
-def get_playwright_proxy(proxy_value=None) -> dict | None:
-    settings = resolve_proxy_settings_with_env(proxy_value)
-    if not settings.enabled:
-        return None
-
-    proxy = {"server": f"{settings.scheme}://{settings.host}:{settings.port}"}
-    if settings.username:
-        proxy["username"] = settings.username
-        proxy["password"] = settings.password or ""
-    return proxy
-
-
-def get_selenium_proxy_argument(proxy_value=None) -> str | None:
-    settings = resolve_proxy_settings_with_env(proxy_value)
-    if not settings.enabled:
-        return None
-    return f"--proxy-server={settings.server}"
-
-
-def apply_process_proxy_env(env: dict, proxy_value=None) -> dict:
-    settings = resolve_proxy_settings(proxy_value)
-    updated = dict(env)
-    if settings.mode == "direct":
-        for key in _PROXY_ENV_KEYS:
-            updated.pop(key, None)
-    elif settings.enabled:
-        for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
-            updated[key] = settings.server
-        for key in ("http_proxy", "https_proxy", "all_proxy"):
-            updated[key] = settings.server
-        _ensure_no_proxy(updated)
-    return updated
-
-
-def _ensure_no_proxy(env: dict) -> None:
-    """Populate NO_PROXY / no_proxy so internal services bypass the proxy."""
-    existing = env.get("NO_PROXY") or env.get("no_proxy") or ""
-    parts = {s.strip() for s in existing.split(",") if s.strip()}
-    for item in _NO_PROXY_DEFAULTS.split(","):
-        parts.add(item.strip())
-    merged = ",".join(sorted(parts))
-    env["NO_PROXY"] = merged
-    env["no_proxy"] = merged
-
-
-# ---------------------------------------------------------------------------
-# Plugin helper: resolve a plugin-level proxy config value to a requests
-# proxies dict, with full support for aliases ("clash"), "direct", socks, etc.
-# ---------------------------------------------------------------------------
-
-def resolve_requests_proxies(proxy_value: str | None) -> dict[str, str] | None:
-    """Resolve a raw proxy config string into a ``requests``-compatible proxies
-    dict.  Returns ``None`` when the caller should use default behaviour
-    (system env / no proxy), or an empty dict for explicit direct connection.
-
-    Supports the same aliases and schemes as the core proxy system (e.g.
-    ``"clash"``, ``"direct"``, ``"socks5://host:port"``).
-    """
-    if not proxy_value or not isinstance(proxy_value, str) or not proxy_value.strip():
-        return None
-
-    value = proxy_value.strip()
-    if value.lower() in _DIRECT_VALUES:
-        return {}
-
-    normalized = _PROXY_ALIASES.get(value.lower(), value)
-    try:
-        settings = _parse_proxy_url(normalized)
-    except ValueError:
-        _log.warning("Invalid plugin proxy value %r, ignoring", proxy_value)
-        return None
-    server = settings.server
-    if server is None:
-        return None
-    return {"http": server, "https": server}
-
-
-def configure_requests_session(session, proxy_value=None) -> ProxySettings:
-    settings = resolve_proxy_settings(proxy_value)
-    session.proxies.clear()
-    if settings.mode == "direct":
-        session.trust_env = False
-    elif settings.enabled:
-        session.trust_env = False
-        session.proxies.update({"http": settings.server, "https": settings.server})
-        no_proxy = os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or ""
-        parts = {s.strip() for s in no_proxy.split(",") if s.strip()}
-        for item in _NO_PROXY_DEFAULTS.split(","):
-            parts.add(item.strip())
-        session.proxies["no_proxy"] = ",".join(sorted(parts))
-    else:
-        session.trust_env = True
-    return settings
-
-
-def log_proxy_summary(label: str, proxy_value=None) -> ProxySettings:
-    """Resolve and log proxy settings once at startup for a named component."""
-    settings = resolve_proxy_settings_with_env(proxy_value)
-    if settings.mode == "direct":
-        _log.info("[%s] proxy: direct (disabled)", label)
-    elif settings.enabled:
-        display = settings.server or ""
-        if settings.username:
-            display = f"{settings.scheme}://***@{settings.host}:{settings.port}"
-        _log.info("[%s] proxy: %s", label, display)
-    else:
-        _log.debug("[%s] proxy: system (env / none)", label)
-    return settings
+__all__ = ["ProxySettings", "resolve_proxy_settings", "resolve_proxy_settings_with_env"]

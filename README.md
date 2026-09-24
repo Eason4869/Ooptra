@@ -1,298 +1,167 @@
 <p align="center">
-  <img src="docs/assets/readme/oopz-icon.png" alt="Oopz" width="72" />
-</p>
-
-<h1 align="center">Oopz Bot</h1>
-
-<p align="center">
-  面向 <a href="https://web.oopz.cn">Oopz</a> 的多功能频道机器人。
-  <br />
-  支持音乐点播、语音频道播放、频道管理、Web 播放器、管理后台和插件扩展。
+  <img src="./assets/readme/hero.svg" width="100%" alt="Ooptra 把 Oopz 频道会话桥接到 OneBot v11" />
 </p>
 
 <p align="center">
-  <strong>开发交流：</strong>
-  <a href="https://oopz.cn/i/YncsR0"><strong>加入 Oopz 交流频道</strong></a>
+  <a href="https://github.com/Eason4869/Ooptra/releases"><img alt="最新版本" src="https://img.shields.io/github/v/release/Eason4869/Ooptra?label=release&style=flat-square"></a>
+  <a href="https://github.com/Eason4869/Ooptra/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/Eason4869/Ooptra?style=flat-square"></a>
+  <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-3776ab?style=flat-square&logo=python&logoColor=white">
+  <a href="LICENSE"><img alt="许可" src="https://img.shields.io/badge/license-MIT-3ddc97?style=flat-square"></a>
 </p>
 
 <p align="center">
-  <a href="docs/quickstart.md">快速开始</a> ·
-  <a href="#主要能力">功能特性</a> ·
-  <a href="docs/commands.md">命令列表</a> ·
-  <a href="docs/configuration.md">配置说明</a> ·
-  <a href="docs/web-player.md">Web 播放器</a> ·
-  <a href="docs/onebot-v11.md">OneBot v11</a> ·
-  <a href="docs/plugin-development.md">插件开发</a>
+  <a href="#快速开始">快速开始</a> ·
+  <a href="#对端对接">对端对接</a> ·
+  <a href="#web-控制台">Web 控制台</a> ·
+  <a href="#关键配置">关键配置</a> ·
+  <a href="#常见问题">常见问题</a> ·
+  <a href="CHANGELOG.md">更新日志</a>
 </p>
 
----
+Ooptra 把 Oopz 的频道会话转换为 [OneBot v11](https://github.com/botuniverse/onebot-11) 事件与动作，以
+**反向 WebSocket** 接入任意 OneBot v11 实现——机器人框架、平台适配器或自研服务都可以，
+两端只约定 OneBot v11 协议，不绑定任何具体框架。项目自带本地 Web 控制台，用来查看状态、跟踪日志、编辑配置和登录 Oopz。
 
-## 功能展示
+> [!CAUTION]
+> Ooptra 是独立的第三方项目，与 Oopz 官方没有隶属或授权关系。请仅用于你自己的账号与你负责管理的社群，
+> 并遵守 Oopz 的用户协议与当地法律；软件按“现状”提供，不作任何担保。
 
-<table>
-  <tr>
-    <td width="50%" align="center">
-      <strong>Web 播放器</strong>
-      <br />
-      <sub>搜索点歌、歌词同步、队列和播放控制</sub>
-      <br /><br />
-      <img src="docs/assets/readme/web-player.png" alt="Web 播放器" width="100%" />
-    </td>
-    <td width="50%" align="center">
-      <strong>管理后台</strong>
-      <br />
-      <sub>运行状态、音乐控制、配置和成员管理</sub>
-      <br /><br />
-      <img src="docs/assets/readme/admin-panel.png" alt="管理后台" width="100%" />
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" align="center">
-      <strong>Oopz 频道指令</strong>
-      <br />
-      <sub>点歌、提醒和频道管理</sub>
-      <br /><br />
-      <img src="docs/assets/readme/oopz-commands.png" alt="Oopz 频道指令" width="100%" />
-    </td>
-    <td width="50%" align="center">
-      <strong>插件功能</strong>
-      <br />
-      <sub>三角洲、LOL、Steam 等扩展查询</sub>
-      <br /><br />
-      <img src="docs/assets/readme/plugins.png" alt="插件功能" width="100%" />
-    </td>
-  </tr>
-</table>
+## 核心能力
 
-## 主要能力
-
-| 模块 | 能做什么 |
+| 场景 | 能力 |
 | --- | --- |
-| 音乐点播 | 网易云、QQ 音乐、B 站搜索播放，支持队列、切歌、随机播放、喜欢列表 |
-| 语音播放 | Bot 可进入 Oopz 语音频道，通过 Agora 推流播放音乐 |
-| Web 播放器 | 浏览器控制播放、搜索点歌、查看歌词、管理队列和音量 |
-| 频道管理 | 成员查询、身份组、禁言、禁麦、踢出、封禁管理 |
-| 自动管理 | 自动撤回、成员加入/退出通知 |
-| 提醒统计 | 定时提醒、活跃排行、频道统计、点歌排行、最近播放 |
-| 插件系统 | 支持目录化插件，已有三角洲、LOL、Steam 等插件 |
-| 管理后台 | 提供 `/admin` 页面，方便查看状态、改配置、控音乐 |
-| OneBot v11 | 可作为旁路服务接入 NoneBot、AstrBot、Hoshino 等外部程序 |
+| 接入方式 | OneBot v11 反向 WebSocket，本程序作为客户端主动拨出，默认 `universal` 角色，支持 `access_token` |
+| 上行事件 | `message`（群 / 私聊）、`notice`（撤回）、`meta_event`（心跳、生命周期） |
+| 下行动作 | 发送、撤回、消息查询、群与成员查询、禁言、踢人、退群、设置管理员等 OneBot v11 动作 |
+| 身份映射 | `group_id` / `user_id` 与 Oopz 域、频道、成员双向映射，持久化在 SQLite，重启后编号稳定 |
+| 凭据维护 | 账号密码或网页版登录；`device_id` / `person_uid` / `jwt_token` / RSA 私钥自动写回配置并自动重连 |
+| Web 控制台 | 状态总览、实时日志、配置编辑、账号与凭据管理；前端单文件无外部依赖 |
+| 项目边界 | 单进程运行，不含内置命令、插件系统与消息存储，只做桥接与运维 |
 
-## 启动方式
+## 运行链路
 
-### 一键部署（推荐）
+<p align="center">
+  <img src="./assets/readme/runtime-map.svg" width="100%" alt="Oopz 与会话经过 Ooptra 的事件标准化和身份映射后，以 OneBot v11 反向 WebSocket 交给对端框架" />
+</p>
 
-只需要先装好 **Python 3.10+**。
+事件标准化、身份映射、凭据维护与网络适配彼此独立；桥接内核与 Web 控制台在同一个进程内运行。
 
-Windows：双击 `deploy.bat`
+## 快速开始
 
-Linux / macOS：
+需要 Python 3.10 或更高版本。
 
-```bash
-chmod +x deploy.sh
-./deploy.sh
-```
+1. 获取代码并安装依赖：
 
-脚本会依次建好虚拟环境、装 Python 依赖和浏览器、生成配置文件、检查并安装 Redis
-与网易云音乐 API，然后问一次 Oopz 账号密码。首次运行会过一遍可选配置（后台密码、
-网易云 Cookie、代理、管理员 UID），每项都能直接回车跳过。
+   ```bash
+   git clone https://github.com/Eason4869/Ooptra.git
+   cd Ooptra
+   python -m venv .venv
+   # Windows: .venv\Scripts\activate    Linux / macOS: source .venv/bin/activate
+   pip install -r requirements.txt
+   ```
 
-装不上的东西一律降级：没有 Redis 就用内存队列（重启后队列丢失），
-没有网易云 API 就没有点歌，没有浏览器就没有语音——其余功能照常。只有缺少
-Oopz 凭据会拦住启动。
+2. 生成配置并填入 Oopz 账号：
 
-常用参数：
+   ```bash
+   # Windows: copy config.example.py config.py    Linux / macOS: cp config.example.py config.py
+   ```
 
-```bash
-./deploy.sh --check          # 体检
-./deploy.sh --no-input       # 适合服务器无人值守
-./deploy.sh --no-start       # 只准备环境，不启动
-./deploy.sh --skip-install   # 跳过依赖安装，快速启动
-```
+   至少要填 `OOPZ_CONFIG["login_phone"]` 与 `OOPZ_CONFIG["login_password"]`，其余凭据字段会在首次登录成功后自动写入。
 
-### 手动准备
+3. 启动：
 
-- Python 3.10+
-- Redis（可选：连不上会自动退到内存队列，功能可用但重启后队列丢失）
-- Node.js 18+（非 Docker 部署时用于网易云音乐 API）
-- Chrome / Edge 或 Playwright Chromium（语音频道播放会用到）
+   ```bash
+   python main.py
+   ```
 
-### 复制配置文件
+4. 打开 `http://127.0.0.1:3090`，在「配置」页把**反向 WS 地址**改成对端的监听地址（示例默认 `ws://127.0.0.1:6200/ws`），
+   保存并重新连接。概览页的「OneBot v11 反向 WS」显示已接入，就说明两端握手成功。
 
-Windows PowerShell：
+Windows 下可以双击 `start_silent.vbs` 静默后台启动；把它放进「启动」文件夹即可开机自启，
+带参数启动（快捷方式目标后加 `delay`）会先等待 30 秒再拉起。
 
-```powershell
-Copy-Item config.example.py config.py
-Copy-Item private_key.example.py private_key.py
-```
+## 对端对接
 
-Linux / macOS：
+反向 WebSocket 的方向是**本程序主动拨出、对端监听**。因此对端只需要提供一个 OneBot v11 反向 WS 服务端：
 
-```bash
-cp config.example.py config.py
-cp private_key.example.py private_key.py
-```
-
-先把配置文件准备好，后面再写入 Oopz 凭据。
-
-### 获取 Oopz 凭据
-
-账号密码登录是主要登录方式。
-
-**主要方式：管理后台账号密码登录**
-
-可以直接在 `config.py` 的 `OOPZ_CONFIG` 里填写 `login_phone` 和 `login_password`。Bot 启动时会先用这两项刷新 Oopz 凭据，再继续连接 Oopz。
-
-也可以先把 Bot 跑起来，再在后台里补齐 Oopz 凭据。打开管理后台的配置页，在“OOPZ 与网易云”里填写 Oopz 账号和密码，点击“登录并获取”。后台会先调用 Oopz 登录接口直接获取凭据；如果接口登录遇到网络或响应异常，会自动回退到浏览器登录方式。成功后会自动保存：
-
-- `config.py`：写入 `app_version`、`device_id`、`person_uid`、`jwt_token`
-- `private_key.py`：写入 RSA 私钥
-
-这个方式对应 SDK 的 `src/oopz_sdk/auth/password_login.py` 和管理端的 `/admin/api/oopz/login`，返回给页面的 Token 和私钥只展示脱敏状态。
-
-**备用方式：命令行网页抓取**
-
-如果后台登录不可用，或者需要手动从网页端抓取凭据，也可以用工具打开 Oopz 网页端，登录后自动抓取：
-
-```powershell
-python tools/credential_tool.py
-```
-
-自动保存：
-
-```powershell
-python tools/credential_tool.py --save
-```
-
-这个方式会从网页请求和 WebSocket 认证里提取 `person_uid`、`device_id`、`jwt_token`，并导出 RSA 私钥。详细说明见 [凭据获取工具](docs/credential-tool.md)。
-
-### Windows 启动
-
-建议先启动 Redis（没有也能跑，队列会存在内存里），然后执行：
-
-```powershell
-pip install -r requirements.txt
-python -m playwright install chromium
-
-git clone https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced.git NeteaseCloudMusicApi
-Set-Location NeteaseCloudMusicApi
-npm install
-node app.js
-```
-
-另开一个 PowerShell，回到项目根目录启动 Bot：
-
-```powershell
-python main.py
-```
-
-### Linux / macOS 启动
-
-同样建议先启动 Redis，然后：
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python -m playwright install --with-deps chromium
-
-git clone https://github.com/NeteaseCloudMusicApiEnhanced/api-enhanced.git NeteaseCloudMusicApi
-(cd NeteaseCloudMusicApi && npm install && node app.js &)
-```
-
-回到项目根目录启动 Bot：
-
-```bash
-python main.py
-```
-
-### 需要走代理时
-
-`deploy.sh` / `deploy.bat` 会读取 `.env` 与 `.env.local`（已设好的环境变量优先，文件只补空缺）。
-配置 Clash 订阅后，脚本会在启动 Bot 前自动拉起代理内核，Bot 退出时一并收掉：
-
-```bash
-CLASH_SUBSCRIPTION_URL="https://example.com/clash.yaml" CLASH_AUTO_START=1 ./deploy.sh
-```
-
-可用的环境变量见 `.env.example`。没有代理需求就不用管这一段。
-
-### 网易云音乐 API
-
-非 Docker 部署需要准备网易云音乐 API。默认地址是 `http://localhost:3000`，首次使用需要登录网易云音乐，并把 Cookie 填到 `config.py`。
-
-如果想让 Bot 启动时自动启动网易云音乐 API，在 `config.py` 里配置：
-
-```python
-NETEASE_CLOUD["auto_start_path"] = "NeteaseCloudMusicApi"
-```
-
-启动后可用这个地址检查 Bot 是否正常：
-
-```text
-http://localhost:8080/health
-```
-
-默认情况下，Web 播放器和管理后台也由 `8080` 端口提供。
-
-如果要接 OneBot v11 生态，在 `config.py` 中启用 `ONEBOT_V11_CONFIG["enabled"] = True` 后重启，默认监听 `127.0.0.1:6700`。详见 [OneBot v11 旁路适配](docs/onebot-v11.md)。
-
-## Docker 部署
-
-Docker 会一起启动 Bot、Redis、网易云音乐 API 和 Nginx。首次启动不能直接
-执行 `docker compose up`：需要先准备 `.env`、`config/runtime.py`、
-`config/private_key.py`、可写的数据/日志目录，以及
-`nginx/ssl/cert.pem` / `nginx/ssl/key.pem`。正式证书和仅供本机测试的
-自签名证书命令见 [快速开始](docs/quickstart.md#5-docker-部署)；准备完成后执行：
-
-```shell
-docker compose up -d --build
-```
-
-## 常用命令
-
-| 类型 | 示例 |
+| 项目 | 说明 |
 | --- | --- |
-| 音乐 | `@bot 播放 稻香`、`@bot 下一首`、`@bot 队列`、`@bot 随机` |
-| 提醒 | `@bot 提醒 30分钟后 开会`、`@bot 我的提醒` |
-| 管理 | `@bot 禁言 <用户> 5`、`@bot 解禁 <用户>`、`@bot 踢出 <用户>` |
-| 插件 | `@bot 三角洲帮助`、`@bot 战绩 区号 召唤师#编号`、`@bot steam 黑神话` |
+| 地址 | `ONEBOT_V11_CONFIG["ws_reverse_url"]`，例如 `ws://127.0.0.1:6200/ws`；路径由对端决定 |
+| 令牌 | 对端要求校验时，把相同的值填进 `access_token`；两边都留空则跳过校验 |
+| 分离端点 | 对端区分 API / Event 两个端点时，另外填 `ws_reverse_api_url` 与 `ws_reverse_event_url` |
+| 连接角色 | 只填 `ws_reverse_url` 时以 `universal` 角色连接，事件与动作走同一条连接 |
 
-完整指令见 [机器人命令](docs/commands.md)。
+如果对端反而是「等待客户端连入」的形态（本地 HTTP 或正向 WebSocket），打开 `enable_http` / `enable_ws`，
+再让对端连到 `host:port`（默认 `127.0.0.1:6700`）；纯反向桥接场景不需要打开。
 
-## 插件扩展
+> `data/onebot_v11.sqlite3` 保存 `group_id` / `user_id` 映射，**请勿删除**，否则对端看到的群号与成员编号会全部变化。
 
-插件放在 `plugins/` 目录，推荐一个插件一个子目录。Bot 启动时会自动扫描加载。
+## Web 控制台
 
-当前已有插件：
+默认只监听 `127.0.0.1:3090`。访问令牌留空即免登录，仅建议在本机使用时这样做。
 
-- 三角洲行动查询、日报、周报、资产、价格、推送
-- LOL 封号查询
-- LOL 战绩查询
-- Steam 游戏价格查询和降价提醒
-- Apex Legends 战绩与游戏信息查询
-- ARC Raiders 物品与掉率查询
+| 页面 | 内容 |
+| --- | --- |
+| 概览 | 两条链路的连接状态、事件与动作吞吐、最近推送与最近指令；异常时直接给出重连入口 |
+| 日志 | 实时跟随日志文件（SSE），支持关键字与级别过滤、清屏、下载、回到底部 |
+| 配置 | 常用项直接改，其余默认值收在「高级选项」；保存即写回 `config.py` 并就地生效 |
+| 账号 | 凭据状态与有效期、账号密码登录、网页版登录（可手动过验证） |
 
-创建新插件：
+### 绑定到局域网
 
-```powershell
-python tools/create_plugin_scaffold.py demo_plugin
-```
+把 `WEBUI_CONFIG["host"]` 改成 `0.0.0.0` 可以让同网段的设备访问，但**务必同时设置 `token`**，否则任何人都能打开控制台。
+设置令牌后访问需带上它：`http://<你的 IP>:3090/?token=<token>`。
 
-贡献者文档：
+## 关键配置
 
-- [插件目录说明](plugins/README.md)：开发新插件的最短路径
-- [插件开发工作流](docs/plugin-development.md)：完整契约、脚手架和提交前检查
-- [插件配置目录](config/plugins/README.md)：运行配置与 `example.json` / `schema.json` 资产规则
-- [源码目录说明](src/README.md)：`src/` 各子目录的职责边界
+配置文件是 `config.py`，三个分组对应 `OOPZ_CONFIG`、`ONEBOT_V11_CONFIG`、`WEBUI_CONFIG`。
+控制台只改写白名单字段，其余内容与注释保持原样。
 
-## 注意事项
+| 字段 | 说明 |
+| --- | --- |
+| `OOPZ_CONFIG.login_phone` / `login_password` | Oopz 账号；登录成功后自动写入并维护凭据 |
+| `OOPZ_CONFIG.default_area` / `default_channel` | OneBot 调用没有指定目标时的兜底域 / 频道 |
+| `OOPZ_CONFIG.proxy` | 网络出口：留空跟随系统代理，`direct` 直连，也可填 `http://主机:端口` |
+| `ONEBOT_V11_CONFIG.ws_reverse_url` | 对端的反向 WS 地址，最常修改的一项 |
+| `ONEBOT_V11_CONFIG.access_token` | 与对端一致的令牌 |
+| `ONEBOT_V11_CONFIG.db_path` | 身份映射数据库路径 |
+| `WEBUI_CONFIG.host` / `port` / `token` | 控制台监听地址、端口与访问令牌 |
 
-- 不要提交真实的 `config.py`、`private_key.py`、Cookie、JWT、API Key。
-- Token 过期时，程序可能可以启动，但 Bot 无法正常连接 Oopz，需要重新获取凭据。
-- 公开访问 Web 播放器或管理后台时，建议使用 HTTPS。
-- Redis、网易云音乐 API、Oopz 凭据都正常时，Bot 才能完整工作。
+更细的开关（心跳间隔、重连间隔、本地接入、域语义映射等）都在控制台「配置」页的「高级选项」里，默认值适用于绝大多数情况。
 
-## 许可证
+## 环境变量
 
-MIT
+除 `config.py` 外还支持少量环境变量覆盖，完整清单见 [`.env.example`](.env.example)，常用的有
+`BOT_WEBUI_HOST`、`BOT_WEBUI_PORT`、`BOT_WEBUI_TOKEN`、`BOT_ONEBOT_REVERSE_URL`、`BOT_OOPZ_PROXY`。
+
+## 数据文件
+
+| 路径 | 内容 |
+| --- | --- |
+| `config.py` | 你的配置与凭据，已在 `.gitignore` 中，**请勿提交** |
+| `private_key.py` | 登录用的 RSA 私钥，自动生成，同样不入库 |
+| `data/onebot_v11.sqlite3` | `group_id` / `user_id` 映射，删除会导致对端群号全部变化 |
+| `logs/oopz_bot.log` | 运行日志，控制台「日志」页读取的就是它 |
+
+## 常见问题
+
+- **反向 WS 一直未连接**：确认对端已启动反向 WS 服务端，地址、路径、`access_token` 三者与对端一致；跨机部署还要放行端口。
+- **对端收不到消息内容**：Oopz 的频道消息以 `message_type=group` 上报，检查对端是否放行了群消息。
+- **群号或成员编号变了**：`data/onebot_v11.sqlite3` 被删除或路径被改动，映射需要重新积累。
+- **提示凭据无效**：JWT 过期时程序会尝试用账号密码自动续期；如果当初只导入了 JWT 而没有密码，请在「账号」页重新登录。
+- **想让对端连进来**：打开 `enable_http` / `enable_ws`，让对端连到 `127.0.0.1:6700`。
+
+## 使用边界与许可
+
+> [!IMPORTANT]
+> 本项目采用 [MIT 许可](LICENSE)，是独立的第三方工具，与 Oopz 官方无隶属关系，也不对 Oopz 服务的可用性作任何保证。
+
+- 请只在自己的账号与有权管理的社群中使用，不要用于骚扰、刷屏或对他人社群做批量自动化。
+- `src/oopz_sdk/` 是随项目附带的 Oopz SDK 源码，版权归其原作者所有；如权利人提出异议，我们会移除或替换。
+- 项目最初派生自社区项目 `Oopzbot`，当前仓库是围绕「纯 OneBot v11 反向桥接 + Web 控制台」重写后的版本。
+
+## 社区与鸣谢
+
+- [提交问题](https://github.com/Eason4869/Ooptra/issues)
+- 协议参考：[OneBot v11](https://github.com/botuniverse/onebot-11)
+- 文档组织与产品形态参考了 [SnowLuma](https://github.com/SnowLuma/SnowLuma)（无隶属关系）

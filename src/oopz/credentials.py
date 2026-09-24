@@ -85,14 +85,13 @@ def _apply_runtime(credentials: Mapping[str, Any]) -> None:
         for key in OOPZ_CONFIG_CREDENTIAL_FIELDS
         if credentials.get(key)
     }
-    for module_name in ("config", "web.web_player_config"):
-        try:
-            module = importlib.import_module(module_name)
-            target = getattr(module, "OOPZ_CONFIG", None)
-            if isinstance(target, dict):
-                target.update(updates)
-        except Exception:
-            continue
+    try:
+        module = importlib.import_module("config")
+        target = getattr(module, "OOPZ_CONFIG", None)
+        if isinstance(target, dict):
+            target.update(updates)
+    except Exception:
+        pass
 
 
 def save_credentials(credentials: OopzLoginCredentials | Mapping[str, Any]) -> list[str]:

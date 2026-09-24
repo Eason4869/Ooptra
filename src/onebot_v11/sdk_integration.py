@@ -11,7 +11,6 @@ from typing import Any
 from core.logger_config import get_logger
 from oopz_sdk.adapters.onebot.v11.message import to_v11_message
 from oopz_sdk.adapters.onebot.v11.types import (
-    make_group_source,
     make_message_source,
     make_user_source,
     parse_bool,
@@ -28,57 +27,6 @@ def find_sdk_onebot_v11(bot) -> Any | None:
         if getattr(adapter, "protocol", "") == "onebot.v11":
             return adapter
     return None
-
-
-async def emit_member_change(
-    adapter: Any,
-    gateway,
-    action: str,
-    area: str,
-    uid: str,
-) -> None:
-    """补发 SDK 当前未建模的 group_increase/group_decrease 通知。"""
-    if action not in {"join", "leave"} or not uid or uid == adapter.self_oopz_id:
-        return
-
-    user_id = await asyncio.to_thread(
-        lambda: adapter.ids.createId(make_user_source(uid)).number
-    )
-    payload: dict[str, Any] = {
-        "time": int(time.time()),
-        "self_id": adapter.self_id,
-        "post_type": "notice",
-        "notice_type": "group_increase" if action == "join" else "group_decrease",
-        "sub_type": "approve" if action == "join" else "leave",
-        "user_id": user_id,
-        "operator_id": user_id,
-        "extra": {"oopz_area_id": area, "oopz_user_id": uid},
-    }
-
-    channel = ""
-    try:
-        from core.area_config import get_area_registry
-
-        channel = get_area_registry().get_default_channel(area)
-    except Exception:
-        pass
-    if not channel:
-        for group in await gateway.get_area_channels(area=area, quiet=True):
-            for item in group.get("channels") or []:
-                if str(item.get("type") or "").upper() != "VOICE":
-                    channel = str(item.get("id") or "").strip()
-                    if channel:
-                        break
-            if channel:
-                break
-    if channel:
-        payload["group_id"] = await asyncio.to_thread(
-            lambda: adapter.ids.createId(
-                make_group_source(area=area, channel=channel)
-            ).number
-        )
-
-    await dispatch_payload(adapter, payload)
 
 
 async def dispatch_payload(adapter: Any, payload: dict[str, Any]) -> None:
@@ -148,9 +96,6 @@ class OneBotV11Supplement:
                 self.adapter._actions.pop(name, None)
             else:
                 self.adapter._actions[name] = original
-
-    async def emit_member_change(self, action: str, area: str, uid: str) -> None:
-        await emit_member_change(self.adapter, self.gateway, action, area, uid)
 
     async def set_group_admin(self, params: Mapping[str, Any]) -> dict[str, Any]:
         role_id = int(self.config.group_admin_role_id or 0)
@@ -304,6 +249,5 @@ def _cq_from_segments(segments: list[dict[str, Any]]) -> str:
 __all__ = [
     "OneBotV11Supplement",
     "dispatch_payload",
-    "emit_member_change",
     "find_sdk_onebot_v11",
 ]

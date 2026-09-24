@@ -11,7 +11,7 @@ from core.logger_config import get_logger
 from core.paths import DATA_DIR
 
 if TYPE_CHECKING:
-    from oopz.sdk_gateway import AsyncOopzGateway
+    from bridge.shim import SdkBridgeShim
 
 logger = get_logger("NameResolver")
 NAMES_FILE = os.path.join(DATA_DIR, "names.json")
@@ -37,7 +37,7 @@ class NameResolver:
             "areas": {},
         }
         self._pending_uids: set[str] = set()
-        self._gateway: AsyncOopzGateway | None = None
+        self._gateway: SdkBridgeShim | None = None
         self._dirty = False
         self._revision = 0
         self._loaded = False
@@ -64,7 +64,7 @@ class NameResolver:
             sum(bool(value) for value in self._data["areas"].values()),
         )
 
-    async def bind_gateway(self, gateway: AsyncOopzGateway) -> None:
+    async def bind_gateway(self, gateway: SdkBridgeShim) -> None:
         self._gateway = gateway
         await self.start()
 

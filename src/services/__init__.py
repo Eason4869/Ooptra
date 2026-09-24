@@ -1,1 +1,0 @@
-"""Standalone bot services."""

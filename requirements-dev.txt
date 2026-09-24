@@ -1,5 +1,4 @@
 -r requirements.txt
 
-httpx>=0.27,<1
-pyright>=1.1,<2
 ruff>=0.16,<0.17
+pyright>=1.1,<2

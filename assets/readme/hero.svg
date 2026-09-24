@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="400" viewBox="0 0 1200 400" role="img" aria-labelledby="hero-title hero-desc">
+  <title id="hero-title">Ooptra — Oopz 到 OneBot v11 的反向 WebSocket 桥</title>
+  <desc id="hero-desc">Ooptra 把 Oopz 频道消息转成 OneBot v11 事件推给任意 OneBot 实现，并把对端动作回落到 Oopz，同时提供本地 Web 控制台。</desc>
+
+  <defs>
+    <linearGradient id="hero-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#070e18"/>
+      <stop offset="0.6" stop-color="#0d1626"/>
+      <stop offset="1" stop-color="#122036"/>
+    </linearGradient>
+    <linearGradient id="hero-brand" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#eaf6ff"/>
+      <stop offset="0.55" stop-color="#5eead4"/>
+      <stop offset="1" stop-color="#38bdf8"/>
+    </linearGradient>
+    <linearGradient id="hero-wire" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#5eead4"/>
+      <stop offset="1" stop-color="#38bdf8"/>
+    </linearGradient>
+    <style>
+      .sans { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+      .mono { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; }
+    </style>
+  </defs>
+
+  <rect width="1200" height="400" fill="url(#hero-bg)"/>
+  <g stroke="#94a3b8" stroke-opacity="0.07" stroke-width="1">
+    <path d="M0 96 H1200 M0 200 H1200 M0 304 H1200"/>
+    <path d="M120 0 V400 M400 0 V400 M680 0 V400 M960 0 V400"/>
+  </g>
+
+  <rect x="96" y="66" width="60" height="60" rx="18" fill="url(#hero-wire)"/>
+  <text x="126" y="108" class="sans" font-size="30" text-anchor="middle" fill="#04211d">⇄</text>
+  <text x="174" y="114" class="sans" font-size="56" font-weight="700" fill="url(#hero-brand)">Ooptra</text>
+  <text x="176" y="154" class="sans" font-size="21" fill="#93a4bd">Oopz ⇄ OneBot v11 反向 WebSocket 桥接</text>
+
+  <rect x="1040" y="70" width="64" height="30" rx="15" fill="#94a3b8" fill-opacity="0.14"/>
+  <text x="1072" y="90" class="mono" font-size="15" text-anchor="middle" fill="#93a4bd">v1.0.0</text>
+
+  <text x="96" y="216" class="sans" font-size="15" letter-spacing="1.5" fill="#64748b">运行链路</text>
+
+  <rect x="96" y="248" width="210" height="72" rx="18" fill="#94a3b8" fill-opacity="0.09" stroke="#94a3b8" stroke-opacity="0.28"/>
+  <text x="201" y="282" class="sans" font-size="19" font-weight="600" text-anchor="middle" fill="#e7eefb">Oopz 平台</text>
+  <text x="201" y="304" class="sans" font-size="13" text-anchor="middle" fill="#7d8da6">域 · 频道 · 消息</text>
+
+  <rect x="436" y="248" width="328" height="72" rx="18" fill="url(#hero-wire)" fill-opacity="0.14" stroke="#5eead4" stroke-opacity="0.45"/>
+  <text x="600" y="282" class="sans" font-size="19" font-weight="600" text-anchor="middle" fill="#eaf6ff">Ooptra 桥接内核</text>
+  <text x="600" y="304" class="sans" font-size="13" text-anchor="middle" fill="#8fb9c9">事件标准化 · 身份映射 · Web 控制台</text>
+
+  <rect x="894" y="248" width="210" height="72" rx="18" fill="#94a3b8" fill-opacity="0.09" stroke="#94a3b8" stroke-opacity="0.28"/>
+  <text x="999" y="282" class="sans" font-size="19" font-weight="600" text-anchor="middle" fill="#e7eefb">OneBot 实现</text>
+  <text x="999" y="304" class="sans" font-size="13" text-anchor="middle" fill="#7d8da6">任意框架 / 自研</text>
+
+  <g stroke="url(#hero-wire)" stroke-width="2.5" stroke-linecap="round" fill="none">
+    <path d="M322 270 H422"/>
+    <path d="M414 262 l10 8 -10 8"/>
+    <path d="M428 300 H328"/>
+    <path d="M336 292 l-10 8 10 8"/>
+    <path d="M780 270 H880"/>
+    <path d="M872 262 l10 8 -10 8"/>
+    <path d="M886 300 H786"/>
+    <path d="M794 292 l-10 8 10 8"/>
+  </g>
+  <text x="375" y="258" class="sans" font-size="14" text-anchor="middle" fill="#8fb9c9">事件</text>
+  <text x="375" y="330" class="sans" font-size="14" text-anchor="middle" fill="#8fb9c9">动作</text>
+  <text x="833" y="258" class="sans" font-size="14" text-anchor="middle" fill="#8fb9c9">事件</text>
+  <text x="833" y="330" class="sans" font-size="14" text-anchor="middle" fill="#8fb9c9">动作</text>
+
+  <text x="96" y="374" class="sans" font-size="15" fill="#64748b">本程序作为客户端主动拨出反向 WebSocket，对端只需监听；Oopz 侧只需一个机器人账号。</text>
+</svg>

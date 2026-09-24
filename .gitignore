@@ -1,41 +1,25 @@
-# === 敏感文件（包含密钥、Token、Cookie）===
+# === 敏感文件（包含账号、密钥、Token）===
 /config.py
 /private_key.py
-/config/runtime.py
-/config/private_key.py
-# 配置原子替换在硬崩溃后可能留下含凭据的同目录 stage/rollback 文件。
+# 配置原子替换在硬崩溃后可能留下含凭据的同目录 stage/rollback 文件
 /.config.py.*.tmp
 /.config.py.*.bak
 /.private_key.py.*.tmp
 /.private_key.py.*.bak
-/config/.runtime.py.*.tmp
-/config/.runtime.py.*.bak
-/config/.private_key.py.*.tmp
-/config/.private_key.py.*.bak
-config/plugins/*.json
-!config/plugins/*.example.json
-!config/plugins/*.schema.json
-config/plugins/*/config.json
-data/credentials.txt
-.oopz_capture_credentials
-capture_recall_result.json
-capture_trace.zip
 .env
 .env.local
 !.env.example
-data/
 
 # === 运行时生成的数据 ===
-data/names.json
-data/oopz_cache.db
-data/dump.rdb
-data/_events_debug.jsonl
-data/clash/
+data/
+logs/
 
 # === Python ===
 .venv/
 .venv-*/
 __pycache__/
+.ruff_cache/
+.pytest_cache/
 *.py[cod]
 *.pyo
 *.egg-info/
@@ -43,14 +27,6 @@ dist/
 build/
 *.egg
 .learnings
-
-# === 测试（保留 tests 目录下的 .py 文件）===
-tests/**
-!tests/*.py
-
-# === 日志 ===
-logs/
-*.log
 
 # === IDE ===
 .vscode/
@@ -60,14 +36,6 @@ logs/
 *.swo
 *~
 
-# === 外部依赖 ===
-NeteaseAPI_tmp/
-NeteaseAPI_tmp.zip
-NeteaseCloudMusicApi/
-Webintosh/
-
 # === 系统文件 ===
 Thumbs.db
 .DS_Store
-delta-force-plugin-main
-docs_local/

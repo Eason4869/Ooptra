@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img" aria-labelledby="map-title map-desc">
+  <title id="map-title">Ooptra 运行链路</title>
+  <desc id="map-desc">Oopz 平台与会话经过 Ooptra 的事件标准化与身份映射后，以 OneBot v11 反向 WebSocket 送给任意 OneBot 实现；Web 控制台与桥接内核同进程运行。</desc>
+
+  <defs>
+    <linearGradient id="map-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#070e18"/>
+      <stop offset="0.6" stop-color="#0d1626"/>
+      <stop offset="1" stop-color="#122036"/>
+    </linearGradient>
+    <linearGradient id="map-wire" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#5eead4"/>
+      <stop offset="1" stop-color="#38bdf8"/>
+    </linearGradient>
+    <style>
+      .sans { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+      .mono { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; }
+    </style>
+  </defs>
+
+  <rect width="1200" height="420" fill="url(#map-bg)"/>
+  <g stroke="#94a3b8" stroke-opacity="0.07" stroke-width="1">
+    <path d="M0 120 H1200 M0 300 H1200"/>
+    <path d="M300 0 V420 M900 0 V420"/>
+  </g>
+
+  <text x="80" y="60" class="sans" font-size="15" letter-spacing="1.5" fill="#64748b">运行链路</text>
+  <text x="80" y="92" class="sans" font-size="22" font-weight="600" fill="#e7eefb">Oopz ⇄ OneBot v11 ⇄ 任意对端框架</text>
+
+  <rect x="80" y="140" width="320" height="200" rx="18" fill="#94a3b8" fill-opacity="0.08" stroke="#94a3b8" stroke-opacity="0.26"/>
+  <text x="108" y="182" class="sans" font-size="18" font-weight="600" fill="#e7eefb">Oopz 平台</text>
+  <text x="108" y="216" class="sans" font-size="14" fill="#8fa0b8">· 域 / 频道 / 成员</text>
+  <text x="108" y="244" class="sans" font-size="14" fill="#8fa0b8">· 频道消息事件</text>
+  <text x="108" y="272" class="sans" font-size="14" fill="#8fa0b8">· 发送 / 撤回 / 禁言等接口</text>
+  <text x="108" y="300" class="sans" font-size="14" fill="#8fa0b8">· 网页扫码或账号密码登录</text>
+  <text x="108" y="324" class="mono" font-size="12" fill="#7d8da6">wss://ws.oopz.cn</text>
+
+  <rect x="440" y="140" width="320" height="200" rx="18" fill="url(#map-wire)" fill-opacity="0.13" stroke="#5eead4" stroke-opacity="0.45"/>
+  <text x="468" y="182" class="sans" font-size="18" font-weight="600" fill="#eaf6ff">Ooptra 桥接内核</text>
+  <text x="468" y="216" class="sans" font-size="14" fill="#9fc4d2">· 事件标准化（OneBot v11）</text>
+  <text x="468" y="244" class="sans" font-size="14" fill="#9fc4d2">· 身份映射持久化（sqlite）</text>
+  <text x="468" y="272" class="sans" font-size="14" fill="#9fc4d2">· 凭据自动维护与自动重连</text>
+  <text x="468" y="300" class="sans" font-size="14" fill="#9fc4d2">· Web 控制台（默认 3090）</text>
+  <text x="468" y="324" class="sans" font-size="12" fill="#7d9aa6">单进程 · 无内置命令</text>
+
+  <rect x="800" y="140" width="320" height="200" rx="18" fill="#94a3b8" fill-opacity="0.08" stroke="#94a3b8" stroke-opacity="0.26"/>
+  <text x="828" y="182" class="sans" font-size="18" font-weight="600" fill="#e7eefb">OneBot 实现（对端）</text>
+  <text x="828" y="216" class="sans" font-size="14" fill="#8fa0b8">· 监听反向 WebSocket</text>
+  <text x="828" y="244" class="sans" font-size="14" fill="#8fa0b8">· 接收事件 / 下发动作</text>
+  <text x="828" y="272" class="sans" font-size="14" fill="#8fa0b8">· 可选的 access_token 校验</text>
+  <text x="828" y="300" class="sans" font-size="14" fill="#8fa0b8">· 框架、机器人平台或自研</text>
+  <text x="828" y="324" class="mono" font-size="12" fill="#7d8da6">ws://127.0.0.1:6200/ws</text>
+
+  <g stroke="url(#map-wire)" stroke-width="2.5" stroke-linecap="round" fill="none">
+    <path d="M406 214 H434"/><path d="M426 206 l10 8 -10 8"/>
+    <path d="M434 268 H406"/><path d="M414 260 l-10 8 10 8"/>
+    <path d="M766 214 H794"/><path d="M786 206 l10 8 -10 8"/>
+    <path d="M794 268 H766"/><path d="M774 260 l-10 8 10 8"/>
+  </g>
+  <text x="420" y="200" class="sans" font-size="12" text-anchor="middle" fill="#8fb9c9">事件</text>
+  <text x="420" y="290" class="sans" font-size="12" text-anchor="middle" fill="#8fb9c9">动作</text>
+  <text x="780" y="200" class="sans" font-size="12" text-anchor="middle" fill="#8fb9c9">事件</text>
+  <text x="780" y="290" class="sans" font-size="12" text-anchor="middle" fill="#8fb9c9">动作</text>
+
+  <text x="80" y="384" class="sans" font-size="14" fill="#64748b">反向 WebSocket：本程序作为客户端主动拨出，对端监听即可；两端只约定 OneBot v11，不依赖具体框架。</text>
+</svg>

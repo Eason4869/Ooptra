@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="dark" />
+<title>Ooptra · Oopz ⇄ OneBot v11 桥接控制台</title>
+<link rel="stylesheet" href="/assets/style.css" />
+</head>
+<body>
+
+<!-- ───────────────── 登录屏 ───────────────── -->
+<div class="screen-login" id="screen-login" hidden>
+  <div class="login-art">
+    <div class="art-head">
+      <span class="mark">⇄</span>
+      <div>
+        <h1>Ooptra</h1>
+        <p>Oopz ⇄ OneBot v11 反向 WebSocket 桥接控制台</p>
+      </div>
+    </div>
+
+    <svg class="art-flow" viewBox="0 0 360 132" fill="none" aria-hidden="true">
+      <defs>
+        <linearGradient id="flow" gradientUnits="userSpaceOnUse" x1="102" y1="0" x2="258" y2="0">
+          <stop offset="0" stop-color="#5eead4" />
+          <stop offset="1" stop-color="#38bdf8" />
+        </linearGradient>
+      </defs>
+      <rect x="6" y="38" width="92" height="56" rx="16" class="box" />
+      <text x="52" y="71" class="box-t">Oopz</text>
+      <rect x="262" y="38" width="92" height="56" rx="16" class="box" />
+      <text x="306" y="71" class="box-t">OneBot</text>
+      <path class="flow-line" d="M102 54 H250" />
+      <path class="arrow" d="M246 47 l10 7 -10 7" />
+      <text x="180" y="45" class="lbl">事件</text>
+      <path class="flow-line alt" d="M258 78 H110" />
+      <path class="arrow" d="M114 71 l-10 7 10 7" />
+      <text x="180" y="101" class="lbl">指令</text>
+    </svg>
+
+    <ul class="art-points">
+      <li><b>上行</b> Oopz 频道消息 → OneBot v11 事件 → 对端框架</li>
+      <li><b>下行</b> 对端的 action 调用 → Oopz 发送 / 管理</li>
+      <li><b>本页</b> 只做桥接与运维，不含内置命令</li>
+    </ul>
+  </div>
+
+  <div class="login-side">
+    <form class="login-card" id="login-form">
+      <h2 id="login-title">需要登录</h2>
+      <p class="hint" id="login-sub"></p>
+
+      <label class="field" id="login-token-field" hidden>
+        <span>访问令牌</span>
+        <input id="login-token" type="password" autocomplete="current-password" placeholder="config.py 里 WEBUI_CONFIG.token" />
+      </label>
+
+      <div id="login-oopz-field" hidden>
+        <label class="field">
+          <span>Oopz 手机号</span>
+          <input id="login-phone" type="text" autocomplete="username" placeholder="留空则用 config.py 中的账号" />
+        </label>
+        <label class="field">
+          <span>Oopz 密码</span>
+          <input id="login-password" type="password" autocomplete="current-password" placeholder="留空则用 config.py 中的密码" />
+        </label>
+      </div>
+
+      <button class="btn primary block lg" id="login-submit" type="submit">进入控制台</button>
+      <div class="login-alt" id="login-alt" hidden>
+        <button class="btn ghost block" id="login-browser" type="button">改用网页版登录（可手动过验证）</button>
+        <button class="btn subtle block" id="login-cancel" type="button" hidden>取消网页版登录</button>
+      </div>
+      <p class="login-msg" id="login-msg" role="status"></p>
+    </form>
+  </div>
+</div>
+
+<!-- ───────────────── 面板 ───────────────── -->
+<div class="screen-app" id="screen-app" hidden>
+  <aside class="rail">
+    <div class="rail-brand">
+      <span class="mark sm">⇄</span>
+      <div><b>Ooptra</b><i>桥接控制台</i></div>
+    </div>
+    <nav class="rail-nav">
+      <button class="nav-item" data-page="overview">
+        <svg viewBox="0 0 24 24"><path d="M4 13h6V4H4v9Zm0 7h6v-4H4v4Zm10 0h6v-9h-6v9Zm0-16v4h6V4h-6Z"/></svg>概览
+      </button>
+      <button class="nav-item" data-page="logs">
+        <svg viewBox="0 0 24 24"><path d="M4 5h16v3H4V5Zm0 6h16v2H4v-2Zm0 5h10v2H4v-2Z"/></svg>日志
+      </button>
+      <button class="nav-item" data-page="config">
+        <svg viewBox="0 0 24 24"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm9 4-2 1.2.3 2.3-2.1 2.1-2.3-.3L13.7 21h-3.4l-1.2-2.7-2.3.3-2.1-2.1.3-2.3L3 13v-2l2-1.2-.3-2.3 2.1-2.1 2.3.3L10.3 3h3.4l1.2 2.7 2.3-.3 2.1 2.1-.3 2.3L21 11v1Z"/></svg>配置
+      </button>
+      <button class="nav-item" data-page="account">
+        <svg viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm0 2c-4 0-8 2-8 5v1h16v-1c0-3-4-5-8-5Z"/></svg>账号
+      </button>
+    </nav>
+    <div class="rail-foot">
+      <button class="nav-item small" id="btn-restart">
+        <svg viewBox="0 0 24 24"><path d="M12 5V2L7 6l5 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7Z"/></svg>重新连接
+      </button>
+      <button class="nav-item small" id="btn-logout">
+        <svg viewBox="0 0 24 24"><path d="M10 17v-2h4v-2h-4V4H4v16h6v-3Zm6-9-1.4 1.4L16.2 11H20v2h-3.8l-1.6 1.6L16 16l4-4-4-4Z"/></svg>退出登录
+      </button>
+      <p class="rail-meta" id="rail-meta"></p>
+      <p class="rail-ver" id="rail-ver"></p>
+    </div>
+  </aside>
+  <main class="workspace">
+    <header class="page-head">
+      <div>
+        <h2 id="page-title">概览</h2>
+        <p class="hint" id="page-sub"></p>
+      </div>
+      <div class="page-tools" id="page-tools"></div>
+    </header>
+
+    <!-- 概览 -->
+    <section class="page is-active" id="page-overview">
+      <div class="verdict" id="verdict">
+        <span class="verdict-rail"></span>
+        <div class="verdict-text">
+          <b id="verdict-title">检测中…</b>
+          <p id="verdict-detail">正在读取桥接状态</p>
+        </div>
+        <button class="btn warn" id="verdict-action" hidden>重新连接</button>
+      </div>
+
+      <div class="tiles">
+        <article class="tile" id="tile-oopz">
+          <header><i class="dot"></i>Oopz 事件链路</header>
+          <b class="tile-value" id="t-oopz-state">—</b>
+          <p class="tile-sub" id="t-oopz-sub">—</p>
+        </article>
+        <article class="tile" id="tile-onebot">
+          <header><i class="dot"></i>OneBot v11 反向 WS</header>
+          <b class="tile-value" id="t-onebot-state">—</b>
+          <p class="tile-sub" id="t-onebot-sub">—</p>
+        </article>
+        <article class="tile" id="tile-traffic">
+          <header><i class="dot"></i>事件吞吐</header>
+          <b class="tile-value" id="t-total">—</b>
+          <p class="tile-sub" id="t-types">—</p>
+        </article>
+        <article class="tile" id="tile-process">
+          <header><i class="dot"></i>进程</header>
+          <b class="tile-value" id="t-uptime">—</b>
+          <p class="tile-sub" id="t-process-sub">—</p>
+        </article>
+      </div>
+
+      <div class="split">
+        <section class="card">
+          <header class="card-head">
+            <h3>最近推送</h3>
+            <span class="chip" id="ev-count">0</span>
+            <div class="seg" id="ev-filter">
+              <button type="button" class="seg-btn is-active" data-mode="msg">不含心跳</button>
+              <button type="button" class="seg-btn" data-mode="all">全部</button>
+            </div>
+          </header>
+          <ul class="feed" id="feed-events"></ul>
+        </section>
+        <section class="card">
+          <header class="card-head">
+            <h3>最近指令</h3>
+            <span class="chip" id="ac-count">0</span>
+          </header>
+          <ul class="feed" id="feed-actions"></ul>
+        </section>
+      </div>
+    </section>
+
+    <!-- 日志 -->
+    <section class="page" id="page-logs">
+      <div class="toolbar">
+        <select class="control" id="log-file" title="选择日志文件"></select>
+        <select class="control sm" id="log-lines" title="启动时读取行数">
+          <option value="200">200 行</option>
+          <option value="500" selected>500 行</option>
+          <option value="2000">2000 行</option>
+          <option value="5000">5000 行</option>
+        </select>
+        <input class="control grow" id="log-search" type="search" placeholder="过滤关键字（支持空格分隔多个）" />
+        <select class="control sm" id="log-level">
+          <option value="">全部级别</option>
+          <option value="WARN">警告以上</option>
+          <option value="ERROR">仅错误</option>
+        </select>
+        <label class="switch"><input type="checkbox" id="log-follow" checked /><span>实时跟随</span></label>
+        <label class="switch"><input type="checkbox" id="log-wrap" /><span>自动换行</span></label>
+        <span class="spacer"></span>
+        <span class="hint" id="log-status"></span>
+        <button class="btn ghost sm" id="log-clear">清屏</button>
+        <button class="btn ghost sm" id="log-download">下载</button>
+      </div>
+      <div class="logwrap">
+        <div class="logview" id="log-view"></div>
+        <button class="jump" id="log-jump" hidden>↓ 回到底部</button>
+      </div>
+    </section>
+
+    <!-- 配置 -->
+    <section class="page" id="page-config">
+      <div class="note">
+        改动只写回 <code>config.py</code> 的对应字段，注释与其它内容保持原样；敏感项留空表示不修改。
+        <span class="note-alt">登录凭据（device_id / person_uid / jwt_token）由登录流程自动维护，要看就去「账号」页。</span>
+        <span id="config-status"></span>
+      </div>
+      <div class="config-groups" id="config-groups"></div>
+      <div class="savebar" id="savebar" hidden>
+        <span id="savebar-text">有未保存的改动</span>
+        <button class="btn subtle" id="config-discard">放弃</button>
+        <button class="btn primary" id="config-save">保存</button>
+        <button class="btn primary" id="config-save-restart">保存并重新连接</button>
+      </div>
+    </section>
+
+    <!-- 账号 -->
+    <section class="page" id="page-account">
+      <div class="split">
+        <section class="card">
+          <header class="card-head">
+            <h3>当前凭据</h3>
+            <span class="chip" id="cred-expiry-chip">—</span>
+          </header>
+          <dl class="kv-list" id="cred-list"></dl>
+        </section>
+        <section class="card">
+          <header class="card-head"><h3>重新登录 Oopz</h3></header>
+          <p class="hint">登录成功后会写入 <code>config.py</code> 与 <code>private_key.py</code>，并自动重连。</p>
+          <label class="field"><span>手机号</span>
+            <input id="api-phone" type="text" placeholder="留空则用 config.py 中的账号" /></label>
+          <label class="field"><span>密码</span>
+            <input id="api-password" type="password" placeholder="留空则用 config.py 中的密码" /></label>
+          <button class="btn primary" id="api-login">账号密码登录</button>
+          <p class="login-msg" id="api-login-status" role="status"></p>
+          <hr />
+          <label class="switch"><input type="checkbox" id="browser-headless" /><span>无头模式（不推荐，无法手动过验证）</span></label>
+          <button class="btn ghost" id="browser-login">网页版登录</button>
+          <button class="btn subtle" id="browser-cancel">取消</button>
+          <p class="login-msg" id="browser-login-status" role="status"></p>
+          <p class="hint"><a href="https://web.oopz.cn" target="_blank" rel="noreferrer">打开 Oopz 网页版 ↗</a></p>
+        </section>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="toasts" id="toasts"></div>
+<div class="backdrop" id="dialog" hidden>
+  <div class="dialog">
+    <h3 id="dialog-title">确认</h3>
+    <p id="dialog-text"></p>
+    <div class="dialog-actions">
+      <button class="btn subtle" id="dialog-no">取消</button>
+      <button class="btn primary" id="dialog-yes">确定</button>
+    </div>
+  </div>
+</div>
+
+<script src="/assets/app.js"></script>
+</body>
+</html>

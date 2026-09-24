@@ -1,5 +1,5 @@
+import contextlib
 import glob
-import io
 import logging
 import os
 import sys
@@ -80,9 +80,7 @@ def setup_logger(name: str, level=logging.DEBUG) -> logging.Logger:
         file_handler.setLevel(file_level)
         file_handler.setFormatter(formatter)
 
-        if sys.platform == "win32" and sys.stdout is sys.__stdout__ and sys.stderr is sys.__stderr__:
-            sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-            sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+        _force_utf8_streams()
 
         console_handler = logging.StreamHandler(sys.stderr)
         console_handler.setLevel(console_level)
@@ -97,6 +95,20 @@ def setup_logger(name: str, level=logging.DEBUG) -> logging.Logger:
         _initialized = True
 
     return logger
+
+
+def _force_utf8_streams() -> None:
+    """把 stdout / stderr 切到 UTF-8。
+
+    Windows 下控制台与重定向文件的默认编码是 GBK，中文日志会变成乱码；
+    main.py 里的 ``chcp`` 只管控制台显示，对管道和重定向无效，因此这里直接
+    改写流本身的编码。流被替换成不支持 reconfigure 的对象时静默跳过。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            with contextlib.suppress(Exception):
+                reconfigure(encoding="utf-8", errors="replace")
 
 
 def _attach_sdk_logger(*handlers: logging.Handler) -> None:
