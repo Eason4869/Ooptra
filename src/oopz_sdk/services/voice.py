@@ -34,6 +34,19 @@ class Voice(BaseService):
     def current_sign(self) -> models.ChannelSign | None:
         return self._current_sign
 
+    # ------------------------------------------------------------------
+    # 成员实时静音状态（转发给 WebUI / 插件读）
+    # ------------------------------------------------------------------
+
+    def voice_states(self) -> dict[str, dict]:
+        """房间内成员最近一次上报的静音状态；没人广播过就是空表。"""
+        return self.backend.voice_states()
+
+    @property
+    def voice_state_received(self) -> int:
+        """本房累计收到的广播条数（0 = 数据源没在发，界面继续显示未知）。"""
+        return self.backend.voice_state_received
+
     async def _cleanup_failed_join(self, area: str, channel: str) -> None:
         """
         `enter_channel` 成功后若浏览器/Agora 未就绪或加入失败，服务端可能仍认为在语音房；

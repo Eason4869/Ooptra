@@ -5,6 +5,7 @@ import base64
 import logging
 import mimetypes
 import threading
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -59,6 +60,87 @@ class BrowserVoiceTransport:
 
         # Duplex: JS -> Python remote PCM callback
         self._remote_pcm_callback = None
+
+        # 房间内各成员的实时静音状态：oopz uid -> {m, hm, cid, ts}
+        # 来源是 Agora stream message（播放器里 client.on("stream-message")）。
+        # Oopz 的 REST（membersByChannels）与网关事件都不提供这个状态，
+        # 这里是唯一能拿到「谁闭了麦」的地方。
+        self._voice_states: dict[str, dict[str, Any]] = {}
+        self._voice_state_rx = 0
+
+    # ------------------------------------------------------------------
+    # 成员实时静音状态（Agora stream message 接收侧）
+    # ------------------------------------------------------------------
+
+    def _remember_voice_state(self, uid: str, payload: Any) -> bool:
+        """记下一条成员静音状态。返回是否采纳（供探针/测试判断）。
+
+        payload 是播放器发来的 JSON 串：``{"m":0|1,"hm":0|1,"cid":<agora uid>,"ts":...}``
+        （``m``=1 闭麦，``hm``=1 闭听）。字段缺失或非法一律丢弃，不猜。
+        """
+        import json
+
+        uid = str(uid or "").strip()
+        if not uid:
+            return False
+
+        if isinstance(payload, str):
+            try:
+                data = json.loads(payload)
+            except Exception:
+                logger.debug("voice state payload is not json")
+                return False
+        elif isinstance(payload, dict):
+            data = payload
+        else:
+            return False
+        if not isinstance(data, dict):
+            return False
+
+        def _flag(key: str) -> int | None:
+            value = data.get(key)
+            if value is None:
+                return None
+            try:
+                return 1 if int(value) else 0
+            except (TypeError, ValueError):
+                return None
+
+        m = _flag("m")
+        hm = _flag("hm")
+        if m is None and hm is None:
+            return False
+
+        try:
+            cid = int(data.get("cid"))
+        except (TypeError, ValueError):
+            cid = None
+        try:
+            ts = float(data.get("ts")) / 1000.0
+        except (TypeError, ValueError):
+            ts = time.time()
+
+        self._voice_states[uid] = {"m": m, "hm": hm, "cid": cid, "ts": ts}
+        self._voice_state_rx += 1
+        if self._voice_state_rx == 1:
+            # 只报一次：Oopz 客户端到底发不发这条广播，是这套方案的前提
+            logger.info("[VOICE] 收到房间静音状态广播（后续按 debug 级别记录）")
+        else:
+            logger.debug("[VOICE] 静音状态更新 uid=%s m=%s hm=%s", uid, m, hm)
+        return True
+
+    def voice_states(self) -> dict[str, dict[str, Any]]:
+        """成员实时静音状态快照（可能为空：没人广播过就没有数据）。"""
+        return {uid: dict(row) for uid, row in self._voice_states.items()}
+
+    @property
+    def voice_state_received(self) -> int:
+        """累计收到的广播条数。
+
+        WebUI 用它区分「真的没人闭麦」和「压根没收到过广播」——
+        后者说明 Oopz 客户端不发这条消息，界面应继续显示「未知」。
+        """
+        return self._voice_state_rx
 
     @property
     def available(self) -> bool:
@@ -200,6 +282,14 @@ class BrowserVoiceTransport:
         except Exception:
             logger.debug("expose oopzPushRemotePcm failed", exc_info=True)
 
+        async def _on_voice_state(uid: str, payload: str) -> None:
+            self._remember_voice_state(str(uid or ""), payload)
+
+        try:
+            await page.expose_function("oopzPushVoiceState", _on_voice_state)
+        except Exception:
+            logger.debug("expose oopzPushVoiceState failed", exc_info=True)
+
         html_path = Path(__file__).resolve().parent.parent / "assets" / "voice" / "agora_player.html"
         await page.goto(html_path.as_uri())
 
@@ -315,6 +405,10 @@ class BrowserVoiceTransport:
         self._joined_room = room_id
         self._joined_uid = str(rtc_uid)
 
+        # 新房间：清掉上一次遗留的状态（含计数，探针要按房间算）
+        self._voice_states.clear()
+        self._voice_state_rx = 0
+
         if oopz_uid is None:
             oopz_uid = getattr(self.config, "person_uid", None)
 
@@ -356,6 +450,8 @@ class BrowserVoiceTransport:
             self._agora_uid = None
             self._joined_room = None
             self._joined_uid = None
+            # 上一个房间的状态留在表里会被当成本房成员状态显示
+            self._voice_states.clear()
 
     async def stop_audio(self) -> None:
         if not self._started:

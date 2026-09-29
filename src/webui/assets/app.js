@@ -1414,7 +1414,9 @@ async function refreshMembers() {
     if (!rows.length) {
       body.innerHTML = '<tr><td colspan="4" class="muted">暂无成员（确认已进房 / 域 ID 正确）</td></tr>';
     } else {
-      // Oopz 的 membersByChannels 不返回静音状态，后端会给 null；不要伪造成「开麦」
+      // 静音状态只有两个来源：成员自己用 Agora stream message 广播的实时状态
+      // （row.live=true），或 REST 自带字段（当前 Oopz 不返回）。都没有就是「未知」，
+      // 不要伪造成「开麦」。
       const muteCell = (flag, onText, offText) => {
         if (flag === null || flag === undefined) return '<span class="badge">未知</span>';
         return '<span class="badge ' + (flag ? 'warn' : 'ok') + '">' +
@@ -1427,7 +1429,13 @@ async function refreshMembers() {
         '<td>' + muteCell(row.speaker_muted, '已闭听', '正常') + '</td></tr>'
       ).join('');
     }
-    if (status) status.textContent = '已更新';
+    // 一条广播都没收到时，把原因说清楚：不是「都没闭麦」，是数据源没在发
+    const live = Number(data.live_state_received || 0);
+    if (status) {
+      status.textContent = live > 0
+        ? ('已更新（实时状态 ' + live + ' 条）')
+        : '已更新（未收到静音状态广播，这两列只能显示未知）';
+    }
   } catch (err) {
     if (status) status.textContent = err.message;
   }
