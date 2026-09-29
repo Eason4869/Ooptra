@@ -8,19 +8,22 @@
 
 - **首次进房能正常对话，退出重进或换房间后 bot 一句话都不说**：`agora_player.html` 里 TTS 推流轨道的状态是**模块级、跨进房常驻**的，而 `agoraLeave` 只清了播放队列（`ttsNextTime` / `ttsSources` / `ttsPlaying`），**没有拆轨道**——`ttsCtx` / `ttsDest` / `ttsTrack` / `ttsPublished` 全部原样留到下一个房间。而 `AgoraRTC` 的 `CustomAudioTrack` 是**绑定在具体 client 上发布**的，退房后那个 client 已经不存在；`agoraJoin` 每次新建 client，于是重进房后第一次推流时 `ensureTtsTrack` 的两个分支同时短路（`if (!ttsCtx)` 因上下文还在而跳过重建，`if (!ttsPublished …)` 因标记仍为「已发布」而跳过重新 `publish`），模型音频全灌进一个已经离开的 client。`voice_browser` 只在 `start()` 里 `new_page()` + `goto()` 一次、`join`/`leave` 仅做 `page.evaluate`，页面是进程级复用的，所以这些变量真的会跨房间残留。现新增 `teardownTtsPipeline()`：退房时（`client` 还在，`unpublish` 需要它）摘除并 `close()` 旧轨道、关闭 `AudioContext`、清空全部标记；同时给 `ensureTtsTrack` 加**归属检查**——记录轨道发布在哪个 client 上（`ttsPublishedFor`），发现不是当前 client 就整套重建。两者各自都能单独兜住，叠起来才不会再退化。
 - **语言时不时乱切换**：抢话时向服务端发送的 `realtimeInput.audioStreamEnd` **语义用反了**。该字段的含义是「用户说完了，立刻处理并回答」（官方文档：客户端 VAD 检测到句尾时发送，用于省掉服务端的静音等待），我们却在用户**刚开始**说话时发它，等于逼模型把当时缓冲区里的音频**碎片**当成一个完整回合去回答——一整段没有内容的输入，模型只能瞎猜，语言就是从这里开始飘的。本会话用的是**服务端自动 VAD**（setup 未关闭 `automaticActivityDetection`），文档明确「检测到打断时模型会取消正在进行的生成」，而远端音频本来就在持续灌入，抢话由服务端判定即可。`interrupt()` 现为**有意的客户端侧空操作**（保留方法是为接口稳定），本地静音仍由 `duplex.stop_tts()` 负责，服务端的 `interrupted` 到达后会再清一次并把回合收尾。
+- **能通过「与 AI 对话」让 bot 开口，却听不见房间里其他人、谁说话都触发不了对话**：与上一条**同一类**问题，坏在另一个方向。远端采集源（`ctx` / `src`）取自**那个 client 的**远端 `audioTrack`，而 `agoraLeave` 只停了播放、**没停采集**——`remoteCaptures`（`uid → {ctx, src, processor, mute}`）原样留到下一个房间。重进房时 `agoraSetListen(true)` 会遍历房间成员重新采集，但 `startRemoteCapture` 撞上 `if (remoteCaptures.has(uid)) return;` 直接返回；而留在表里的旧采集，其源已经随上一场会话一起死掉、只会推静音。于是「同一个房间里同样那几个人」全都采集不到。现于退房时调用 `stopAllRemoteCaptures()` 拆掉全部采集（只用条目自身的资源，不依赖全局 `client`，所以异常退房路径也不会漏），并给采集条目加上归属标记 `clientRef`——`startRemoteCapture` 发现条目不属于当前 client 就先拆再重建。采集是**绑定在具体 client 上**的资源：退房不拆、重进房又被「已存在」短路，就会全部指向一个已经离开的会话。
 - **语言缺少硬约束**：Live 的原生音频模型**不能**用 `speechConfig.languageCode` 锁语言（官方文档原文：*Explicitly setting a language code is not supported for native audio output models*），它按输入音频自动选语言，而我们的输入是**整个语音房间的混音**（`listen_only_uids` 默认为空即谁都吞），有人夹英文、有歌曲或噪声时就会选错。提示词是唯一可用的杠杆，故新增常量 `LANGUAGE_GUARD`，**追加在人格之后**下发（人格是用户可随时改写甚至清空的配置项，这条不会跟着丢；放最后也因为指令收尾位置权重更高）。
 
 ### 变更
 
 - 回合边界处新增一条 INFO 日志，记录模型听到的转写与自己的回复（被抢话时标注）：语言乱切换这类问题**只能**从这里看出来——此前 `_last_user_text` 只写进记忆、从不落日志，等于没有观测手段。记忆里本就存着这两段文本，日志不增加额外暴露。
+- 控制台那张卡片**改掉有歧义的表述**：标题「快捷开口」→「**与 AI 对话**」，按钮「说一句」→「发送」，说明改为「用文字发一句话，AI 会在当前语音房用语音回答，和房间里说话是同一场对话（需已进房）。级联模式下不经过模型，直接朗读这段文字」。状态与提示同步改写，且**按模式区分**——Live 模式返回的是 `chars` 而非 `pcm_bytes`，照级联那套显示「已推送（0 bytes）」会让人以为失败了，现在显示「已发送，等 AI 开口…」。
 
 ### 测试
 
 - `tests/test_tts_play_queue.py` 新增 5 条结构断言，锁死 TTS 轨道的生命周期：退房必须调用拆解、拆解要排在 `client = null` **之前**（`unpublish` 需要 client）、拆解必须清空全部四个标记且真的 `unpublish` + `close`、`ensureTtsTrack` 必须在**复用 `AudioContext` 之前**判定归属、`publish` 后必须记下归属 client（共 15 条）。
+- 新增 `tests/test_voice_rejoin.py`（7 条），锁死**输入方向**：退房必须停掉全部远端采集、且该调用不能被关进 `if (client)` 里（异常退房路径会漏）、拆采集必须释放 processor / source / ctx 并从表里删掉、采集条目要记下归属 client、归属不符时必须先拆再重建、旧条目要在取 `audioTrack` **之前**丢掉、同一 client 内重复调用必须短路（`user-published` 与 resubscribe 会各来一次，不短路会重复上报同一条音频）。
 - `tests/test_live_turn_lifecycle.py` 新增 3 条：`interrupt()` 不得再发出 `audioStreamEnd`、语言约束必须追加在人格**之后**、人格被清空时语言约束仍在（共 12 条）。
 - **修正一条空转用例**：`test_concurrent_start_session_connects_once` 此前是假通过——假的 `open_live_ws` 里**一个挂起点都没有**，5 个协程被逐个同步跑完，`start_session` 的锁与复检从未被走到（在加锁之前的代码上也是绿的）。现在假 `open` 里加 `await asyncio.sleep(0)`，去掉锁即挂。
-- 全量 **180 passed**；`ruff check` 干净。10 条变异（逐条回退改动，含「退房不拆轨道」「拆解不清标记」「不发语言约束」「语言约束插在人格之前」「去掉 `start_session` 的锁」等）**10/10** 被对应用例抓住。
-- 新增 `C:\APP\_tts_track_repro.js`：把页面脚本装进假 Agora/DOM 沙箱（`node:vm`），跑「进房 → 推 PCM → 退房 → 重进房 → 换房间」。对照组（`--old`，直接读 git HEAD 的旧文件）精确复现症状——**首次有声 / 重进房无声 / 换房无声**，`AudioContext` 只建了 1 个；修复后三轮皆有声、`AudioContext` 建 3 个。这个场景 CI 覆盖不到（无 Chromium），故独立成脚本保留。
+- 全量 **187 passed**；`ruff check` 干净。16 条变异（逐条回退改动，含「退房不拆轨道」「退房不停采集」「采集不记归属」「回到『表里已有该 uid 就直接返回』」「不发语言约束」「语言约束插在人格之前」「去掉 `start_session` 的锁」等）**16/16** 被对应用例抓住。
+- 新增 `C:\APP\_rejoin_repro.js`：把页面脚本装进假 Agora/DOM 沙箱（`node:vm`），**两个方向一起跑**——输出方向「进房 → 推 PCM → 退房 → 重进房 → 换房间」，输入方向「进房 → 开监听 → 对方说话 → 退房 → 重进房 → 对方再说话」。对照组（`--old`，直接读 git HEAD 的旧文件）精确复现两个症状：修复前输出方向 **首次有声 / 重进房无声 / 换房无声**（`AudioContext` 只建 1 个），输入方向 **首次收得到 / 重进房与换房收不到**（`capture started` 只打印一次）；修复后两个方向三轮全通过。这个场景 CI 覆盖不到（无 Chromium），故独立成脚本保留。
 
 ## [2.0.3] - 2026-09-29
 

@@ -547,6 +547,10 @@ window.agoraLeave = async () => {
   }
 
   currentAgoraUid = null;
+  // 别人的麦克风采集也要一起停：采集源是**那个 client 的**远端 audioTrack，
+  // client 一走就只会推静音；而 remoteCaptures 留着旧 uid 还会让重进房时的
+  // startRemoteCapture 直接短路返回 —— 房间里有声音，agent 却什么都收不到。
+  stopAllRemoteCaptures();
   // 退房后上一次房间的状态就无效了，必须清掉，否则会把旧状态当成本房状态显示
   voiceStates.clear();
   // 播放队列同理：都是上一场会话的排期
@@ -872,7 +876,14 @@ function stopAllRemoteCaptures() {
 
 async function startRemoteCapture(user) {
   const uid = String(user.uid);
-  if (remoteCaptures.has(uid)) return;
+  const existing = remoteCaptures.get(uid);
+  if (existing) {
+    // 采集同样是**绑定在具体 client 上的**（源是那个 client 的远端 audioTrack）。
+    // 换了 client 还留着旧条目，就是「重进房/换房后别人说话它听不见」：
+    // 旧 ctx 的源已经随上一场会话一起死了，只会推静音。
+    if (existing.clientRef === client) return;
+    stopRemoteCapture(uid);
+  }
   if (!user.audioTrack) return;
   try {
     const mst = user.audioTrack.getMediaStreamTrack();
@@ -907,7 +918,7 @@ async function startRemoteCapture(user) {
     src.connect(processor);
     processor.connect(mute);
     mute.connect(ctx.destination);
-    remoteCaptures.set(uid, { ctx, src, processor, mute });
+    remoteCaptures.set(uid, { ctx, src, processor, mute, clientRef: client });
     console.log("[duplex] capture started", uid);
   } catch (e) {
     console.warn("[duplex] start capture failed", uid, e);

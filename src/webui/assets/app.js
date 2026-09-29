@@ -1382,17 +1382,23 @@ async function voiceSpeak() {
   const status = $('speak-status');
   const value = input ? input.value.trim() : '';
   if (!value) {
-    if (status) status.textContent = '请输入要说的话';
+    if (status) status.textContent = '请输入要发送的内容';
     return;
   }
   try {
-    if (status) status.textContent = '合成中…';
+    if (status) status.textContent = '发送中…';
     const data = await api('/api/voice/speak', { method: 'POST', body: { text: value } });
-    if (status) status.textContent = '已推送（' + (data.pcm_bytes || 0) + ' bytes）';
-    toast('已开口', value.slice(0, 24), 'ok');
+    if (status) {
+      // Live 模式是「交给模型，由它开口」，没有本地合成的字节数 —— 照级联那套
+      // 写「已推送（0 bytes）」会让人以为失败了。
+      status.textContent = data.mode === 'live'
+        ? '已发送，等 AI 开口…'
+        : '已朗读（' + (data.pcm_bytes || 0) + ' bytes）';
+    }
+    toast(data.mode === 'live' ? '已发送' : '已朗读', value.slice(0, 24), 'ok');
   } catch (err) {
     if (status) status.textContent = err.message;
-    toast('开口失败', err.message, 'err');
+    toast('发送失败', err.message, 'err');
   }
 }
 
