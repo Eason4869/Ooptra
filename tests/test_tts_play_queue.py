@@ -124,3 +124,57 @@ def test_sources_are_tracked_and_released() -> None:
 def test_leave_clears_the_queue() -> None:
     body = _fn(_player_source(), "agoraLeave")
     assert "ttsSources" in body and re.search(r"ttsNextTime\s*=\s*0", body)
+
+
+# ----------------------------------------------------------------------
+# 退房必须拆掉 TTS 轨道：不拆就是「二次进房后一句话都不说」
+#
+# 真实故障：agoraLeave 只清了播放队列，ttsTrack/ttsPublished 残留成「已发布」。
+# 二次进房时 ensureTtsTrack 的两个分支（!ttsCtx / !ttsPublished）同时短路，模型
+# 音频全灌进一个已经离开的 client —— 服务端日志一切正常（session ready、joined），
+# 房间里却完全没声音。页面是进程级复用的（voice_browser 只在 start() 里 goto 一次），
+# 所以这些模块级变量真的会跨房间残留。
+# ----------------------------------------------------------------------
+
+
+def test_leave_tears_down_the_tts_track() -> None:
+    body = _fn(_player_source(), "agoraLeave")
+    assert "teardownTtsPipeline()" in body, "退房没有拆 TTS 轨道"
+
+
+def test_teardown_runs_while_the_client_still_exists() -> None:
+    """unpublish 必须走 client，所以拆解要排在 ``client = null`` 之前。"""
+    body = _fn(_player_source(), "agoraLeave")
+    assert body.index("teardownTtsPipeline()") < body.index("client = null"), (
+        "拆解排在 client 置空之后，unpublish 会拿到 null"
+    )
+
+
+def test_teardown_resets_every_publish_flag() -> None:
+    body = _fn(_player_source(), "teardownTtsPipeline")
+    for reset in (
+        r"ttsTrack\s*=\s*null",
+        r"ttsPublished\s*=\s*false",
+        r"ttsPublishedFor\s*=\s*null",
+        r"ttsCtx\s*=\s*null",
+        r"ttsDest\s*=\s*null",
+    ):
+        assert re.search(reset, body), f"拆解漏了 {reset}（残留会让下次进房短路）"
+    assert "unpublishTrackSafely" in body, "旧轨道要从 client 上摘掉，不能只丢引用"
+    assert "closeTrackSafely" in body, "旧轨道要 close，否则 MediaStream 泄漏"
+
+
+def test_ensure_tts_track_rebuilds_when_the_client_changed() -> None:
+    """换了 client（重进房/换频道）就必须重建，不能复用旧轨道。"""
+    body = _fn(_player_source(), "ensureTtsTrack")
+    guard = re.search(r"ttsPublishedFor\s*!==\s*client", body)
+    assert guard, "没有「发布目标已不是当前 client」的判定"
+    assert guard.start() < body.index("if (!ttsCtx)"), "判定要在复用 AudioContext 之前"
+    assert "teardownTtsPipeline()" in body, "判定命中后要真的拆掉重建"
+
+
+def test_publish_records_which_client_owns_the_track() -> None:
+    body = _fn(_player_source(), "ensureTtsTrack")
+    assert re.search(r"ttsPublishedFor\s*=\s*client", body), (
+        "publish 后没记下归属 client，重进房就检测不到轨道已经失效"
+    )
