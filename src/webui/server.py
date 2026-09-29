@@ -150,7 +150,11 @@ class WebUIConsole:
 
     @web.middleware
     async def _auth_middleware(self, request: web.Request, handler: Any) -> web.StreamResponse:
-        if not self._token or not request.path.startswith("/api/"):
+        path = request.path
+        protected = path.startswith("/api/") or path.startswith(
+            ("/voice/", "/health", "/oopz/", "/persona", "/memory")
+        )
+        if not self._token or not protected:
             return await handler(request)
 
         provided = (
