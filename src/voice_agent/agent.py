@@ -460,7 +460,8 @@ class VoiceAgent:
                     channel_key=f"{self._area}/{self._channel}",
                 )
                 self.last_reply = text
-                self.turns += 1
+                # 轮次不在这里计：模型出声后会推 turnComplete，由 on_turn_end 计一次。
+                # 这里也 +1 的话，一次 /voice/speak 会被记成两轮。
                 return {"ok": True, "chars": len(text), "mode": "live"}
 
         if not hasattr(self.backend, "tts"):

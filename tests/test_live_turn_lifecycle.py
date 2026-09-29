@@ -71,6 +71,7 @@ class FakeBackend:
     def __init__(self) -> None:
         self.interrupt_calls = 0
         self.pushed_frames = 0
+        self.spoken: list[str] = []
         self.session_active = True
         self._audio_out: Any = None
         self._turn_out: Any = None
@@ -89,6 +90,9 @@ class FakeBackend:
 
     async def push_audio(self, pcm: bytes, rate: int | None = None) -> None:
         self.pushed_frames += 1
+
+    async def speak_text(self, text: str) -> None:
+        self.spoken.append(text)
 
     async def start_session(self) -> None:
         pass
@@ -140,6 +144,8 @@ def _make_agent(*, live: bool = True) -> tuple[VoiceAgent, FakeDuplex, FakeBacke
     agent.last_reply = ""
     agent.last_user_text = ""
     agent.turns = 0
+    agent._area = "area1"
+    agent._channel = "chan1"
     agent._utterance_tasks = set()
 
     duplex, backend = FakeDuplex(), FakeBackend()
@@ -210,6 +216,25 @@ def test_turns_increments_once_per_reply() -> None:
         assert agent.turns == 0, "分片到达就自增了轮次（回合边界才是唯一计数点）"
 
         await backend.end_turn(False)
+        assert agent.turns == 1
+
+    asyncio.run(run())
+
+
+def test_live_speak_text_counts_the_turn_at_the_boundary() -> None:
+    """``/voice/speak`` 在 Live 模式下不自己计轮次，交给回合边界 —— 否则一次说
+    一句话会被记成两轮（API 刚 +1，模型说完的 ``turnComplete`` 再 +1）。"""
+
+    async def run() -> None:
+        agent, _duplex, backend = _make_agent()
+        await _wire(agent)
+
+        result = await agent.speak_text("你好")
+        assert result["mode"] == "live"
+        assert backend.spoken == ["你好"]
+        assert agent.turns == 0, "speak_text 自己计了轮次，回合边界会再计一次"
+
+        await backend.end_turn(False)  # 模型说完了
         assert agent.turns == 1
 
     asyncio.run(run())
