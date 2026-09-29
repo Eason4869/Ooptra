@@ -14,6 +14,7 @@
   <a href="#快速开始">快速开始</a> ·
   <a href="#对端对接">对端对接</a> ·
   <a href="#web-控制台">Web 控制台</a> ·
+  <a href="#语音对话">语音对话</a> ·
   <a href="#关键配置">关键配置</a> ·
   <a href="#常见问题">常见问题</a> ·
   <a href="CHANGELOG.md">更新日志</a>
@@ -37,6 +38,8 @@ Ooptra 把 Oopz 的频道会话转换为 [OneBot v11](https://github.com/botuniv
 | 身份映射 | `group_id` / `user_id` 与 Oopz 域、频道、成员双向映射，持久化在 SQLite，重启后编号稳定 |
 | 凭据维护 | 账号密码或网页版登录；`device_id` / `person_uid` / `jwt_token` / RSA 私钥自动写回配置并自动重连 |
 | Web 控制台 | 状态总览、实时日志、配置编辑、账号与凭据管理；前端单文件无外部依赖 |
+| 语音对话 | 可选模块：进 Oopz 语音房 **Live 端到端语音**（类似 Gemini Live，语音进语音出） |
+| 语音 API | 与控制台同端口的 `/api/voice/*`、`/api/persona`、`/api/memory`，供外部插件调用 |
 | 项目边界 | 单进程运行，不含内置命令、插件系统与消息存储，只做桥接与运维 |
 
 ## 运行链路
@@ -112,6 +115,32 @@ Windows 下可以双击 `start_silent.vbs` 静默后台启动；把它放进「�
 
 把 `WEBUI_CONFIG["host"]` 改成 `0.0.0.0` 可以让同网段的设备访问，但**务必同时设置 `token`**，否则任何人都能打开控制台。
 设置令牌后访问需带上它：`http://<你的 IP>:3090/?token=<token>`。
+
+## 语音对话（可选）
+
+启用 `VOICE_AGENT_CONFIG.enabled` 后，bot 可进入 Oopz 语音频道参与实时语音：
+
+- **听**：订阅 Agora 远端音轨，PCM **持续**灌入 Live 会话（不是先转文字）
+- **想**：模型在语音域直接推理（`gemini_live` / BidiGenerateContent）
+- **说**：模型音频 chunk **流式**推回语音房，支持抢话打断（`barge_in`）
+- **兜底**：可选 `mimo_cascade`（ASR→LLM→TTS），延迟更高，适合无 Live 配额时
+- **管**：Web 控制台「语音」页选域/频道进退房、看成员、改人格与共享记忆
+
+Web 控制台同时挂载 JSON API（与控制台同端口，默认 `3090`，复用 `WEBUI_CONFIG.token`）：
+
+```http
+GET  /api/voice/status
+GET  /api/voice/members?area=
+POST /api/voice/join     {"area":"","channel":""}
+POST /api/voice/leave
+GET  /api/oopz/areas
+GET  /api/oopz/channels?area=
+GET  /api/persona        PUT /api/persona
+GET  /api/memory         POST /api/memory   DELETE /api/memory
+POST /api/voice/speak    {"text":"..."}
+```
+
+依赖：`playwright` + Chromium（见 `requirements-optional.txt`）。未启用语音时行为与纯桥接一致。
 
 ## 关键配置
 

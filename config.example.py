@@ -107,6 +107,60 @@ WEBUI_CONFIG = {
     "log_lines": 300,
 }
 
+# 语音实时对话（Voice Agent）—— Web 控制台「配置」页可改
+VOICE_AGENT_CONFIG = {
+    "enabled": False,                 # 总开关；不影响纯 OneBot 桥接
+    "auto_join": False,
+    "area": "",                       # 留空用 OOPZ_CONFIG["default_area"]
+    "channel": "",                    # 留空用 OOPZ_CONFIG["default_channel"]
+
+    # 语音对话架构：Live 端到端（推荐）| 级联兜底
+    #   gemini_live   —— 语音进语音出（Live，类似电话）
+    #   mimo_cascade  —— ASR→LLM→TTS（延迟更高，可离线/国内节点）
+    #   openai_realtime —— 骨架，协议待接
+    "backend": "gemini_live",
+    "persona": "你是 Oopz 语音频道助手，说话简洁友好，像在语音房里自然聊天。",
+    "barge_in": True,
+    "vad_mode": "local",
+    "listen_only_uids": [],
+    "reply_text_to_channel": False,
+
+    "sample_rate_in": 16000,
+    "sample_rate_out": 24000,
+    "silence_ms": 700,
+    "max_utterance_ms": 15000,
+
+    "mimo": {
+        "api_key": "",                # 或环境变量 MIMO_API_KEY
+        "base_url": "https://api.xiaomimimo.com/v1",
+        "asr_model": "mimo-v2.5-asr",
+        "llm_model": "mimo-v2.6-flash",
+        "tts_model": "mimo-v2.5-tts",
+        "tts_voice": "冰糖",
+    },
+    "gemini": {
+        "api_key": "",                # 或 GEMINI_API_KEY
+        "model": "gemini-2.0-flash-live-001",
+        "voice": "Puck",
+    },
+    "openai": {
+        "api_key": "",
+        "realtime_model": "gpt-4o-mini-realtime-preview",
+    },
+
+    "memory_path": "data/voice_memory.jsonl",
+    "memory_max_turns": 30,
+}
+
+# 语音 HTTP API —— 已合并到 WebUI（http://127.0.0.1:3090/api/voice/*）
+# 仅当需要独立端口给外部服务时再打开；默认关闭，用 WEBUI_CONFIG.token 鉴权。
+VOICE_API_CONFIG = {
+    "enabled": False,
+    "host": "127.0.0.1",
+    "port": 3091,
+    "token": "",
+}
+
 # 名称映射表（手工补充 ID -> 名称；运行时会自动发现新 ID 并写入 data/names.json）
 NAME_MAP = {
     "users": {},

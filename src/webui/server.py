@@ -51,10 +51,12 @@ class WebUIConsole:
         controller: Any,
         *,
         config: dict[str, Any] | None = None,
+        voice_runtime: Any = None,
     ) -> None:
         self._state = state
         self._controller = controller
         self._config = config if isinstance(config, dict) else getattr(runtime_config, "WEBUI_CONFIG", {}) or {}
+        self._voice_runtime = voice_runtime
         self._tailer = LogTailer(LOGS_DIR)
         self._login = OopzLoginService(controller, state)
         self._token = ""
@@ -106,6 +108,13 @@ class WebUIConsole:
                 web.post("/api/bridge/restart", self._handle_bridge_restart),
             ]
         )
+        if self._voice_runtime is not None:
+            try:
+                from webui.voice_routes import mount_voice_routes
+
+                mount_voice_routes(app, self._voice_runtime)
+            except Exception:
+                logger.exception("挂载语音路由失败")
 
         runner = web.AppRunner(app, access_log=None)
         await runner.setup()
@@ -211,6 +220,7 @@ class WebUIConsole:
                         "default_channel": str(oopz_cfg.get("default_channel") or ""),
                         "proxy": str(oopz_cfg.get("proxy") or ""),
                     },
+                    "voice": self._voice_payload(),
                     "onebot": {
                         "enabled": bool(onebot_cfg.get("enabled", False)),
                         "enable_ws_reverse": bool(onebot_cfg.get("enable_ws_reverse", False)),
@@ -236,6 +246,20 @@ class WebUIConsole:
                 },
             }
         )
+
+    def _voice_payload(self) -> dict[str, Any]:
+        runtime = self._voice_runtime
+        if runtime is None:
+            return {"enabled": False, "status": {}}
+        try:
+            status = runtime.agent.status()
+        except Exception:
+            status = {}
+        return {
+            "enabled": bool(runtime.agent_settings.enabled),
+            "backend": runtime.agent_settings.backend,
+            "status": status,
+        }
 
     async def _handle_credentials(self, _request: web.Request) -> web.StreamResponse:
         return web.json_response({"ok": True, "credentials": credentials_summary()})

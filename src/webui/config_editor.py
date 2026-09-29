@@ -26,6 +26,8 @@ GROUP_SOURCES: dict[str, str] = {
     "oopz": "OOPZ_CONFIG",
     "onebot": "ONEBOT_V11_CONFIG",
     "webui": "WEBUI_CONFIG",
+    "voice": "VOICE_AGENT_CONFIG",
+    "voice_api": "VOICE_API_CONFIG",
 }
 
 # 分组 -> 展示信息：控制台标题与一句话引导（前端渲染用）。
@@ -37,6 +39,14 @@ GROUP_META: dict[str, dict[str, str]] = {
     "oopz": {
         "title": "Oopz 账号与目标",
         "desc": "bot 在 Oopz 侧的身份与默认落点。登录凭据会自动维护，跑通后这里基本不用改。",
+    },
+    "voice": {
+        "title": "语音对话 Agent",
+        "desc": "Oopz 语音房 Live 对话（语音进语音出）。默认 Gemini Live；可选级联兜底。",
+    },
+    "voice_api": {
+        "title": "语音 HTTP API",
+        "desc": "供 AstrBot 插件或本机脚本查询语音状态、进退房、读写人格与记忆。",
     },
     "webui": {
         "title": "Web 控制台",
@@ -225,6 +235,59 @@ FIELD_SPECS: dict[str, dict[str, dict[str, Any]]] = {
             "tier": "adv",
             "section": "数据",
             "hint": "存 group_id/self_id 映射，删除会导致对端看到的群号全部变化",
+        },
+    },
+    "voice": {
+        "enabled": {"type": "bool", "label": "启用语音 Agent", "tier": "basic"},
+        "backend": {
+            "type": "str",
+            "label": "对话模型",
+            "tier": "basic",
+            "hint": "gemini_live（Live 端到端，默认）| mimo_cascade（级联兜底）| openai_realtime",
+        },
+        "persona": {
+            "type": "str",
+            "label": "人格提示词",
+            "tier": "basic",
+            "hint": "语音房里 bot 的说话风格与角色设定",
+        },
+        "area": {"type": "str", "label": "默认域 ID", "tier": "basic"},
+        "channel": {"type": "str", "label": "默认语音频道 ID", "tier": "basic"},
+        "auto_join": {"type": "bool", "label": "启动后自动进房", "tier": "adv", "section": "行为"},
+        "barge_in": {"type": "bool", "label": "允许抢话打断", "tier": "adv", "section": "行为"},
+        "reply_text_to_channel": {
+            "type": "bool",
+            "label": "字幕发到文字频道",
+            "tier": "adv",
+            "section": "行为",
+        },
+        "silence_ms": {
+            "type": "int",
+            "label": "静音断句(毫秒)",
+            "tier": "adv",
+            "section": "音频",
+            "min": 200,
+            "max": 3000,
+        },
+        "sample_rate_in": {"type": "int", "label": "输入采样率", "tier": "adv", "section": "音频", "min": 8000, "max": 48000},
+        "sample_rate_out": {"type": "int", "label": "输出采样率", "tier": "adv", "section": "音频", "min": 8000, "max": 48000},
+    },
+    "voice_api": {
+        "enabled": {"type": "bool", "label": "启用语音 API", "tier": "basic"},
+        "host": {
+            "type": "str",
+            "label": "监听地址",
+            "tier": "basic",
+            "nonempty": True,
+            "hint": "127.0.0.1 仅本机",
+        },
+        "port": {"type": "int", "label": "监听端口", "tier": "basic", "min": 1, "max": 65535},
+        "token": {
+            "type": "str",
+            "label": "访问令牌",
+            "sensitive": True,
+            "tier": "basic",
+            "hint": "留空=不校验；建议填写",
         },
     },
     "webui": {
@@ -461,7 +524,16 @@ def _patched_text(text: str, updates: dict[str, dict[str, Any]]) -> str:
         source_name = GROUP_SOURCES[group]
         dict_node = assignments.get(source_name)
         if dict_node is None:
-            raise RuntimeError(f"config.py 找不到 {source_name}，无法写入")
+            # config.py 尚无该分组时，文件末尾追加空字典再写入
+            appended = f"\n{source_name} = {{\n}}\n"
+            text = text + appended
+            tree = ast.parse(text, filename=CONFIG_PATH)
+            lines = text.splitlines(keepends=True)
+            offsets = _line_offsets(lines)
+            assignments = _dict_assignments(tree)
+            dict_node = assignments.get(source_name)
+            if dict_node is None:
+                raise RuntimeError(f"config.py 找不到 {source_name}，无法写入")
 
         existing: dict[str, ast.expr] = {}
         for key_node, value_node in zip(dict_node.keys, dict_node.values, strict=True):
@@ -506,9 +578,12 @@ def _sync_runtime(namespace: dict[str, Any]) -> None:
     for source_name in GROUP_SOURCES.values():
         target = getattr(module, source_name, None)
         fresh = namespace.get(source_name)
-        if isinstance(target, dict) and isinstance(fresh, dict):
-            target.clear()
-            target.update(copy.deepcopy(fresh))
+        if isinstance(fresh, dict):
+            if isinstance(target, dict):
+                target.clear()
+                target.update(copy.deepcopy(fresh))
+            else:
+                setattr(module, source_name, copy.deepcopy(fresh))
 
 
 def apply_updates(updates: Any) -> dict[str, Any]:

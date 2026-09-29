@@ -47,7 +47,14 @@ async def run() -> None:
 
     state = BridgeState()
     controller = BridgeController(state)
-    console = WebUIConsole(state, controller, config=WEBUI_CONFIG)
+    voice_runtime = None
+    try:
+        from voice_agent.runtime import get_voice_runtime
+
+        voice_runtime = get_voice_runtime()
+    except Exception:
+        voice_runtime = None
+    console = WebUIConsole(state, controller, config=WEBUI_CONFIG, voice_runtime=voice_runtime)
 
     stop_event = asyncio.Event()
     _install_signal_handlers(stop_event)
@@ -61,8 +68,22 @@ async def run() -> None:
     await controller.start()
 
     try:
+        if voice_runtime is not None and voice_runtime.enabled:
+            await voice_runtime.start()
+            logger.info("语音 Agent 已启动（API 走 WebUI /api/voice/*）")
+        else:
+            logger.info("语音 Agent 未启用（VOICE_AGENT_CONFIG.enabled=False）")
+    except Exception:
+        logger.exception("语音 Agent 启动失败，不影响文字桥接")
+
+    try:
         await stop_event.wait()
     finally:
+        if voice_runtime is not None:
+            try:
+                await voice_runtime.stop()
+            except Exception:
+                logger.exception("语音 Agent 停止失败")
         await controller.stop()
         await console.stop()
     logger.info("桥接已停止。")

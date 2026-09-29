@@ -1,6 +1,7 @@
 # 可选依赖，只在使用对应功能时才需要安装。
 
 # WebUI「Oopz 登录」-> 方式二：网页版登录（Playwright 打开 Oopz 网页版抓取凭据）
+# 语音 Agent 全双工进房（VOICE_AGENT_CONFIG）也依赖 Playwright + Chromium
 #   pip install -r requirements-optional.txt
 #   python -m playwright install chromium
 playwright>=1.40,<2
@@ -8,3 +9,6 @@ playwright>=1.40,<2
 # OOPZ_CONFIG.proxy 填 socks5://... 时才需要（默认只有 http/https 代理）
 aiohttp-socks>=0.10,<1
 python-socks>=2.5,<3
+
+# Gemini Live（BidiGenerateContent）双向语音会话
+websockets>=12,<14

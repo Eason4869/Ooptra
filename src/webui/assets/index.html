@@ -85,18 +85,36 @@
       <div><b>Ooptra</b><i>桥接控制台</i></div>
     </div>
     <nav class="rail-nav">
-      <button class="nav-item" data-page="overview">
-        <svg viewBox="0 0 24 24"><path d="M4 13h6V4H4v9Zm0 7h6v-4H4v4Zm10 0h6v-9h-6v9Zm0-16v4h6V4h-6Z"/></svg>概览
-      </button>
-      <button class="nav-item" data-page="logs">
-        <svg viewBox="0 0 24 24"><path d="M4 5h16v3H4V5Zm0 6h16v2H4v-2Zm0 5h10v2H4v-2Z"/></svg>日志
-      </button>
-      <button class="nav-item" data-page="config">
-        <svg viewBox="0 0 24 24"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm9 4-2 1.2.3 2.3-2.1 2.1-2.3-.3L13.7 21h-3.4l-1.2-2.7-2.3.3-2.1-2.1.3-2.3L3 13v-2l2-1.2-.3-2.3 2.1-2.1 2.3.3L10.3 3h3.4l1.2 2.7 2.3-.3 2.1 2.1-.3 2.3L21 11v1Z"/></svg>配置
-      </button>
-      <button class="nav-item" data-page="account">
-        <svg viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm0 2c-4 0-8 2-8 5v1h16v-1c0-3-4-5-8-5Z"/></svg>账号
-      </button>
+      <div class="nav-group">
+        <div class="nav-group-label">监控</div>
+        <button class="nav-item" data-page="overview">
+          <svg viewBox="0 0 24 24"><path d="M4 13h6V4H4v9Zm0 7h6v-4H4v4Zm10 0h6v-9h-6v9Zm0-16v4h6V4h-6Z"/></svg>总览
+        </button>
+        <button class="nav-item" data-page="logs">
+          <svg viewBox="0 0 24 24"><path d="M4 5h16v3H4V5Zm0 6h16v2H4v-2Zm0 5h10v2H4v-2Z"/></svg>日志
+        </button>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">语音</div>
+        <button class="nav-item" data-page="voice">
+          <svg viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Zm-7 9a7 7 0 0 0 14 0h-2a5 5 0 1 1-10 0H5Zm6 8h2v3h-2v-3Z"/></svg>语音台
+        </button>
+        <button class="nav-item sub" data-page="voice" data-tab="members">
+          <svg viewBox="0 0 24 24"><path d="M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm8 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM2 19c0-3 3-5 6-5s6 2 6 5H2Zm12.5 0c0-1.5-.5-2.7-1.4-3.7 3.2.4 5.9 2.1 5.9 3.7H14.5Z"/></svg>房间成员
+        </button>
+        <button class="nav-item sub" data-page="voice" data-tab="persona">
+          <svg viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 5 3.4 8.4 8 9 4.6-.6 8-4 8-9V6l-8-3Zm0 4a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5Zm0 12c-2 0-3.8-1-5-2.4.1-1.6 3.3-2.6 5-2.6s4.9 1 5 2.6C15.8 18 14 19 12 19Z"/></svg>人格与记忆
+        </button>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">系统</div>
+        <button class="nav-item" data-page="config">
+          <svg viewBox="0 0 24 24"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm9 4-2 1.2.3 2.3-2.1 2.1-2.3-.3L13.7 21h-3.4l-1.2-2.7-2.3.3-2.1-2.1.3-2.3L3 13v-2l2-1.2-.3-2.3 2.1-2.1 2.3.3L10.3 3h3.4l1.2 2.7 2.3-.3 2.1 2.1-.3 2.3L21 11v1Z"/></svg>配置
+        </button>
+        <button class="nav-item" data-page="account">
+          <svg viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm0 2c-4 0-8 2-8 5v1h16v-1c0-3-4-5-8-5Z"/></svg>账号
+        </button>
+      </div>
     </nav>
     <div class="rail-foot">
       <button class="nav-item small" id="btn-restart">
@@ -204,7 +222,147 @@
     </section>
 
     <!-- 配置 -->
-    <section class="page" id="page-config">
+        <!-- 语音工作台 -->
+    <section class="page" id="page-voice">
+      <div class="subtabs" id="voice-tabs">
+        <button class="subtab is-active" data-tab="session">会话控制</button>
+        <button class="subtab" data-tab="members">房间成员</button>
+        <button class="subtab" data-tab="persona">人格与记忆</button>
+      </div>
+
+      <!-- 会话 -->
+      <div class="vpane is-active" id="vpane-session">
+        <div class="verdict voice-verdict" id="voice-verdict">
+          <span class="verdict-rail"></span>
+          <div class="verdict-text">
+            <b id="voice-verdict-title">语音 Agent</b>
+            <p id="voice-verdict-detail">读取语音会话状态…</p>
+          </div>
+        </div>
+
+        <section class="card" id="voice-join-card">
+          <header class="card-head">
+            <h3>进入语音频道</h3>
+            <button class="btn ghost sm" id="voice-targets-refresh">刷新列表</button>
+            <button class="btn primary sm" id="voice-join">进房</button>
+            <button class="btn ghost sm" id="voice-leave">退房</button>
+          </header>
+
+          <!-- 一级：域标签 -->
+          <div class="chip-tabs" id="area-tabs" role="tablist">
+            <button type="button" class="chip-tab is-active" data-area="">默认域</button>
+          </div>
+
+          <!-- 二级：该域下的语音频道卡片 -->
+          <div class="channel-panel">
+            <div class="channel-head">
+              <b id="channel-area-label">频道</b>
+              <span class="hint" id="join-hint">选择域与频道后进房；留空则用配置默认</span>
+            </div>
+            <div class="channel-grid" id="channel-grid">
+              <button type="button" class="channel-card is-active" data-channel="">
+                <span class="ch-name">默认频道</span>
+                <span class="ch-sub">config 默认</span>
+              </button>
+            </div>
+          </div>
+          <input type="hidden" id="join-area" value="" />
+          <input type="hidden" id="join-channel" value="" />
+        </section>
+
+        <div class="tiles">
+          <article class="tile">
+            <header><i class="dot"></i>模型</header>
+            <b class="tile-value" id="v-backend">—</b>
+            <p class="tile-sub" id="v-backend-sub">对话后端</p>
+          </article>
+          <article class="tile">
+            <header><i class="dot"></i>会话</header>
+            <b class="tile-value" id="v-joined">—</b>
+            <p class="tile-sub" id="v-target">—</p>
+          </article>
+          <article class="tile">
+            <header><i class="dot"></i>回合</header>
+            <b class="tile-value" id="v-turns">0</b>
+            <p class="tile-sub" id="v-speaking">空闲</p>
+          </article>
+          <article class="tile">
+            <header><i class="dot"></i>API</header>
+            <b class="tile-value" id="v-api">/api/voice/*</b>
+            <p class="tile-sub">与控制台同端口 3090</p>
+          </article>
+        </div>
+
+        <div class="split">
+          <section class="card">
+            <header class="card-head"><h3>快捷开口</h3></header>
+            <p class="hint">合成一句话并推到当前语音房（需已进房）。</p>
+            <div class="speak-row">
+              <input class="control grow" id="speak-text" placeholder="例如：大家好，我是语音助手" />
+              <button class="btn primary" id="speak-btn">说一句</button>
+            </div>
+            <p class="hint" id="speak-status"></p>
+          </section>
+          <section class="card">
+            <header class="card-head"><h3>最近对话</h3></header>
+            <ul class="feed" id="voice-transcript"></ul>
+          </section>
+        </div>
+      </div>
+
+      <!-- 成员 -->
+      <div class="vpane" id="vpane-members">
+        <div class="toolbar">
+          <select class="control grow" id="member-area"></select>
+          <button class="btn primary" id="member-refresh">刷新成员</button>
+          <span class="hint" id="member-status"></span>
+        </div>
+        <section class="card">
+          <header class="card-head">
+            <h3>语音房成员</h3>
+            <span class="chip" id="member-count">0</span>
+          </header>
+          <div class="table-wrap">
+            <table class="table" id="member-table">
+              <thead>
+                <tr><th>UID</th><th>昵称</th><th>麦克风</th><th>扬声器</th></tr>
+              </thead>
+              <tbody id="member-body">
+                <tr><td colspan="4" class="muted">点击「刷新成员」加载</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      <!-- 人格与记忆 -->
+      <div class="vpane" id="vpane-persona">
+        <div class="split">
+          <section class="card">
+            <header class="card-head">
+              <h3>人格提示词</h3>
+              <button class="btn primary sm" id="persona-save">保存</button>
+            </header>
+            <p class="hint">语音 Agent 的角色设定；会与配置页的 persona 同步。</p>
+            <textarea class="control grow ta" id="persona-text" rows="10" placeholder="你是……"></textarea>
+            <p class="hint" id="persona-status"></p>
+          </section>
+          <section class="card">
+            <header class="card-head">
+              <h3>共享记忆</h3>
+              <div class="btn-row">
+                <button class="btn ghost sm" id="memory-refresh">刷新</button>
+                <button class="btn warn sm" id="memory-clear">清空</button>
+              </div>
+            </header>
+            <p class="hint">JSONL 记忆，可被 AstrBot 插件读写，保证多端人格一致。</p>
+            <ul class="feed" id="memory-list"></ul>
+          </section>
+        </div>
+      </div>
+    </section>
+
+<section class="page" id="page-config">
       <div class="note">
         改动只写回 <code>config.py</code> 的对应字段，注释与其它内容保持原样；敏感项留空表示不修改。
         <span class="note-alt">登录凭据（device_id / person_uid / jwt_token）由登录流程自动维护，要看就去「账号」页。</span>
