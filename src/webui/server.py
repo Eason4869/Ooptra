@@ -73,6 +73,13 @@ class WebUIConsole:
     def base_url(self) -> str:
         return f"http://{self._host}:{self._port}"
 
+    @property
+    def bind_address(self) -> tuple[str, int] | None:
+        """实际绑定的 (host, port)；未启用或端口被占导致启动失败时为 None。"""
+        if self._site is None:
+            return None
+        return (self._host, self._port)
+
     async def start(self) -> None:
         if not bool(self._config.get("enabled", True)):
             logger.info("Web 控制台已按 config.py 的 WEBUI_CONFIG.enabled 禁用")
@@ -277,8 +284,13 @@ class WebUIConsole:
         from voice_agent.settings import resolve_agent_proxy_url
         from webui.update_check import check_github_update
 
+        # str() 必须包住整个表达式：写成 str(getattr(...)).get(...) 会对字符串调 .get()，
+        # 无条件抛 AttributeError，导致「检查更新」永远 500。
+        agent_config = getattr(runtime_config, "VOICE_AGENT_CONFIG", {}) or {}
         proxy = resolve_agent_proxy_url(
-            str(getattr(runtime_config, "VOICE_AGENT_CONFIG", {}) or {}).get("proxy", "") or ""
+            str(agent_config.get("proxy", "") or "")
+            if isinstance(agent_config, dict)
+            else ""
         )
         payload = await check_github_update(proxy=proxy)
         return web.json_response(payload)
