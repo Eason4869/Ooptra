@@ -193,8 +193,8 @@ python -m playwright install chromium
 
 ## 关键配置
 
-配置文件是 `config.py`，四个分组分别对应 `OOPZ_CONFIG`、`ONEBOT_V11_CONFIG`、`WEBUI_CONFIG`、`VOICE_AGENT_CONFIG`。
-控制台只改写白名单字段，其余内容与注释保持原样。
+配置文件是 `config.py`：`OOPZ_CONFIG`、`ONEBOT_V11_CONFIG`、`WEBUI_CONFIG` 是桥接与控制台的主体，
+`VOICE_AGENT_CONFIG`、`VOICE_API_CONFIG` 对应语音模块（默认关闭）。控制台只改写白名单字段，其余内容与注释保持原样。
 
 | 字段 | 说明 |
 | --- | --- |
