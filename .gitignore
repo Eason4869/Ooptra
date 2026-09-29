@@ -6,6 +6,9 @@
 /.config.py.*.bak
 /.private_key.py.*.tmp
 /.private_key.py.*.bak
+# 手工备份（如 config.py.bak-20260929_143721）同样含账密与 JWT
+/config.py.bak*
+/private_key.py.bak*
 .env
 .env.local
 !.env.example
