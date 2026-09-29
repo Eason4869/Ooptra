@@ -545,6 +545,13 @@ window.agoraLeave = async () => {
   currentAgoraUid = null;
   // 退房后上一次房间的状态就无效了，必须清掉，否则会把旧状态当成本房状态显示
   voiceStates.clear();
+  // 播放队列同理：都是上一场会话的排期
+  ttsNextTime = 0;
+  for (const src of Array.from(ttsSources)) {
+    try { src.stop(); } catch (_) {}
+  }
+  ttsSources.clear();
+  ttsPlaying = false;
   setState("idle");
 };
 
@@ -797,6 +804,11 @@ let ttsDest = null;
 let ttsTrack = null;
 let ttsPublished = false;
 let ttsPlaying = false;
+// 推流播放队列：Live 的分片常常快于实时到达（实测 5.76s 音频在 1.29s 内到齐），
+// 必须按时间轴排队播放，否则每片都「立即开始」会叠成一团噪音。
+let ttsNextTime = 0;        // 下一片应当开始播放的 AudioContext 时刻
+const ttsSources = new Set(); // 已排期未播完的 source，用于打断
+const TTS_LEAD = 0.08;      // 首片/欠载后预留的缓冲（秒），吸收到达抖动
 
 function floatTo16BitPCM(float32) {
   const out = new Int16Array(float32.length);
@@ -945,6 +957,7 @@ async function ensureTtsTrack(sampleRate) {
   if (!ttsCtx) {
     ttsCtx = new AudioContext({ sampleRate: sampleRate || 24000 });
     ttsDest = ttsCtx.createMediaStreamDestination();
+    ttsNextTime = 0; // 新上下文时间轴从 0 起算
     const mst = ttsDest.stream.getAudioTracks()[0];
     ttsTrack = AgoraRTC.createCustomAudioTrack({ mediaStreamTrack: mst });
     ttsTrack.setVolume(_currentVolume);
@@ -958,6 +971,13 @@ async function ensureTtsTrack(sampleRate) {
 
 window.agoraStopTts = async () => {
   ttsPlaying = false;
+  // 队列里的分片要真正停掉：只调音量的话，已排期的 source 会在音量恢复后继续播。
+  ttsNextTime = 0;
+  for (const src of Array.from(ttsSources)) {
+    try { src.stop(); } catch (_) {}
+    try { src.disconnect(); } catch (_) {}
+  }
+  ttsSources.clear();
   try {
     if (ttsTrack) ttsTrack.stopProcessAudioBuffer && ttsTrack.stopProcessAudioBuffer();
   } catch (_) {}
@@ -983,7 +1003,19 @@ window.agoraPushTtsPcm = async (b64, sampleRate, finish) => {
         const src = ttsCtx.createBufferSource();
         src.buffer = buf;
         src.connect(ttsDest);
-        src.start();
+        // 接在前一片的尾巴后面排队，而不是「立刻开始」：分片到达快了就攒着慢慢放，
+        // 到达抖动了也不会重叠。缓冲耗尽（欠载）时才重新起一个 lead。
+        const now = ttsCtx.currentTime;
+        let startAt = ttsNextTime;
+        if (startAt < now + 0.005) {
+          startAt = now + TTS_LEAD;
+        }
+        src.start(startAt);
+        ttsNextTime = startAt + buf.duration;
+        ttsSources.add(src);
+        src.onended = () => {
+          ttsSources.delete(src);
+        };
         ttsPlaying = true;
       }
     }

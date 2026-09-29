@@ -10,6 +10,7 @@
 - **WebUI 与独立 VOICE_API 同端口时抢占本机回环流量**：Windows 下 aiohttp 默认启用 `SO_REUSEADDR`，`0.0.0.0:3090` 与 `127.0.0.1:3090` 可同时绑定，更具体的回环 socket 优先接收本机请求，导致 WebUI 页面与 `/api/*` 在 `127.0.0.1` 上返回 404，而局域网地址正常。`VoiceApiServer.start()` 现检测到与 WebUI 监听地址相同时跳过启动并记录 WARNING。
 - **`GET /api/update` 恒返回 HTTP 500**：`str(getattr(...)).get(...)` 对字符串调用 `.get()`，必然抛出 `AttributeError`。
 - **房间成员页无法获取麦克风/扬声器状态**：Oopz 的 REST（`membersByChannels`）与网关事件均不提供静音状态，唯一来源是各客户端经 Agora `sendStreamMessage` 广播的 `{m, uid, cid, hm}`，而播放器此前仅发送不接收。现播放器监听 `stream-message` 事件并将状态回传 Python；`/voice/members` 新增 `live_state_received` 计数，为 `0` 表示本房未收到任何广播，此时静音列保持 `null`（未知）。
+- **推流语音分片重叠，人声无法辨识**：Gemini Live 生成音频**快于实时**——实测一段 4.43 秒的语音，13 个分片在 0.98 秒内即全部推送完毕。播放器对每个分片调用无参 `AudioBufferSourceNode.start()`（自当前时刻立即播放，而非接续上一分片），导致全部分片叠合播放并被压缩至 1.48 秒，叠加削波后完全听不清。现维护 `ttsNextTime` 游标按时间轴顺序排期，缓冲耗尽（欠载）时以 `TTS_LEAD`（80 ms）重新起头。同时 `agoraStopTts` 改为真正 `stop()` 已排期分片——原先仅以静音 30 ms 模拟中断，队列中的分片会在音量恢复后继续播放，抢话打断失效；退房时一并清空队列。
 
 ### 变更
 
@@ -18,7 +19,7 @@
 
 ### 测试
 
-- 新增 `tests/test_gemini_live_url.py`（15 条）与 `tests/test_voice_member_live_state.py`（32 条）；全量 **136 passed**。
+- 新增 `tests/test_gemini_live_url.py`（15 条）、`tests/test_voice_member_live_state.py`（32 条）与 `tests/test_tts_play_queue.py`（9 条）；全量 **145 passed**。
 
 ## [2.0.0] - 2026-09-29
 
