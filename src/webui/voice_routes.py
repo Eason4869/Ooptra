@@ -22,11 +22,14 @@
 响应形态（扁平，插件 format_status / format_members 直接读）：
 
     status:  {ok, joined, area, channel, state, ...}
-    members: {ok, count, members:[{uid,name,mic,speaker,m,hm,mic_muted,speaker_muted}],
-              area, channel, channel_counts}
+    members: {ok, count, members:[{uid,name,mic,speaker,m,hm,mic_muted,speaker_muted,live}],
+              area, channel, live_state_received, channel_counts}
              mic/speaker: true=开，false=闭，null=未知
              m/hm:        1=闭麦/闭听，0=正常，null=未知
              mic_muted/speaker_muted: true=闭，false=开，null=未知（WebUI 读这两个）
+             live:        该行的静音状态是否来自实时广播
+             live_state_received: 本房累计收到的静音状态广播条数
+             0 表示数据源没在广播（不是「都没闭麦」），此时静音列只能显示未知
 """
 
 from __future__ import annotations
@@ -75,17 +78,36 @@ def _muted(row: Any, muted_key: str, flag_key: str, state_key: str) -> bool | No
     return None
 
 
-def normalize_member(row: Any, name: str = "") -> dict[str, Any]:
+def _live_muted(live: Any, key: str) -> bool | None:
+    """从实时状态里取 m / hm（1=闭，0=开）；取不到返回 None。"""
+    value = _field(live, key) if live else None
+    if value is None:
+        return None
+    try:
+        return int(value) == 1
+    except (TypeError, ValueError):
+        return None
+
+
+def normalize_member(row: Any, name: str = "", live: Any = None) -> dict[str, Any]:
     """把 SDK 模型或原始 dict 归一成插件与 WebUI 都能读的成员结构。
 
     ``mic``/``speaker``/``m``/``hm`` 给插件读，``mic_muted``/``speaker_muted``
-    给 WebUI 读；Oopz 的 membersByChannels 不返回静音状态，取不到时一律为
-    ``None``（未知），不伪造成「开麦」。
+    给 WebUI 读。
+
+    静音状态有两个来源，取到哪个用哪个：
+      * ``row`` 自带字段 —— 当前 Oopz 的 membersByChannels **不返回**
+      * ``live``：成员自己用 Agora stream message 广播的 {m, hm}（更实时，优先）
+    都没有时一律为 ``None``（未知），不伪造成「开麦」。
     """
     uid = str(_field(row, "uid", "pid", "person_uid", "user_id", default="") or "")
     resolved = name or str(_field(row, "name", "nickname", "user_name", default="") or "")
-    mic_muted = _muted(row, "mic_muted", "m", "mic")
-    sp_muted = _muted(row, "speaker_muted", "hm", "speaker")
+
+    live_mic = _live_muted(live, "m")
+    live_sp = _live_muted(live, "hm")
+    mic_muted = live_mic if live_mic is not None else _muted(row, "mic_muted", "m", "mic")
+    sp_muted = live_sp if live_sp is not None else _muted(row, "speaker_muted", "hm", "speaker")
+
     return {
         "uid": uid,
         "name": resolved,
@@ -99,6 +121,8 @@ def normalize_member(row: Any, name: str = "") -> dict[str, Any]:
         "mic_muted": mic_muted,
         "speaker_muted": sp_muted,
         "is_bot": bool(_field(row, "is_bot", "isBot", default=False) or False),
+        # 是否来自实时广播。WebUI 用它区分「实时状态」与「纯 REST（未知）」
+        "live": live_mic is not None or live_sp is not None,
     }
 
 
@@ -125,6 +149,25 @@ async def _member_names(uids: list[str]) -> dict[str, str]:
         except Exception:
             names[uid] = ""
     return names
+
+
+def _voice_live_states(bot: Any) -> tuple[dict[str, dict], int]:
+    """取房间内成员的实时静音状态：``({uid: {m, hm, ...}}, 累计收到条数)``。
+
+    来源是各客户端用 Agora stream message 广播的 ``{m, uid, cid, hm}``。
+    Oopz 的 REST 与网关事件都不带这个状态，所以拿不到就是拿不到 ——
+    这里对任何异常都静默降级成空表，成员页该显示「未知」而不是 500。
+    """
+    try:
+        voice = getattr(bot, "voice", None)
+        states = voice.voice_states() if voice is not None else {}
+        received = int(getattr(voice, "voice_state_received", 0) or 0)
+    except Exception:
+        logger.debug("live voice states unavailable", exc_info=True)
+        return {}, 0
+    if not isinstance(states, dict):
+        return {}, received
+    return {str(uid): row for uid, row in states.items() if isinstance(row, dict)}, received
 
 
 def _channel_member_map(members_raw: Any) -> dict[str, list[Any]]:
@@ -290,8 +333,14 @@ def build_voice_routes(
         names = await _member_names(
             [str(_field(row, "uid", "pid", "person_uid", "user_id", default="") or "") for row in rows]
         )
+        # 实时静音状态：成员用 Agora stream message 自己广播的那份（REST 不提供）
+        live_states, live_rx = _voice_live_states(bot)
         items = [
-            normalize_member(row, names.get(str(_field(row, "uid", default="") or ""), ""))
+            normalize_member(
+                row,
+                names.get(str(_field(row, "uid", default="") or ""), ""),
+                live_states.get(str(_field(row, "uid", default="") or "")),
+            )
             for row in rows
         ]
 
@@ -301,6 +350,8 @@ def build_voice_routes(
                 "members": items,
                 "area": area,
                 "channel": channel or agent._channel or "",
+                # 0 = 本房一次广播都没收到 → 静音状态无法得知，不是「都没闭麦」
+                "live_state_received": live_rx,
                 "channel_counts": {
                     cid: len(
                         [
