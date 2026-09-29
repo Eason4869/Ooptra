@@ -96,14 +96,10 @@
       </div>
       <div class="nav-group">
         <div class="nav-group-label">语音</div>
-        <button class="nav-item" data-page="voice">
+        <!-- 只留一个入口：房间成员 / 人格与记忆 是语音台页内的子标签，
+             在左侧再列一遍会与页内标签栏重复，两处高亮还会互相打架。 -->
+        <button class="nav-item" data-page="voice" data-tab="session">
           <svg viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Zm-7 9a7 7 0 0 0 14 0h-2a5 5 0 1 1-10 0H5Zm6 8h2v3h-2v-3Z"/></svg>语音台
-        </button>
-        <button class="nav-item sub" data-page="voice" data-tab="members">
-          <svg viewBox="0 0 24 24"><path d="M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm8 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM2 19c0-3 3-5 6-5s6 2 6 5H2Zm12.5 0c0-1.5-.5-2.7-1.4-3.7 3.2.4 5.9 2.1 5.9 3.7H14.5Z"/></svg>房间成员
-        </button>
-        <button class="nav-item sub" data-page="voice" data-tab="persona">
-          <svg viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 5 3.4 8.4 8 9 4.6-.6 8-4 8-9V6l-8-3Zm0 4a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5Zm0 12c-2 0-3.8-1-5-2.4.1-1.6 3.3-2.6 5-2.6s4.9 1 5 2.6C15.8 18 14 19 12 19Z"/></svg>人格与记忆
         </button>
       </div>
       <div class="nav-group">
