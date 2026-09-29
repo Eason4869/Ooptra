@@ -2,9 +2,23 @@
 
 本文件记录 Ooptra 的对外变更，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [2.0.0] - 2026-09-29
+
+### 修复
+
+- **独立 VOICE_API 端口（3091）与 WebUI（3090）路由分叉**：3091 曾经自带一份手写路由表，缺 `GET /voice/channels`（插件 v0.3.0 依赖，直接 404）、缺 `/oopz/*` 与 `/api/*` 别名。现在两个端口共用 `webui/voice_routes.build_voice_routes` 的**唯一实现**，并在测试中断言两者路由集合完全一致。
+- **`GET /voice/members` 在 3091 上返回 500**：旧实现把 pydantic 的 `VoiceChannelMembersResult` 当 dict/list 处理，又把模型对象原样塞进响应体，触发 `TypeError: Object of type VoiceChannelMembersResult is not JSON serializable`。
+- **成员昵称永远为空**：`VoiceChannelMemberInfo` 根本没有 `name` 字段（旧代码 `getattr(row, "name", "")` 恒为空串）。改为经 `NameResolver.ensure_users()` 批量补全，未解析到则回退短 ID。
+- **WebUI 房间成员表永远显示「开麦 / 正常」**：接口只返回 `mic`/`speaker`/`m`/`hm`，而前端读的是 `mic_muted`/`speaker_muted`。现在两套字段一起返回；Oopz 的 `membersByChannels` 不返回静音状态时统一为 `null`（未知），不再伪造「开麦」。同时给 `VoiceChannelMemberInfo` 增加静音字段透传，服务端哪天带上即可直接生效。
+- **Gemini Live 会话断开后无法恢复**：`_session_loop` 退出时只 `_ready.set()`，不回收 `_ws`/`_session_task`，导致 `session_active` 对已死 socket 恒为 `True`，`start_session` 变成空操作、`push_audio` 把错误吞成 debug 日志（音频进黑洞），`speak_text` 直接 500。现在退出即回收、`session_active` 以循环存活为准、`speak_text` 会真重连一次再发、音频热路径断线后后台重连并打 WARNING。
+- **退出语音不关闭 Live 会话**：`VoiceAgent.leave()` 从不调用 `backend.aclose()`，Gemini 会话一直挂着（计费 + 占并发），且是上一条「重新进房后没反应」的直接诱因。
+- **配置保存后不生效、必须重启**：WebUI 保存只改了 `config` 模块的字典，`VoiceRuntime` 里启动时构造的 dataclass 快照永不刷新。现在 `VoiceRuntime.reload_settings()` 就地写回（`runtime.agent_settings` / `agent.settings` / `backend.settings` 本就是同一对象）并按需重建 VAD、记忆、后端与已建立的模型会话；`restart_required` 只对真正无法热应用的字段置位。
+- 未进房时调用 `/voice/speak`、`/voice/join` 返回裸 500：改为带原因的 JSON 错误。
+- 独立 VOICE_API 端口未配置 token 时现在会打 WARNING（此前静默无鉴权）。
 
 ### 新增
+
+- `GET /health` 现在回传 `version`。
 
 - **语音对话 Agent**（`VOICE_AGENT_CONFIG`）：进入 Oopz 语音房，**Live 端到端语音**（语音进、语音出，默认 `gemini_live` / BidiGenerateContent）；支持抢话打断。可选 `mimo_cascade` 级联兜底（ASR→LLM→TTS）。
 - **语音 HTTP API** 挂载在 Web 控制台同端口（默认 `3090`，复用 `WEBUI_CONFIG.token`）：`/api/voice/*`、`/api/oopz/areas|channels`、`/api/persona`、`/api/memory`，便于 AstrBot 等外部插件查询语音状态与同步人格记忆。
@@ -60,4 +74,5 @@
 - 配置页只读行溢出卡片，导致「复制」按钮被挤出可视区域。
 - 配置页高级字段在隐藏状态下仍参与表单布局，造成列宽不一致。
 
+[2.0.0]: https://github.com/Eason4869/Ooptra/releases/tag/v2.0.0
 [1.0.0]: https://github.com/Eason4869/Ooptra/releases/tag/v1.0.0

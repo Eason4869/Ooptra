@@ -5,35 +5,176 @@
     GET  /health
     GET  /voice/status
     GET  /voice/members?area=&channel=
+    GET  /voice/channels?area=
     POST /voice/join    {"area","channel"}
     POST /voice/leave
+    POST /voice/speak   {"text"}
     Authorization: Bearer <token>   # 可选
 
-令牌与 Ooptra 侧生效项一致：VOICE_API 默认挂在 WebUI 同端口，用 WEBUI_CONFIG.token；
-独立 VOICE_API_CONFIG 端口才用 VOICE_API_CONFIG.token。两边都留空则不校验。
+本模块是语音 HTTP 契约的**唯一实现**，两个入口共用：
+
+  * WebUI（3090）—— ``mount_voice_routes``，额外挂 /api/* 历史别名
+  * 独立 VOICE_API 端口（3091）—— ``build_voice_routes``，见 voice_agent/api.py
+
+不要在任何地方另写一份 handler：3091 曾经自带一套手写路由，结果与 3090 分叉
+（缺 ``/voice/channels``、``/voice/members`` 因 pydantic 模型不可序列化而 500）。
 
 响应形态（扁平，插件 format_status / format_members 直接读）：
 
     status:  {ok, joined, area, channel, state, ...}
-    members: {ok, count, members:[{uid,name,mic,speaker,m,hm}], area, channel}
-             mic/speaker: true=开，false=闭
-             m/hm:        1=闭麦/闭听，0=正常
-
-同时保留 /api/voice|persona|memory 别名，供 Web 控制台使用。
+    members: {ok, count, members:[{uid,name,mic,speaker,m,hm,mic_muted,speaker_muted}],
+              area, channel, channel_counts}
+             mic/speaker: true=开，false=闭，null=未知
+             m/hm:        1=闭麦/闭听，0=正常，null=未知
+             mic_muted/speaker_muted: true=闭，false=开，null=未知（WebUI 读这两个）
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from aiohttp import web
 
 logger = logging.getLogger(__name__)
 
+# 昵称补全的超时：宁可显示短 ID，也不让 /voice/members 卡住
+_NAME_TIMEOUT = 3.0
 
-def mount_voice_routes(app: web.Application, voice_runtime: Any) -> None:
-    agent = voice_runtime.agent
+
+# ----------------------------------------------------------------------
+# 成员归一
+# ----------------------------------------------------------------------
+
+
+def _field(row: Any, *names: str, default: Any = None) -> Any:
+    """从 pydantic 模型或原始 dict 里按候选字段名取值，取不到返回 default。"""
+    for name in names:
+        value = row.get(name) if isinstance(row, dict) else getattr(row, name, None)
+        if value is not None:
+            return value
+    return default
+
+
+def _muted(row: Any, muted_key: str, flag_key: str, state_key: str) -> bool | None:
+    """归一静音状态。返回 True=已闭，False=开，None=未知（不猜）。"""
+    muted = _field(row, muted_key)
+    if muted is not None:
+        return bool(muted)
+    flag = _field(row, flag_key)  # m / hm：1=闭，0=开
+    if flag is not None:
+        try:
+            return int(flag) == 1
+        except (TypeError, ValueError):
+            pass
+    state = _field(row, state_key)  # mic / speaker：true=开
+    if state is not None:
+        return not bool(state)
+    return None
+
+
+def normalize_member(row: Any, name: str = "") -> dict[str, Any]:
+    """把 SDK 模型或原始 dict 归一成插件与 WebUI 都能读的成员结构。
+
+    ``mic``/``speaker``/``m``/``hm`` 给插件读，``mic_muted``/``speaker_muted``
+    给 WebUI 读；Oopz 的 membersByChannels 不返回静音状态，取不到时一律为
+    ``None``（未知），不伪造成「开麦」。
+    """
+    uid = str(_field(row, "uid", "pid", "person_uid", "user_id", default="") or "")
+    resolved = name or str(_field(row, "name", "nickname", "user_name", default="") or "")
+    mic_muted = _muted(row, "mic_muted", "m", "mic")
+    sp_muted = _muted(row, "speaker_muted", "hm", "speaker")
+    return {
+        "uid": uid,
+        "name": resolved,
+        # 插件首选 mic/speaker（true=开）
+        "mic": None if mic_muted is None else (not mic_muted),
+        "speaker": None if sp_muted is None else (not sp_muted),
+        # 兼容 Oopz 标志（1=闭）
+        "m": None if mic_muted is None else (1 if mic_muted else 0),
+        "hm": None if sp_muted is None else (1 if sp_muted else 0),
+        # WebUI 读这两个
+        "mic_muted": mic_muted,
+        "speaker_muted": sp_muted,
+        "is_bot": bool(_field(row, "is_bot", "isBot", default=False) or False),
+    }
+
+
+async def _member_names(uids: list[str]) -> dict[str, str]:
+    """批量补全昵称，失败/超时则回退 NameResolver 的短 ID。"""
+    unique = [uid for uid in dict.fromkeys(uids) if uid]
+    if not unique:
+        return {}
+    try:
+        from oopz.name_resolver import get_resolver
+
+        resolver = get_resolver()
+    except Exception:
+        logger.debug("name resolver unavailable", exc_info=True)
+        return {}
+    try:
+        await asyncio.wait_for(resolver.ensure_users(unique), timeout=_NAME_TIMEOUT)
+    except Exception as exc:
+        logger.debug("resolve member names failed: %s", exc)
+    names: dict[str, str] = {}
+    for uid in unique:
+        try:
+            names[uid] = resolver.user_cached(uid)
+        except Exception:
+            names[uid] = ""
+    return names
+
+
+def _channel_member_map(members_raw: Any) -> dict[str, list[Any]]:
+    """把 get_voice_channel_members 结果归一成 {channel_id: [member, ...]}。"""
+    if members_raw is None:
+        return {}
+    grouped = getattr(members_raw, "channel_members", None)
+    if isinstance(grouped, dict):
+        return {str(k): list(v or []) for k, v in grouped.items()}
+    if isinstance(members_raw, dict):
+        src = members_raw.get("channelMembers") or members_raw.get("channel_members")
+        if isinstance(src, dict):
+            return {str(k): list(v or []) for k, v in src.items()}
+    return {}
+
+
+def _default_target() -> tuple[str, str]:
+    """读取 OOPZ_CONFIG 里「设为默认」的域/频道。"""
+    try:
+        import config as runtime_config
+
+        return (
+            str(runtime_config.OOPZ_CONFIG.get("default_area") or ""),
+            str(runtime_config.OOPZ_CONFIG.get("default_channel") or ""),
+        )
+    except Exception:
+        return "", ""
+
+
+# ----------------------------------------------------------------------
+# 路由构造
+# ----------------------------------------------------------------------
+
+
+def build_voice_routes(
+    voice_runtime: Any,
+    *,
+    with_api_alias: bool = False,
+    wrap: Callable[[Any], Any] | None = None,
+) -> list[Any]:
+    """构造语音契约路由。
+
+    ``voice_runtime`` 需提供 ``.agent``；handler 在**每次请求时**重新读取
+    ``voice_runtime.agent``，这样热重载替换 agent 后无需重新挂载路由。
+
+    ``wrap`` 用于包一层鉴权/异常兜底（独立 VOICE_API 端口用）。
+    """
+
+    def current_agent() -> Any:
+        return voice_runtime.agent
 
     def ok(payload: dict[str, Any] | None = None) -> web.Response:
         data: dict[str, Any] = {"ok": True}
@@ -54,18 +195,14 @@ def mount_voice_routes(app: web.Application, voice_runtime: Any) -> None:
         return data if isinstance(data, dict) else {}
 
     # ── 插件契约：扁平 status ──
-    def status_payload() -> dict[str, Any]:
+    def status_payload(agent: Any) -> dict[str, Any]:
         st = agent.status() or {}
         joined = bool(st.get("joined"))
         state = "joined" if joined else "idle"
         if st.get("speaking"):
             state = "playing"
-        try:
-            import config as runtime_config
-
-            default_area = str(runtime_config.OOPZ_CONFIG.get("default_area") or "")
-            default_channel = str(runtime_config.OOPZ_CONFIG.get("default_channel") or "")
-        except Exception:
+        default_area, default_channel = _default_target()
+        if not default_area and not default_channel:
             default_area = agent.settings.area
             default_channel = agent.settings.channel
         return {
@@ -87,16 +224,28 @@ def mount_voice_routes(app: web.Application, voice_runtime: Any) -> None:
         }
 
     async def health(_request: web.Request) -> web.Response:
-        return ok({"service": "ooptra-voice-api", "enabled": bool(agent.settings.enabled)})
+        agent = current_agent()
+        return ok(
+            {
+                "service": "ooptra-voice-api",
+                "version": _ooptra_version(),
+                "enabled": bool(agent.settings.enabled),
+            }
+        )
 
     async def voice_status(_request: web.Request) -> web.Response:
-        return ok(status_payload())
+        return ok(status_payload(current_agent()))
 
     async def voice_join(request: web.Request) -> web.Response:
+        agent = current_agent()
         body = await read_json(request)
         area = str(body.get("area") or request.query.get("area") or "")
         channel = str(body.get("channel") or request.query.get("channel") or "")
-        result = await agent.join(area, channel)
+        try:
+            result = await agent.join(area, channel)
+        except Exception as exc:
+            logger.warning("voice join failed: %s", exc)
+            return err(str(exc) or "进语音失败", 503)
         return ok(
             {
                 "joined": True,
@@ -107,10 +256,16 @@ def mount_voice_routes(app: web.Application, voice_runtime: Any) -> None:
         )
 
     async def voice_leave(_request: web.Request) -> web.Response:
-        await agent.leave()
+        agent = current_agent()
+        try:
+            await agent.leave()
+        except Exception as exc:
+            logger.warning("voice leave failed: %s", exc)
+            return err(str(exc) or "退语音失败", 503)
         return ok({"joined": False})
 
     async def voice_members(request: web.Request) -> web.Response:
+        agent = current_agent()
         bot = agent._bot
         if bot is None:
             return err("Oopz bot 尚未就绪", 503)
@@ -118,7 +273,11 @@ def mount_voice_routes(app: web.Application, voice_runtime: Any) -> None:
         if not area:
             return err("缺少 area 参数")
         channel = str(request.query.get("channel") or "").strip()
-        members_raw = await bot.channels.get_voice_channel_members(area=area)
+        try:
+            members_raw = await bot.channels.get_voice_channel_members(area=area)
+        except Exception as exc:
+            logger.warning("get voice members failed: %s", exc)
+            return err(f"获取语音成员失败：{exc}", 502)
 
         grouped = _channel_member_map(members_raw)
         if channel:
@@ -127,59 +286,14 @@ def mount_voice_routes(app: web.Application, voice_runtime: Any) -> None:
             # 未指定频道时汇总整个域；同时回传分频道人数
             raw_list = [m for rows in grouped.values() for m in rows]
 
-        items: list[dict[str, Any]] = []
-        for row in raw_list or []:
-            if not isinstance(row, dict):
-                # pydantic 模型
-                row = {
-                    "uid": getattr(row, "uid", "") or getattr(row, "pid", ""),
-                    "name": getattr(row, "name", "") or getattr(row, "nickname", ""),
-                    "mic_muted": bool(getattr(row, "mic_muted", False) or getattr(row, "m", 0)),
-                    "speaker_muted": bool(
-                        getattr(row, "speaker_muted", False) or getattr(row, "hm", 0)
-                    ),
-                }
-            uid = str(
-                row.get("uid")
-                or row.get("pid")
-                or row.get("person_uid")
-                or row.get("user_id")
-                or ""
-            )
-            name = str(row.get("name") or row.get("nickname") or row.get("user_name") or "")
-
-            # m/hm：1=闭，0=开
-            if "m" in row:
-                mic_muted = bool(int(row.get("m") or 0) == 1)
-            elif "mic_muted" in row:
-                mic_muted = bool(row.get("mic_muted"))
-            elif "mic" in row:
-                # mic: true=开
-                mic_muted = not bool(row.get("mic"))
-            else:
-                mic_muted = False
-
-            if "hm" in row:
-                sp_muted = bool(int(row.get("hm") or 0) == 1)
-            elif "speaker_muted" in row:
-                sp_muted = bool(row.get("speaker_muted"))
-            elif "speaker" in row:
-                sp_muted = not bool(row.get("speaker"))
-            else:
-                sp_muted = False
-
-            items.append(
-                {
-                    "uid": uid,
-                    "name": name,
-                    # 插件首选 mic/speaker（true=开）
-                    "mic": (not mic_muted),
-                    "speaker": (not sp_muted),
-                    # 兼容 Oopz 标志（1=闭）
-                    "m": 1 if mic_muted else 0,
-                    "hm": 1 if sp_muted else 0,
-                }
-            )
+        rows = [row for row in (raw_list or []) if row is not None]
+        names = await _member_names(
+            [str(_field(row, "uid", "pid", "person_uid", "user_id", default="") or "") for row in rows]
+        )
+        items = [
+            normalize_member(row, names.get(str(_field(row, "uid", default="") or ""), ""))
+            for row in rows
+        ]
 
         return ok(
             {
@@ -188,27 +302,23 @@ def mount_voice_routes(app: web.Application, voice_runtime: Any) -> None:
                 "area": area,
                 "channel": channel or agent._channel or "",
                 "channel_counts": {
-                    cid: len([m for m in rows if not getattr(m, "is_bot", False)])
-                    for cid, rows in grouped.items()
+                    cid: len(
+                        [
+                            m
+                            for m in rows_in_channel
+                            if not bool(
+                                _field(m, "is_bot", "isBot", default=False) or False
+                            )
+                        ]
+                    )
+                    for cid, rows_in_channel in grouped.items()
                 },
             }
         )
 
-    def _channel_member_map(members_raw: Any) -> dict[str, list[Any]]:
-        """把 get_voice_channel_members 结果归一成 {channel_id: [member, ...]}。"""
-        if members_raw is None:
-            return {}
-        grouped = getattr(members_raw, "channel_members", None)
-        if isinstance(grouped, dict):
-            return {str(k): list(v or []) for k, v in grouped.items()}
-        if isinstance(members_raw, dict):
-            src = members_raw.get("channelMembers") or members_raw.get("channel_members")
-            if isinstance(src, dict):
-                return {str(k): list(v or []) for k, v in src.items()}
-        return {}
-
     async def voice_channels(request: web.Request) -> web.Response:
         """列出域内语音频道及在线人数，供插件按域汇总、按名字找频道。"""
+        agent = current_agent()
         bot = agent._bot
         if bot is None:
             return err("Oopz bot 尚未就绪", 503)
@@ -235,22 +345,24 @@ def mount_voice_routes(app: web.Application, voice_runtime: Any) -> None:
         try:
             members_raw = await bot.channels.get_voice_channel_members(area=area)
             for cid, members in _channel_member_map(members_raw).items():
-                counts[cid] = len([m for m in members if not getattr(m, "is_bot", False)])
+                counts[cid] = len(
+                    [
+                        m
+                        for m in members
+                        if not bool(_field(m, "is_bot", "isBot", default=False) or False)
+                    ]
+                )
         except Exception as exc:
             logger.warning("count voice members failed: %s", exc)
 
         channels = [
             {"id": cid, "name": names.get(cid) or cid, "count": int(counts.get(cid) or 0)}
-            for cid in sorted(set(names) | set(counts), key=lambda x: (-counts.get(x, 0), names.get(x) or x))
+            for cid in sorted(
+                set(names) | set(counts),
+                key=lambda x: (-counts.get(x, 0), names.get(x) or x),
+            )
         ]
-        try:
-            import config as runtime_config
-
-            default_area = str(runtime_config.OOPZ_CONFIG.get("default_area") or "")
-            default_channel = str(runtime_config.OOPZ_CONFIG.get("default_channel") or "")
-        except Exception:
-            default_area = agent.settings.area
-            default_channel = agent.settings.channel
+        default_area, default_channel = _default_target()
         return ok(
             {
                 "area": area,
@@ -261,14 +373,21 @@ def mount_voice_routes(app: web.Application, voice_runtime: Any) -> None:
         )
 
     async def voice_speak(request: web.Request) -> web.Response:
+        agent = current_agent()
         body = await read_json(request)
-        result = await agent.speak_text(str(body.get("text") or ""))
+        text = str(body.get("text") or "")
+        try:
+            result = await agent.speak_text(text)
+        except Exception as exc:
+            logger.warning("voice speak failed: %s", exc)
+            return err(str(exc) or "speak failed", 502)
         if not result.get("ok"):
             return err(str(result.get("error") or "speak failed"))
         return ok(result)
 
     # ── 域/频道（WebUI 用）──
     async def oopz_areas(_request: web.Request) -> web.Response:
+        agent = current_agent()
         bot = agent._bot
         if bot is None:
             return err("Oopz bot 尚未就绪", 503)
@@ -281,14 +400,7 @@ def mount_voice_routes(app: web.Application, voice_runtime: Any) -> None:
                     "name": str(getattr(row, "name", "") or ""),
                 }
             )
-        try:
-            import config as runtime_config
-
-            default_area = str(runtime_config.OOPZ_CONFIG.get("default_area") or "")
-            default_channel = str(runtime_config.OOPZ_CONFIG.get("default_channel") or "")
-        except Exception:
-            default_area = agent.settings.area
-            default_channel = agent.settings.channel
+        default_area, default_channel = _default_target()
         return ok(
             {
                 "areas": items,
@@ -298,6 +410,7 @@ def mount_voice_routes(app: web.Application, voice_runtime: Any) -> None:
         )
 
     async def oopz_channels(request: web.Request) -> web.Response:
+        agent = current_agent()
         bot = agent._bot
         if bot is None:
             return err("Oopz bot 尚未就绪", 503)
@@ -322,9 +435,10 @@ def mount_voice_routes(app: web.Application, voice_runtime: Any) -> None:
 
     # ── 人格 / 记忆 ──
     async def persona_get(_request: web.Request) -> web.Response:
-        return ok({"persona": agent.settings.persona})
+        return ok({"persona": current_agent().settings.persona})
 
     async def persona_put(request: web.Request) -> web.Response:
+        agent = current_agent()
         body = await read_json(request)
         persona = body.get("persona")
         if not isinstance(persona, str) or not persona.strip():
@@ -333,6 +447,7 @@ def mount_voice_routes(app: web.Application, voice_runtime: Any) -> None:
         return ok({"persona": agent.settings.persona})
 
     async def memory_get(request: web.Request) -> web.Response:
+        agent = current_agent()
         user_key = request.query.get("user_key", "")
         limit_raw = request.query.get("limit")
         limit = int(limit_raw) if limit_raw and str(limit_raw).isdigit() else None
@@ -344,6 +459,7 @@ def mount_voice_routes(app: web.Application, voice_runtime: Any) -> None:
         )
 
     async def memory_post(request: web.Request) -> web.Response:
+        agent = current_agent()
         body = await read_json(request)
         role = str(body.get("role") or "user")
         content = str(body.get("content") or "")
@@ -360,6 +476,7 @@ def mount_voice_routes(app: web.Application, voice_runtime: Any) -> None:
         return ok({"turn": row})
 
     async def memory_delete(request: web.Request) -> web.Response:
+        agent = current_agent()
         body = await read_json(request)
         removed = agent.memory.clear(user_key=str(body.get("user_key") or ""))
         return ok({"removed": removed})
@@ -381,10 +498,28 @@ def mount_voice_routes(app: web.Application, voice_runtime: Any) -> None:
         ("POST", "/memory", memory_post),
         ("DELETE", "/memory", memory_delete),
     ]
-    routes = []
+    routes: list[Any] = []
     for method, path, handler in pairs:
+        if wrap is not None:
+            handler = wrap(handler)
         routes.append(web.route(method, path, handler))
-        # WebUI 历史路径 /api/*
-        routes.append(web.route(method, "/api" + path, handler))
+        if with_api_alias:
+            # WebUI 历史路径 /api/*
+            routes.append(web.route(method, "/api" + path, handler))
+    return routes
+
+
+def _ooptra_version() -> str:
+    try:
+        from core.version import __version__
+
+        return str(__version__)
+    except Exception:
+        return ""
+
+
+def mount_voice_routes(app: web.Application, voice_runtime: Any) -> None:
+    """挂到 WebUI app 上：插件契约路径 + /api/* 历史别名。"""
+    routes = build_voice_routes(voice_runtime, with_api_alias=True)
     app.add_routes(routes)
-    logger.debug("voice routes mounted (plugin contract + /api aliases)")
+    logger.debug("voice routes mounted (%d routes, plugin contract + /api aliases)", len(routes))

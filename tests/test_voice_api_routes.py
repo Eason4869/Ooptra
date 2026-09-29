@@ -1,0 +1,326 @@
+"""VOICE_API 路由契约：3090（WebUI）与 3091（独立端口）必须完全一致。
+
+这个文件存在的理由：旧版 3091 自带一份手写路由表，悄悄缺了
+``GET /voice/channels``、``/voice/members`` 还会因为 pydantic 模型不可
+序列化而 500。旧的 ``test_voice_api_contract.py`` 只做形状检查、从不启动
+aiohttp app，所以结构上发现不了这类问题。
+
+这里用真实 aiohttp Application 断言路由集合，并真实发请求。
+
+注意：一个 ``web.Application`` 只能绑定一个事件循环，所以每个 app 的所有
+请求必须在**同一次** ``asyncio.run`` 里发完（``_run`` 一次收一批）。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from typing import Any
+
+import pytest
+from aiohttp import web
+from aiohttp.test_utils import TestClient, TestServer
+
+from voice_agent.api import VoiceApiServer
+from voice_agent.settings import VoiceApiSettings
+from webui.voice_routes import build_voice_routes, mount_voice_routes
+
+# ----------------------------------------------------------------------
+# 假 runtime / 假 bot
+# ----------------------------------------------------------------------
+
+
+class FakeSettings:
+    enabled = True
+    persona = "测试人格"
+    area = ""
+    channel = ""
+
+
+class FakeChannels:
+    def __init__(self, result: Any) -> None:
+        self._result = result
+
+    async def get_voice_channel_members(self, area: str) -> Any:
+        return self._result
+
+
+class FakeAreas:
+    async def get_area_channels(self, area: str) -> list:
+        return []
+
+    async def get_joined_areas(self) -> list:
+        return []
+
+
+class FakeBot:
+    def __init__(self, result: Any = None) -> None:
+        self.channels = FakeChannels(result)
+        self.areas = FakeAreas()
+
+
+class FakeMemory:
+    def as_messages(self, user_key: str = "", limit: int | None = None) -> list:
+        return []
+
+
+class FakeAgent:
+    def __init__(self, members_result: Any = None) -> None:
+        self.settings = FakeSettings()
+        self.memory = FakeMemory()
+        self._bot = FakeBot(members_result)
+        self._area = "area-1"
+        self._channel = "chan-1"
+
+    def status(self) -> dict:
+        return {
+            "enabled": True,
+            "backend": "gemini_live",
+            "mode": "live",
+            "joined": True,
+            "area": "area-1",
+            "channel": "chan-1",
+            "speaking": False,
+            "turns": 3,
+            "last_reply": "",
+            "last_user_text": "",
+        }
+
+    async def join(self, area: str = "", channel: str = "") -> dict:
+        return {"area": area or "area-1", "channel": channel or "chan-1", "mode": "live"}
+
+    async def leave(self) -> dict:
+        return {"ok": True}
+
+    async def speak_text(self, text: str) -> dict:
+        # 与 VoiceAgent.speak_text 保持一致：空文本是错误，不是成功
+        if not (text or "").strip():
+            return {"ok": False, "error": "text required"}
+        return {"ok": True, "chars": len(text), "mode": "live"}
+
+    def update_persona(self, persona: str) -> None:
+        self.settings.persona = persona
+
+
+class FakeRuntime:
+    def __init__(self, agent: FakeAgent) -> None:
+        self.agent = agent
+
+
+# ----------------------------------------------------------------------
+# 辅助
+# ----------------------------------------------------------------------
+
+
+def _build_apps(agent: FakeAgent) -> tuple[web.Application, web.Application]:
+    """返回 (WebUI app, 独立 VOICE_API app)。"""
+    runtime = FakeRuntime(agent)
+
+    webui_app = web.Application()
+    mount_voice_routes(webui_app, runtime)
+
+    api = VoiceApiServer(runtime, VoiceApiSettings(enabled=True, token=""))
+    standalone_app = web.Application()
+    standalone_app.add_routes(build_voice_routes(runtime, wrap=api._wrap))
+    return webui_app, standalone_app
+
+
+def _contract_keys(app: web.Application) -> set[tuple[str, str]]:
+    """路由集合；WebUI 的 /api/* 历史别名归一掉，便于与独立端口直接比对。"""
+    keys: set[tuple[str, str]] = set()
+    for route in app.router.routes():
+        path = str(route.resource.canonical)
+        if path.startswith("/api/"):
+            path = path[4:]
+        keys.add((str(route.method), path))
+    return keys
+
+
+def _run(app: web.Application, calls: list[tuple[str, str, dict]]) -> list[tuple[int, Any]]:
+    """在同一个事件循环里依次发完这批请求。"""
+
+    async def runner() -> list[tuple[int, str]]:
+        out: list[tuple[int, str]] = []
+        async with TestClient(TestServer(app)) as client:
+            for method, path, kwargs in calls:
+                resp = await client.request(method, path, **kwargs)
+                out.append((resp.status, await resp.text()))
+        return out
+
+    parsed: list[tuple[int, Any]] = []
+    for status, body in asyncio.run(runner()):
+        try:
+            parsed.append((status, json.loads(body)))
+        except json.JSONDecodeError:
+            parsed.append((status, body))
+    return parsed
+
+
+# ----------------------------------------------------------------------
+# 路由集合一致性 —— 直接锁死 B1 类回归
+# ----------------------------------------------------------------------
+
+
+def test_standalone_and_webui_expose_same_contract_routes() -> None:
+    agent = FakeAgent()
+    webui_app, standalone_app = _build_apps(agent)
+
+    webui = _contract_keys(webui_app)
+    standalone = _contract_keys(standalone_app)
+
+    assert webui == standalone, (
+        f"独立 VOICE_API 缺少：{sorted(webui - standalone)}；"
+        f"多出：{sorted(standalone - webui)}"
+    )
+
+
+@pytest.mark.parametrize(
+    "method,path",
+    [
+        ("GET", "/health"),
+        ("GET", "/voice/status"),
+        ("GET", "/voice/members"),
+        ("GET", "/voice/channels"),
+        ("POST", "/voice/join"),
+        ("POST", "/voice/leave"),
+        ("POST", "/voice/speak"),
+    ],
+)
+def test_contract_paths_present_on_both(method: str, path: str) -> None:
+    """插件 astrbot_plugin_ooptra 0.3.0+ 依赖这些路径。"""
+    agent = FakeAgent()
+    webui_app, standalone_app = _build_apps(agent)
+    for app in (webui_app, standalone_app):
+        assert (method, path) in _contract_keys(app), f"{method} {path} 缺失"
+
+
+# ----------------------------------------------------------------------
+# 真实请求
+# ----------------------------------------------------------------------
+
+
+def test_members_serializes_pydantic_result() -> None:
+    """B2：SDK 返回 pydantic 模型时不能 500。"""
+    from oopz_sdk.models.channel import VoiceChannelMemberInfo, VoiceChannelMembersResult
+
+    result = VoiceChannelMembersResult(
+        channelMembers={
+            "chan-1": [
+                VoiceChannelMemberInfo.model_validate(
+                    {"uid": "u1", "isBot": False, "enterTime": "1"}
+                ),
+                VoiceChannelMemberInfo.model_validate(
+                    {"uid": "u2", "isBot": True, "enterTime": "2"}
+                ),
+            ]
+        }
+    )
+    agent = FakeAgent(result)
+    webui_app, standalone_app = _build_apps(agent)
+
+    for app in (webui_app, standalone_app):
+        [(status, payload)] = _run(app, [("GET", "/voice/members?area=area-1", {})])
+        assert status == 200, payload
+        assert payload["ok"] is True
+        assert payload["count"] == 2
+        assert [row["uid"] for row in payload["members"]] == ["u1", "u2"]
+        # 两套字段族都要在：插件读 mic/m/hm，WebUI 读 mic_muted/speaker_muted
+        for key in ("uid", "name", "mic", "speaker", "m", "hm", "mic_muted", "speaker_muted"):
+            assert key in payload["members"][0], f"成员缺少字段 {key}"
+        # 静音状态 SDK 拿不到 → 必须是 None（未知），不能伪造成「开麦」
+        assert payload["members"][0]["mic_muted"] is None
+        assert payload["members"][0]["mic"] is None
+        # bot 不计入分频道人数
+        assert payload["channel_counts"]["chan-1"] == 1
+
+
+def test_status_is_flat_on_both() -> None:
+    """插件 format_status 读扁平字段；独立端口以前返回的是嵌套结构。"""
+    agent = FakeAgent()
+    webui_app, standalone_app = _build_apps(agent)
+
+    for app in (webui_app, standalone_app):
+        [(status, payload)] = _run(app, [("GET", "/voice/status", {})])
+        assert status == 200, payload
+        assert payload["joined"] is True
+        assert payload["area"] == "area-1"
+        assert payload["channel"] == "chan-1"
+        assert payload["state"] == "joined"
+
+
+def test_join_and_leave_return_flat_contract() -> None:
+    agent = FakeAgent()
+    _webui, standalone = _build_apps(agent)
+
+    results = _run(
+        standalone,
+        [
+            ("POST", "/voice/join", {"json": {"area": "a", "channel": "c"}}),
+            ("POST", "/voice/leave", {}),
+        ],
+    )
+    status, payload = results[0]
+    assert status == 200 and payload["ok"] is True
+    assert payload["joined"] is True and payload["area"] == "a"
+    status, payload = results[1]
+    assert status == 200 and payload["joined"] is False
+
+
+def test_speak_without_text_is_400_not_500() -> None:
+    agent = FakeAgent()
+    _webui, standalone = _build_apps(agent)
+    [(status, payload)] = _run(standalone, [("POST", "/voice/speak", {"json": {"text": ""}})])
+    assert status == 400, payload
+    assert payload["ok"] is False
+
+
+def test_join_failure_is_json_not_bare_500() -> None:
+    """未进房/机器人没起来时，插件要能拿到可读原因，而不是裸 500。"""
+
+    class BrokenAgent(FakeAgent):
+        async def join(self, area: str = "", channel: str = "") -> dict:
+            raise RuntimeError("Oopz bot 尚未就绪")
+
+    agent = BrokenAgent()
+    _webui, standalone = _build_apps(agent)
+    [(status, payload)] = _run(
+        standalone, [("POST", "/voice/join", {"json": {"area": "a", "channel": "c"}})]
+    )
+    assert status == 503, payload
+    assert payload["ok"] is False
+    assert "尚未就绪" in payload["error"]
+
+
+def test_route_handlers_follow_runtime_agent_swap() -> None:
+    """热重载会替换 runtime.agent：handler 必须每次请求重新读取。"""
+    agent = FakeAgent()
+    runtime = FakeRuntime(agent)
+    app = web.Application()
+    mount_voice_routes(app, runtime)
+
+    new_agent = FakeAgent()
+    new_agent.settings.persona = "换过的人格"
+    runtime.agent = new_agent
+
+    [(status, payload)] = _run(app, [("GET", "/persona", {})])
+    assert status == 200
+    assert payload["persona"] == "换过的人格"
+
+
+def test_standalone_with_token_rejects_missing_token() -> None:
+    """独立端口配了 token 就必须校验（未配置时才是开放的）。"""
+    agent = FakeAgent()
+    runtime = FakeRuntime(agent)
+    api = VoiceApiServer(runtime, VoiceApiSettings(enabled=True, token="s3cret"))
+    app = web.Application()
+    app.add_routes(build_voice_routes(runtime, wrap=api._wrap))
+
+    results = _run(
+        app,
+        [
+            ("GET", "/voice/status", {}),
+            ("GET", "/voice/status", {"params": {"token": "s3cret"}}),
+        ],
+    )
+    assert results[0][0] == 401
+    assert results[1][0] == 200

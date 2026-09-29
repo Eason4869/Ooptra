@@ -861,14 +861,21 @@ async function saveConfig(restartAfter) {
   $('config-save').disabled = $('config-save-restart').disabled = true;
   try {
     const result = await api('/api/config', { method: 'POST', body: { updates: dirty } });
-    toast('配置已保存', Object.entries(result.changed || {}).map(([g, f]) => g + ': ' + f.join('/')).join('；'), 'ok');
+    const fields = Object.entries(result.changed || {}).map(([g, f]) => g + ': ' + f.join('/')).join('；');
+    const notes = result.notes || [];
+    if (notes.length) {
+      // 语音配置会真正热应用，把后端回传的结果如实告诉用户
+      toast('已保存并热生效', notes.join('；'), 'ok');
+    } else {
+      toast('配置已保存', fields, 'ok');
+    }
     await loadConfig();
     if (restartAfter) {
       await api('/api/bridge/restart', { method: 'POST', body: {} });
       toast('正在重新连接', '桥接会按新配置重建连接', 'ok');
       setTimeout(refreshStatus, 1500);
     } else if (result.restart_required) {
-      toast('需要重新连接才生效', '这些字段在下次启动桥接时读取', 'warn');
+      toast('部分字段需重启才生效', fields, 'warn');
     }
   } catch (err) {
     toast('保存失败', err.message, 'err');
@@ -1407,13 +1414,17 @@ async function refreshMembers() {
     if (!rows.length) {
       body.innerHTML = '<tr><td colspan="4" class="muted">暂无成员（确认已进房 / 域 ID 正确）</td></tr>';
     } else {
+      // Oopz 的 membersByChannels 不返回静音状态，后端会给 null；不要伪造成「开麦」
+      const muteCell = (flag, onText, offText) => {
+        if (flag === null || flag === undefined) return '<span class="badge">未知</span>';
+        return '<span class="badge ' + (flag ? 'warn' : 'ok') + '">' +
+          (flag ? onText : offText) + '</span>';
+      };
       body.innerHTML = rows.map((row) =>
         '<tr><td class="mono">' + escapeHtml(row.uid || '—') + '</td>' +
         '<td>' + escapeHtml(row.name || '—') + '</td>' +
-        '<td><span class="badge ' + (row.mic_muted ? 'warn' : 'ok') + '">' +
-        (row.mic_muted ? '已闭麦' : '开麦') + '</span></td>' +
-        '<td><span class="badge ' + (row.speaker_muted ? 'warn' : 'ok') + '">' +
-        (row.speaker_muted ? '已闭听' : '正常') + '</span></td></tr>'
+        '<td>' + muteCell(row.mic_muted, '已闭麦', '开麦') + '</td>' +
+        '<td>' + muteCell(row.speaker_muted, '已闭听', '正常') + '</td></tr>'
       ).join('');
     }
     if (status) status.textContent = '已更新';

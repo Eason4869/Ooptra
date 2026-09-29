@@ -126,7 +126,21 @@ Windows 下可以双击 `start_silent.vbs` 静默后台启动；把它放进「�
 - **兜底**：可选 `mimo_cascade`（ASR→LLM→TTS），延迟更高，适合无 Live 配额时
 - **管**：Web 控制台「语音」页选域/频道进退房、看成员、改人格与共享记忆
 
-Web 控制台同时挂载 JSON API（与控制台同端口，默认 `3090`，复用 `WEBUI_CONFIG.token`）：
+Web 控制台同时挂载 JSON API（与控制台同端口，默认 `3090`，复用 `WEBUI_CONFIG.token`）。**外部插件一律用这个入口**——它路由完整、契约是扁平的：
+
+```http
+GET  /health
+GET  /voice/status
+GET  /voice/members?area=&channel=
+GET  /voice/channels?area=
+POST /voice/join     {"area":"","channel":""}
+POST /voice/leave
+POST /voice/speak    {"text":"..."}
+```
+
+`VOICE_API_CONFIG`（默认 `3091`）只是给「不想走 WebUI 端口」的场景准备的**等价副本**：它挂载的是同一套 handler，路由与响应结构完全一致（有测试断言两者路由集合相同），鉴权用 `VOICE_API_CONFIG.token`。一般不需要开启；开启时记得配 token，否则该端口无鉴权。
+
+Web 控制台自身的接口（带 `/api` 前缀）：
 
 ```http
 GET  /api/voice/status

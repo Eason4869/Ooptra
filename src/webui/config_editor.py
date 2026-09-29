@@ -485,6 +485,11 @@ FIELD_SPECS: dict[str, dict[str, dict[str, Any]]] = {
 
 _RESTART_FREE_FIELDS = {("webui", "log_lines")}
 
+# 这两组保存后由 server._hot_reload_voice 在事件循环上真正应用到 VoiceRuntime，
+# 故不再标记 restart_required（voice_api 的 host/port 例外，socket 已绑定，
+# 由 VoiceRuntime.reload_settings 通过 restart_keys 单独报回来）。
+_HOT_RELOAD_GROUPS = {"voice", "voice_api"}
+
 
 # ---------------------------------------------------------------------------
 # 读取
@@ -880,7 +885,7 @@ def apply_updates(updates: Any) -> dict[str, Any]:
     _sync_runtime(namespace)
     changed = {group: sorted(values) for group, values in normalized.items()}
     restart_required = any(
-        (group, field) not in _RESTART_FREE_FIELDS
+        (group, field) not in _RESTART_FREE_FIELDS and group not in _HOT_RELOAD_GROUPS
         for group, fields in normalized.items()
         for field in fields
     )

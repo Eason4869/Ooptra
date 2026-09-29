@@ -2,6 +2,13 @@
 
 设计目标：语音进、语音出，不在中间落成完整文本再合成（Live）。
 会话建立后持续把远端 PCM 写入 realtimeInput，把服务端音频 chunk 推回房间。
+
+会话生命周期（这里曾经出过 B3）：
+  * ``_session_loop`` 退出时必须回收 ``_ws`` / ``_session_task``，否则
+    ``session_active`` 对已死的 socket 恒为 True，``start_session`` 变成空操作，
+    音频全进黑洞。
+  * ``_ready`` 只表示「setupComplete 已收到」，不再兼作「循环已结束」的唤醒信号。
+  * 旧的循环退出时只清理「仍属于自己」的会话，避免误伤刚建好的新会话。
 """
 
 from __future__ import annotations
@@ -32,11 +39,15 @@ class GeminiLiveBackend(VoiceBackend):
 
     name = "gemini_live"
 
+    #: 会话意外断开后，后台重连前的等待秒数
+    reconnect_delay: float = 1.0
+
     def __init__(self, settings, memory) -> None:
         self.settings = settings
         self.memory = memory
         self._ws = None
         self._session_task: asyncio.Task | None = None
+        self._reconnect_task: asyncio.Task | None = None
         self._audio_out: AudioOutHandler | None = None
         self._text_out: Callable[[str], Awaitable[None] | None] | None = None
         self._ready = asyncio.Event()
@@ -59,7 +70,14 @@ class GeminiLiveBackend(VoiceBackend):
 
     @property
     def session_active(self) -> bool:
-        return self._ws is not None and not self._closed
+        """会话真的可用吗——socket 在、未主动关闭、循环仍在跑。"""
+        task = self._session_task
+        return (
+            self._ws is not None
+            and not self._closed
+            and task is not None
+            and not task.done()
+        )
 
     async def start_session(self) -> None:
         if self.session_active:
@@ -71,6 +89,10 @@ class GeminiLiveBackend(VoiceBackend):
         from voice_agent.settings import resolve_agent_proxy_url
         from voice_agent.ws_transport import open_live_ws
 
+        # 上一轮可能留下未回收的会话（服务端断开、setup 超时、异常退出）
+        await self._reset_session()
+        await self._cancel_reconnect()
+
         self._closed = False
         self._ready.clear()
         endpoint = str(
@@ -78,32 +100,80 @@ class GeminiLiveBackend(VoiceBackend):
         ).strip() or DEFAULT_LIVE_WS
         url = f"{endpoint}?key={key}"
         proxy = resolve_agent_proxy_url(getattr(self.settings, "proxy", "") or "")
-        self._ws = await open_live_ws(url, proxy=proxy)
-        self._session_task = asyncio.create_task(self._session_loop(), name="gemini-live-session")
 
-        # setup：系统指令 + 音频输入输出
-        await self._send_setup()
-        await asyncio.wait_for(self._ready.wait(), timeout=15)
+        ws = await open_live_ws(url, proxy=proxy)
+        self._ws = ws
+        self._session_task = asyncio.create_task(
+            self._session_loop(), name="gemini-live-session"
+        )
+
+        try:
+            # setup：系统指令 + 音频输入输出
+            await self._send_setup()
+            await asyncio.wait_for(self._ready.wait(), timeout=15)
+        except Exception:
+            # 回滚，不留「_ws 已设但未 ready」的中间态
+            await self._reset_session()
+            raise
+        if not self.session_active:
+            await self._reset_session()
+            raise RuntimeError("Gemini Live 会话建立后立即断开（请检查代理与 API key）")
         logger.info("Gemini Live session ready model=%s", self.settings.gemini_model)
+
+    async def _reset_session(self) -> None:
+        """回收当前会话：取消循环、关掉 socket、清空状态。可重复调用。"""
+        task = self._session_task
+        ws = self._ws
+        self._session_task = None
+        self._ws = None
+        self._ready.clear()
+        if task is not None and not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+        if ws is not None:
+            with contextlib.suppress(Exception):
+                await ws.close()
 
     async def close(self) -> None:
         self._closed = True
-        task = self._session_task
-        self._session_task = None
-        ws = self._ws
-        self._ws = None
-        if task is not None:
+        await self._cancel_reconnect()
+        await self._reset_session()
+
+    async def _cancel_reconnect(self) -> None:
+        """取消后台重连并**等它真的结束**——只 cancel 不 await 会留下悬空任务。"""
+        task = self._reconnect_task
+        self._reconnect_task = None
+        if task is not None and not task.done():
             task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
-        if ws is not None:
-            try:
-                await ws.close()
-            except Exception:
-                logger.debug("live ws close failed", exc_info=True)
 
     async def aclose(self) -> None:
         await self.close()
+
+    def _schedule_reconnect(self) -> None:
+        """音频热路径不能阻塞，断线后交给后台任务重连。"""
+        if self._closed:
+            return
+        task = self._reconnect_task
+        if task is not None and not task.done():
+            return
+        self._reconnect_task = asyncio.create_task(
+            self._reconnect(), name="gemini-live-reconnect"
+        )
+
+    async def _reconnect(self) -> None:
+        try:
+            await asyncio.sleep(self.reconnect_delay)
+            if self.session_active:
+                return
+            await self.start_session()
+            logger.info("Gemini Live session reconnected")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("Gemini Live reconnect failed: %s", exc)
 
     # ------------------------------------------------------------------
     # 协议
@@ -111,8 +181,10 @@ class GeminiLiveBackend(VoiceBackend):
 
     async def _send(self, payload: dict[str, Any]) -> None:
         ws = self._ws
-        if ws is None:
+        if ws is None or self._closed:
             raise RuntimeError("Live session not connected")
+        if getattr(ws, "closed", False):
+            raise RuntimeError("Live session transport closed")
         await ws.send(json.dumps(payload, ensure_ascii=False))
 
     async def _send_setup(self) -> None:
@@ -139,10 +211,14 @@ class GeminiLiveBackend(VoiceBackend):
         await self._send(setup)
 
     async def push_audio(self, pcm16: bytes, sample_rate: int | None = None) -> None:
-        """把远端麦克风 PCM 持续灌入 Live 会话（真正的听）。"""
+        """把远端麦克风 PCM 持续灌入 Live 会话（真正的听）。
+
+        这是热路径（每帧都会调），断线时只标记 + 后台重连，不做同步重连；
+        但**一定**会打 WARNING，不再像以前那样吞成 debug 造成无声黑洞。
+        """
         if not pcm16 or self._closed:
             return
-        if self._ws is None:
+        if not self.session_active:
             await self.start_session()
         mime = f"audio/pcm;rate={int(sample_rate or self._in_sample)}"
         payload = {
@@ -155,12 +231,14 @@ class GeminiLiveBackend(VoiceBackend):
         }
         try:
             await self._send(payload)
-        except Exception:
-            logger.debug("push live audio failed", exc_info=True)
+        except Exception as exc:
+            logger.warning("live audio push failed (%s); scheduling reconnect", exc)
+            await self._reset_session()
+            self._schedule_reconnect()
 
     async def interrupt(self) -> None:
         """barge-in：告诉模型用户抢话，丢掉当前响应。"""
-        if self._ws is None:
+        if not self.session_active:
             return
         try:
             await self._send({"realtimeInput": {"audioStreamEnd": True}})
@@ -187,7 +265,19 @@ class GeminiLiveBackend(VoiceBackend):
         except Exception:
             logger.exception("Gemini Live session error")
         finally:
+            # 唤醒可能还在等 ready 的 start_session，别让它挂到超时
             self._ready.set()
+            # 只有本循环仍是「当前会话」时才清理：旧循环不得误伤新会话
+            owns_session = self._ws is ws
+            if owns_session:
+                self._ws = None
+                self._session_task = None
+                self._ready.clear()
+                logger.info("Gemini Live session ended")
+            with contextlib.suppress(Exception):
+                await ws.close()
+            if owns_session and not self._closed:
+                self._schedule_reconnect()
 
     async def _handle_server_msg(self, msg: dict[str, Any]) -> None:
         if "setupComplete" in msg:
@@ -263,18 +353,24 @@ class GeminiLiveBackend(VoiceBackend):
         return VoiceReply(user_text=self._last_user_text, text=self._last_reply, user_key=user_key)
 
     async def speak_text(self, text: str) -> None:
-        """让模型「口头」说一句：以文本输入交给 Live。"""
-        if not text.strip():
+        """让模型「口头」说一句：以文本输入交给 Live。
+
+        会话已死时**真重连一次再发**，失败就抛出去（调用方要能看到错误，
+        不能像以前那样静默吞掉后返回 500）。
+        """
+        text = (text or "").strip()
+        if not text:
             return
-        if self._ws is None:
+        if not self.session_active:
             await self.start_session()
-        await self._send(
-            {
-                "realtimeInput": {
-                    "text": text,
-                }
-            }
-        )
+        payload = {"realtimeInput": {"text": text}}
+        try:
+            await self._send(payload)
+        except Exception as exc:
+            logger.warning("live speak failed (%s); reconnecting once", exc)
+            await self._reset_session()
+            await self.start_session()
+            await self._send(payload)
 
 
 class OpenAiRealtimeBackend(GeminiLiveBackend):

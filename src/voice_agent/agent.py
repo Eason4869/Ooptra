@@ -28,6 +28,29 @@ def _is_live_backend(backend: Any) -> bool:
                 hasattr(backend, "push_audio"))
 
 
+# 改了这些字段就必须重建记忆 / VAD / 已建立的模型会话，否则旧值继续生效
+_MEMORY_FIELDS = {"memory_path", "memory_max_turns"}
+_VAD_FIELDS = {"sample_rate_in", "silence_ms", "max_utterance_ms"}
+_SESSION_FIELDS = {
+    "persona",
+    "proxy",
+    "gemini_api_key",
+    "gemini_base_url",
+    "gemini_model",
+    "gemini_voice",
+    "openai_api_key",
+    "openai_base_url",
+    "openai_realtime_model",
+    "openai_voice",
+    "mimo_api_key",
+    "mimo_base_url",
+    "mimo_asr_model",
+    "mimo_llm_model",
+    "mimo_tts_model",
+    "mimo_tts_voice",
+}
+
+
 class VoiceAgent:
     def __init__(
         self,
@@ -44,13 +67,7 @@ class VoiceAgent:
         self.backend = create_backend(settings, self.memory)
         self.live_mode = _is_live_backend(self.backend)
         self.duplex: VoiceDuplex | None = None
-        self._vad = EnergyVad(
-            VadvConfig(
-                sample_rate=settings.sample_rate_in,
-                silence_ms=settings.silence_ms,
-                max_utterance_ms=settings.max_utterance_ms,
-            )
-        )
+        self._vad = self._make_vad()
         self._user_buffers: dict[str, EnergyVad] = {}
         self._task: asyncio.Task | None = None
         self._busy = asyncio.Lock()
@@ -65,6 +82,11 @@ class VoiceAgent:
     # ------------------------------------------------------------------
     # 生命周期
     # ------------------------------------------------------------------
+
+    @property
+    def running(self) -> bool:
+        task = self._task
+        return task is not None and not task.done()
 
     def bind_bot(self, bot: Any) -> None:
         self._bot = bot
@@ -105,8 +127,85 @@ class VoiceAgent:
         await self.backend.aclose()
 
     async def _run_loop(self) -> None:
+        """会话保活：已进房但 Live 会话掉了就自动重连。
+
+        Live 会话可能因为代理抖动/长时间空闲被服务端关掉；没有这个监督时，
+        agent 会一直以为自己还在说话，实际音频早已进黑洞。
+        """
         while True:
-            await asyncio.sleep(30)
+            await asyncio.sleep(15)
+            if not (self._joined and self.live_mode):
+                continue
+            backend = self.backend
+            active = getattr(backend, "session_active", None)
+            if active is None or active:
+                continue
+            start = getattr(backend, "start_session", None)
+            if start is None:
+                continue
+            logger.warning("Live 会话已断开，正在重连…")
+            try:
+                await start()
+            except Exception as exc:
+                logger.warning("语音会话重连失败：%s", exc)
+
+    def _make_vad(self) -> EnergyVad:
+        return EnergyVad(
+            VadvConfig(
+                sample_rate=self.settings.sample_rate_in,
+                silence_ms=self.settings.silence_ms,
+                max_utterance_ms=self.settings.max_utterance_ms,
+            )
+        )
+
+    async def refresh(self, changed: list[str]) -> list[str]:
+        """配置就地更新后，把派生对象与会话同步到新值。
+
+        返回给用户看的提示（哪些东西被重建了）。``changed`` 是字段名列表。
+        """
+        if not changed:
+            return []
+        changed_set = set(changed)
+        notes: list[str] = []
+
+        if _MEMORY_FIELDS & changed_set:
+            self.memory = MemoryStore(self.settings.memory_path, self.settings.memory_max_turns)
+            self.memory.set_persona(self.settings.persona)
+            self.backend.memory = self.memory
+            notes.append("记忆存储已重建")
+
+        if _VAD_FIELDS & changed_set:
+            self._vad = self._make_vad()
+            self._user_buffers.clear()
+            notes.append("断句参数已重建")
+
+        if "persona" in changed_set:
+            self.memory.set_persona(self.settings.persona)
+
+        if "backend" in changed_set:
+            await self.backend.aclose()
+            self.backend = create_backend(self.settings, self.memory)
+            self.live_mode = _is_live_backend(self.backend)
+            notes.append("语音后端已切换")
+
+        session_dirty = bool(_SESSION_FIELDS & changed_set) or "backend" in changed_set
+        if not session_dirty:
+            return notes
+
+        if not (self._joined and self.live_mode):
+            # 没进房时无需重建会话，下次 join 自然用新配置
+            return notes
+        start = getattr(self.backend, "start_session", None)
+        if start is None:
+            return notes
+        await self._wire_live()
+        try:
+            await start()
+        except Exception as exc:
+            logger.warning("按新配置重建语音会话失败：%s", exc)
+            return [*notes, f"语音会话重建失败：{exc}"]
+        notes.append("语音会话已按新配置重建")
+        return notes
 
     # ------------------------------------------------------------------
     # 进退房
@@ -191,10 +290,18 @@ class VoiceAgent:
                 await self._bot.voice.leave()
             except Exception:
                 logger.debug("voice.leave failed", exc_info=True)
+        # 退房就关掉 Live 会话：否则 Gemini 会话会一直挂着（既计费又占并发），
+        # 而且下次进房时 start_session 会因为旧会话状态而变成空操作。
+        aclose = getattr(self.backend, "aclose", None)
+        if aclose is not None:
+            try:
+                await aclose()
+            except Exception:
+                logger.debug("backend close on leave failed", exc_info=True)
         self._joined = False
+        self._speaking = False
         self._user_buffers.clear()
         self._vad.reset()
-        self._speaking = False
         return {"ok": True}
 
     def status(self) -> dict[str, Any]:

@@ -160,9 +160,11 @@ VOICE_AGENT_CONFIG = {
     "memory_max_turns": 30,
 }
 
-# 语音 HTTP API —— 已合并到 WebUI（http://127.0.0.1:3090/api/voice/*）
-# 仅当需要独立端口给外部服务时再打开；默认关闭，用 WEBUI_CONFIG.token 鉴权。
-# 开启独立端口后才改用下面的 token；外部插件的令牌需与生效的这一项保持一致。
+# 语音 HTTP API —— 已合并到 WebUI（http://127.0.0.1:3090/voice/* 与 /api/voice/*）。
+# 外部插件（astrbot_plugin_ooptra）请直接用 3090，令牌填 WEBUI_CONFIG.token。
+# 下面这个独立端口是与 3090 **完全等价**的副本（同一套路由），一般无需开启；
+# 只在「不想把语音 API 暴露在 WebUI 端口上」时才打开，并务必填 token——
+# token 留空时该端口不做任何校验。
 VOICE_API_CONFIG = {
     "enabled": False,
     "host": "127.0.0.1",

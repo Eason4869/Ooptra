@@ -364,7 +364,43 @@ class WebUIConsole:
         except Exception as exc:
             logger.exception("保存配置失败")
             return web.json_response({"ok": False, "error": f"保存失败：{exc}"}, status=500)
-        return web.json_response({"ok": True, **result, "message": "已写入 config.py"})
+
+        # 语音配置必须回到主事件循环上热重载：reload_settings 会创建 asyncio 任务
+        # （重建 Live 会话），在 to_thread 的工作线程里跑会绑到错误的 loop 上。
+        await self._hot_reload_voice(result)
+
+        message = "已写入 config.py"
+        notes = result.get("notes") or []
+        if notes:
+            message = "已写入 config.py，并已热生效：" + "；".join(str(n) for n in notes)
+        elif result.get("restart_required"):
+            message = "已写入 config.py，此项需重启 Ooptra 才能生效"
+        return web.json_response({"ok": True, **result, "message": message})
+
+    async def _hot_reload_voice(self, result: dict) -> None:
+        """把刚保存的语音配置应用到运行中的 VoiceRuntime。"""
+        changed = result.get("changed") or {}
+        if not ({"voice", "voice_api"} & set(changed)):
+            return
+        try:
+            from voice_agent.runtime import get_voice_runtime
+
+            applied = await get_voice_runtime().reload_settings()
+        except Exception as exc:
+            logger.exception("语音配置热重载失败")
+            result.setdefault("notes", []).append(f"语音配置热重载失败：{exc}")
+            return
+        if applied.get("changed"):
+            result["hot_reloaded_fields"] = applied["changed"]
+        if applied.get("api_changed"):
+            result["hot_reloaded_fields"] = [
+                *(result.get("hot_reloaded_fields") or []),
+                *applied["api_changed"],
+            ]
+        for note in applied.get("notes") or []:
+            result.setdefault("notes", []).append(note)
+        if applied.get("restart_keys"):
+            result["restart_required"] = True
 
     # ------------------------------------------------------------------
     # 登录
