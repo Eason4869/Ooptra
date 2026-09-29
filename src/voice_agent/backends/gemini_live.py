@@ -33,6 +33,8 @@ DEFAULT_LIVE_WS = (
 )
 
 AudioOutHandler = Callable[[bytes, int], Awaitable[None] | None]
+#: 回合结束回调：参数为「是否被抢话打断」。模型说完是 False，被 barge-in 打断是 True。
+TurnOutHandler = Callable[[bool], Awaitable[None] | None]
 
 
 def live_url_has_key(url: str) -> bool:
@@ -81,6 +83,11 @@ class GeminiLiveBackend(VoiceBackend):
         self._reconnect_task: asyncio.Task | None = None
         self._audio_out: AudioOutHandler | None = None
         self._text_out: Callable[[str], Awaitable[None] | None] | None = None
+        self._turn_out: TurnOutHandler | None = None
+        # start_session 可能被并发调用（push_audio 在音频热路径上也会调它），
+        # 而它开头就 _reset_session() —— 没有这把锁，任何一次非活跃窗口都会
+        # 让每个音频帧各建一次会话，互相把对方的 socket 拆掉。
+        self._start_lock = asyncio.Lock()
         self._ready = asyncio.Event()
         self._closed = False
         self._turns = 0
@@ -99,6 +106,15 @@ class GeminiLiveBackend(VoiceBackend):
     def set_text_out(self, handler) -> None:
         self._text_out = handler
 
+    def set_turn_out(self, handler: TurnOutHandler | None) -> None:
+        """注册「一个回合结束了」的回调（``interrupted=True`` 表示被抢话打断）。
+
+        在此之前，``turnComplete``/``interrupted`` 这条边界信息只被用来写记忆和
+        自增一个没人读的计数器，**从不外泄** —— 上层只好拿「收到音频分片」当
+        「正在说话」，于是这个状态一旦置上就再也回落不了。
+        """
+        self._turn_out = handler
+
     @property
     def session_active(self) -> bool:
         """会话真的可用吗——socket 在、未主动关闭、循环仍在跑。"""
@@ -113,7 +129,13 @@ class GeminiLiveBackend(VoiceBackend):
     async def start_session(self) -> None:
         if self.session_active:
             return
+        async with self._start_lock:
+            # 排队等锁期间，先到的那次可能已经把会话建好了
+            if self.session_active:
+                return
+            await self._start_session_locked()
 
+    async def _start_session_locked(self) -> None:
         from voice_agent.settings import resolve_agent_proxy_url
         from voice_agent.ws_transport import open_live_ws
 
@@ -352,6 +374,16 @@ class GeminiLiveBackend(VoiceBackend):
 
         if server.get("turnComplete") or server.get("interrupted"):
             self._turns += 1
+            # 回合边界：先通知上层（它据此把「正在说话」落回 False、结束一次轮次），
+            # 再写记忆。被抢话时上层还要就地丢掉本地已排期的音频。
+            turn_handler = self._turn_out
+            if turn_handler is not None:
+                try:
+                    result = turn_handler(bool(server.get("interrupted")))
+                    if asyncio.iscoroutine(result):
+                        await result
+                except Exception:
+                    logger.debug("turn out handler failed", exc_info=True)
             if self._last_user_text or self._last_reply:
                 try:
                     if self._last_user_text:
