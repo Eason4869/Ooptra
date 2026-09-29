@@ -324,3 +324,104 @@ def test_standalone_with_token_rejects_missing_token() -> None:
     )
     assert results[0][0] == 401
     assert results[1][0] == 200
+
+
+# ----------------------------------------------------------------------
+# 成员范围与实时状态计数
+# ----------------------------------------------------------------------
+
+
+class FakeVoice:
+    """只提供 _voice_live_states 需要的两个接口。"""
+
+    def __init__(self, states: dict, received: int) -> None:
+        self._states = states
+        self.voice_state_received = received
+
+    def voice_states(self) -> dict:
+        return self._states
+
+
+class FakeBotWithVoice(FakeBot):
+    def __init__(self, result: Any, states: dict, received: int) -> None:
+        super().__init__(result)
+        self.voice = FakeVoice(states, received)
+
+
+TWO_ROOMS = {
+    "channelMembers": {
+        "chan-1": [{"uid": "u1", "name": "本房甲"}, {"uid": "u2", "name": "本房乙"}],
+        "chan-2": [{"uid": "u9", "name": "别房丙"}],
+    }
+}
+
+
+def _agent_with_voice(states: dict, received: int) -> FakeAgent:
+    agent = FakeAgent(TWO_ROOMS)
+    agent._bot = FakeBotWithVoice(TWO_ROOMS, states, received)  # type: ignore[assignment]
+    return agent
+
+
+def test_members_without_channel_aggregates_every_room() -> None:
+    """不传 channel 时是「整个域汇总」——所以别房的成员也会出现，
+    而他们的静音状态永远拿不到（广播只在同一个 Agora 房间内）。"""
+    agent = _agent_with_voice({"u1": {"m": 1, "hm": 0}}, 3)
+    webui_app, _ = _build_apps(agent)
+
+    [(status, payload)] = _run(
+        webui_app, [("GET", "/voice/members?area=area-1", {})]
+    )
+    assert status == 200, payload
+    assert payload["count"] == 3
+    assert {row["uid"] for row in payload["members"]} == {"u1", "u2", "u9"}
+    # 只有 u1 有实时状态；u9 在别的房，永远不会广播
+    assert payload["live_members"] == 1
+    assert payload["live_state_received"] == 3
+    by_uid = {row["uid"]: row for row in payload["members"]}
+    assert by_uid["u1"]["mic_muted"] is True
+    assert by_uid["u9"]["mic_muted"] is None
+
+
+def test_members_scoped_to_channel_excludes_other_rooms() -> None:
+    """前端传 bot 所在频道后，表里只剩本房成员 —— 这才是能拿到状态的集合。"""
+    agent = _agent_with_voice({"u1": {"m": 0, "hm": 1}, "u2": {"m": 1}}, 2)
+    webui_app, _ = _build_apps(agent)
+
+    [(status, payload)] = _run(
+        webui_app, [("GET", "/voice/members?area=area-1&channel=chan-1", {})]
+    )
+    assert status == 200, payload
+    assert payload["count"] == 2
+    assert {row["uid"] for row in payload["members"]} == {"u1", "u2"}
+    assert payload["channel"] == "chan-1"
+    # 2 人全部拿到状态
+    assert payload["live_members"] == 2
+    by_uid = {row["uid"]: row for row in payload["members"]}
+    assert by_uid["u1"]["mic_muted"] is False and by_uid["u1"]["speaker_muted"] is True
+    assert by_uid["u2"]["mic_muted"] is True
+
+
+def test_live_members_never_exceeds_count() -> None:
+    """广播里可能有已经离开房间的人：计数不能超过表内行数，也不能为负。"""
+    agent = _agent_with_voice({"u1": {"m": 0}, "ghost": {"m": 0}}, 9)
+    webui_app, _ = _build_apps(agent)
+
+    [(status, payload)] = _run(
+        webui_app, [("GET", "/voice/members?area=area-1&channel=chan-1", {})]
+    )
+    assert status == 200, payload
+    assert payload["live_members"] == 1  # ghost 不在本房成员表里，不计
+    assert payload["live_state_received"] == 9  # 累计收到条数是独立指标
+
+
+def test_members_unknown_channel_is_empty_not_error() -> None:
+    """查一个不存在的频道：空表 + 200，前端能把原因说清楚。"""
+    agent = _agent_with_voice({}, 0)
+    webui_app, _ = _build_apps(agent)
+
+    [(status, payload)] = _run(
+        webui_app, [("GET", "/voice/members?area=area-1&channel=nope", {})]
+    )
+    assert status == 200, payload
+    assert payload["count"] == 0 and payload["members"] == []
+    assert payload["live_members"] == 0

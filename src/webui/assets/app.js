@@ -93,11 +93,50 @@ function escapeHtml(value) {
   return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+// 复制：navigator.clipboard 只在**安全上下文**（https 或 localhost）存在。
+// 用局域网 IP 打开控制台时它是 undefined，旧代码在这里直接抛 TypeError，
+// 连失败提示都不会弹 —— 三个「复制…」按钮点了没反应就是这个原因。
+// 所以：能用就用，用不了退回 execCommand；再不行就把值弹出来让用户手抄。
+function legacyCopy(value) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = value;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.top = '-1000px';
+    ta.style.left = '-1000px';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, ta.value.length);
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch (e) {
+    return false;
+  }
+}
+
 function copyText(value) {
-  return navigator.clipboard.writeText(value).then(
-    () => toast('已复制', String(value).slice(0, 40), 'ok'),
-    () => toast('复制失败', '浏览器拒绝了剪贴板访问', 'err'),
-  );
+  const s = String(value ?? '');
+  const done = () => toast('已复制', s.slice(0, 40), 'ok');
+  const manual = (why) => {
+    toast('复制失败', why, 'err');
+    // prompt 的默认值在浏览器里是选中状态，Ctrl+C 即可
+    window.prompt('请手动复制（Ctrl+C）', s);
+  };
+  if (navigator.clipboard && window.isSecureContext) {
+    return navigator.clipboard.writeText(s).then(done, () => {
+      if (legacyCopy(s)) done();
+      else manual('浏览器拒绝了剪贴板访问');
+    });
+  }
+  if (legacyCopy(s)) {
+    done();
+  } else {
+    manual('当前地址不是安全上下文（http + 非 localhost），无法直接写剪贴板');
+  }
+  return Promise.resolve();
 }
 
 function confirmDialog(title, message, yesLabel) {
@@ -1403,10 +1442,18 @@ function renderTranscript(st) {
 async function refreshMembers() {
   const status = $('member-status');
   const areaInput = $('member-area');
-  const area = areaInput ? areaInput.value.trim() : '';
+  let area = areaInput ? areaInput.value.trim() : '';
+  let channel = '';
   try {
     if (status) status.textContent = '加载中…';
-    const qs = area ? ('?area=' + encodeURIComponent(area)) : '';
+    // 静音状态只有**同一个 Agora 房间里**的人会广播。接口不传 channel 时会把整个
+    // 域下所有语音房的成员汇总过来，那些房的广播我们收不到，整张表就全是「未知」。
+    // 所以先问 /voice/status 拿 bot 此刻在哪个房，只查那一个。
+    const st = ((await api('/api/voice/status')).status) || {};
+    if (!area) area = st.area || '';
+    if (st.joined && st.channel) channel = st.channel;
+    let qs = '?area=' + encodeURIComponent(area);
+    if (channel) qs += '&channel=' + encodeURIComponent(channel);
     const data = await api('/api/voice/members' + qs);
     const body = $('member-body');
     const rows = data.members || [];
@@ -1415,10 +1462,12 @@ async function refreshMembers() {
       body.innerHTML = '<tr><td colspan="4" class="muted">暂无成员（确认已进房 / 域 ID 正确）</td></tr>';
     } else {
       // 静音状态只有两个来源：成员自己用 Agora stream message 广播的实时状态
-      // （row.live=true），或 REST 自带字段（当前 Oopz 不返回）。都没有就是「未知」，
-      // 不要伪造成「开麦」。
+      // （row.live=true），或 REST 自带字段（当前 Oopz 不返回）。都没有就不能伪造成
+      // 「开麦」——但也不能写「未知」，那看着像我们没收到；是对方还没广播过。
       const muteCell = (flag, onText, offText) => {
-        if (flag === null || flag === undefined) return '<span class="badge">未知</span>';
+        if (flag === null || flag === undefined) {
+          return '<span class="badge" title="该成员进房后还没广播过静音状态">未广播</span>';
+        }
         return '<span class="badge ' + (flag ? 'warn' : 'ok') + '">' +
           (flag ? onText : offText) + '</span>';
       };
@@ -1429,12 +1478,19 @@ async function refreshMembers() {
         '<td>' + muteCell(row.speaker_muted, '已闭听', '正常') + '</td></tr>'
       ).join('');
     }
-    // 一条广播都没收到时，把原因说清楚：不是「都没闭麦」，是数据源没在发
-    const live = Number(data.live_state_received || 0);
+    // 广播是「谁进房/改状态谁发一条」，一次只报一个人，不是整房快照。所以能报出
+    // 「本房 N 人里拿到 M 人」，而不是含糊的「收到 X 条」。
+    const total = rows.length;
+    const got = Number(data.live_members || 0);
     if (status) {
-      status.textContent = live > 0
-        ? ('已更新（实时状态 ' + live + ' 条）')
-        : '已更新（未收到静音状态广播，这两列只能显示未知）';
+      if (!channel) {
+        status.textContent = '已更新（bot 未在语音房，拿不到实时状态）';
+      } else if (got > 0) {
+        status.textContent = '已更新（本房实时状态 ' + got + '/' + total +
+          ' 人；对端只在进房和改状态时广播）';
+      } else {
+        status.textContent = '已更新（本房还没收到任何静音状态广播，这两列显示「未广播」）';
+      }
     }
   } catch (err) {
     if (status) status.textContent = err.message;
