@@ -120,6 +120,10 @@ class _StubVad:
 def _make_agent(*, live: bool = True) -> tuple[VoiceAgent, FakeDuplex, FakeBackend]:
     agent = VoiceAgent.__new__(VoiceAgent)
     agent.settings = load_voice_agent_settings()[0]
+    # 这三项必须显式写死：CI 的 config.py 由 config.example.py 生成，其中
+    # VOICE_AGENT_CONFIG.enabled 为 False —— 那样 _on_remote_pcm 会在第一道门
+    # 就 return，断言「0 次打断」的用例会假通过，断言「1 次」的则直接挂。
+    agent.settings.enabled = True
     agent.settings.backend = "gemini_live" if live else "mimo_cascade"
     agent.settings.barge_in = True
     agent.settings.listen_only_uids = []
@@ -165,6 +169,7 @@ def test_interleaved_chunks_trigger_barge_in_once() -> None:
             await backend.emit_audio(1)  # 模型吐一个分片
             await agent._on_remote_pcm("u1", FRAME, 16000)  # 20ms 后用户来一帧
 
+        assert backend.pushed_frames == CHUNKS, "音频帧没有进入 Live 会话，本例不作数"
         assert backend.interrupt_calls == 1, f"打断被触发了 {backend.interrupt_calls} 次"
         assert duplex.stop_calls == 1, f"播放队列被清空 {duplex.stop_calls} 次"
 
@@ -185,6 +190,9 @@ def test_speaking_is_false_right_after_model_finished() -> None:
         for _ in range(50):
             await agent._on_remote_pcm("u1", FRAME, 16000)
 
+        # 先确认这 50 帧真的走到了 push_audio：否则「0 次打断」可能只是因为
+        # 帧在入口就被丢弃（enabled/listen_only_uids），断言等于空转。
+        assert backend.pushed_frames == 50, "音频帧没有进入 Live 会话，本例不作数"
         assert backend.interrupt_calls == 0
         assert duplex.stop_calls == 0
 
