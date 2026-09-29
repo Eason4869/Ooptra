@@ -51,10 +51,12 @@ class WebUIConsole:
         controller: Any,
         *,
         config: dict[str, Any] | None = None,
+        voice_runtime: Any = None,
     ) -> None:
         self._state = state
         self._controller = controller
         self._config = config if isinstance(config, dict) else getattr(runtime_config, "WEBUI_CONFIG", {}) or {}
+        self._voice_runtime = voice_runtime
         self._tailer = LogTailer(LOGS_DIR)
         self._login = OopzLoginService(controller, state)
         self._token = ""
@@ -94,6 +96,7 @@ class WebUIConsole:
                 web.get("/assets/{name}", self._handle_asset),
                 web.get("/api/status", self._handle_status),
                 web.get("/api/credentials", self._handle_credentials),
+                web.get("/api/update", self._handle_update_check),
                 web.get("/api/logs", self._handle_logs_list),
                 web.get("/api/logs/tail", self._handle_logs_tail),
                 web.get("/api/logs/stream", self._handle_logs_stream),
@@ -106,6 +109,13 @@ class WebUIConsole:
                 web.post("/api/bridge/restart", self._handle_bridge_restart),
             ]
         )
+        if self._voice_runtime is not None:
+            try:
+                from webui.voice_routes import mount_voice_routes
+
+                mount_voice_routes(app, self._voice_runtime)
+            except Exception:
+                logger.exception("挂载语音路由失败")
 
         runner = web.AppRunner(app, access_log=None)
         await runner.setup()
@@ -141,7 +151,11 @@ class WebUIConsole:
 
     @web.middleware
     async def _auth_middleware(self, request: web.Request, handler: Any) -> web.StreamResponse:
-        if not self._token or not request.path.startswith("/api/"):
+        path = request.path
+        protected = path.startswith("/api/") or path.startswith(
+            ("/voice/", "/health", "/oopz/", "/persona", "/memory")
+        )
+        if not self._token or not protected:
             return await handler(request)
 
         provided = (
@@ -211,6 +225,7 @@ class WebUIConsole:
                         "default_channel": str(oopz_cfg.get("default_channel") or ""),
                         "proxy": str(oopz_cfg.get("proxy") or ""),
                     },
+                    "voice": self._voice_payload(),
                     "onebot": {
                         "enabled": bool(onebot_cfg.get("enabled", False)),
                         "enable_ws_reverse": bool(onebot_cfg.get("enable_ws_reverse", False)),
@@ -237,8 +252,36 @@ class WebUIConsole:
             }
         )
 
+    def _voice_payload(self) -> dict[str, Any]:
+        runtime = self._voice_runtime
+        if runtime is None:
+            return {"enabled": False, "status": {}}
+        try:
+            status = runtime.agent.status()
+        except Exception:
+            status = {}
+        return {
+            "enabled": bool(runtime.agent_settings.enabled),
+            "backend": runtime.agent_settings.backend,
+            "status": status,
+        }
+
     async def _handle_credentials(self, _request: web.Request) -> web.StreamResponse:
         return web.json_response({"ok": True, "credentials": credentials_summary()})
+
+    # ------------------------------------------------------------------
+    # 更新检查
+    # ------------------------------------------------------------------
+
+    async def _handle_update_check(self, _request: web.Request) -> web.StreamResponse:
+        from voice_agent.settings import resolve_agent_proxy_url
+        from webui.update_check import check_github_update
+
+        proxy = resolve_agent_proxy_url(
+            str(getattr(runtime_config, "VOICE_AGENT_CONFIG", {}) or {}).get("proxy", "") or ""
+        )
+        payload = await check_github_update(proxy=proxy)
+        return web.json_response(payload)
 
     # ------------------------------------------------------------------
     # 日志
@@ -321,7 +364,43 @@ class WebUIConsole:
         except Exception as exc:
             logger.exception("保存配置失败")
             return web.json_response({"ok": False, "error": f"保存失败：{exc}"}, status=500)
-        return web.json_response({"ok": True, **result, "message": "已写入 config.py"})
+
+        # 语音配置必须回到主事件循环上热重载：reload_settings 会创建 asyncio 任务
+        # （重建 Live 会话），在 to_thread 的工作线程里跑会绑到错误的 loop 上。
+        await self._hot_reload_voice(result)
+
+        message = "已写入 config.py"
+        notes = result.get("notes") or []
+        if notes:
+            message = "已写入 config.py，并已热生效：" + "；".join(str(n) for n in notes)
+        elif result.get("restart_required"):
+            message = "已写入 config.py，此项需重启 Ooptra 才能生效"
+        return web.json_response({"ok": True, **result, "message": message})
+
+    async def _hot_reload_voice(self, result: dict) -> None:
+        """把刚保存的语音配置应用到运行中的 VoiceRuntime。"""
+        changed = result.get("changed") or {}
+        if not ({"voice", "voice_api"} & set(changed)):
+            return
+        try:
+            from voice_agent.runtime import get_voice_runtime
+
+            applied = await get_voice_runtime().reload_settings()
+        except Exception as exc:
+            logger.exception("语音配置热重载失败")
+            result.setdefault("notes", []).append(f"语音配置热重载失败：{exc}")
+            return
+        if applied.get("changed"):
+            result["hot_reloaded_fields"] = applied["changed"]
+        if applied.get("api_changed"):
+            result["hot_reloaded_fields"] = [
+                *(result.get("hot_reloaded_fields") or []),
+                *applied["api_changed"],
+            ]
+        for note in applied.get("notes") or []:
+            result.setdefault("notes", []).append(note)
+        if applied.get("restart_keys"):
+            result["restart_required"] = True
 
     # ------------------------------------------------------------------
     # 登录

@@ -57,6 +57,9 @@ class BrowserVoiceTransport:
         # This is the data_stream payload field `uid`.
         self._oopz_uid: str | None = None
 
+        # Duplex: JS -> Python remote PCM callback
+        self._remote_pcm_callback = None
+
     @property
     def available(self) -> bool:
         return self._available
@@ -173,6 +176,30 @@ class BrowserVoiceTransport:
         await page.add_init_script(
             f"window.AGORA_SDK_URL = {self.config.voice_agora_sdk_url!r};"
         )
+
+        async def _on_remote_pcm(uid: str, b64: str, sample_rate: int) -> None:
+            callback = self._remote_pcm_callback
+            if callback is None:
+                return
+            try:
+                import base64 as _b64
+
+                pcm = _b64.b64decode(b64 or "")
+            except Exception:
+                logger.debug("decode remote pcm failed", exc_info=True)
+                return
+            try:
+                result = callback(str(uid or ""), pcm, int(sample_rate or 16000))
+                if asyncio.iscoroutine(result):
+                    await result
+            except Exception:
+                logger.debug("remote pcm callback failed", exc_info=True)
+
+        try:
+            await page.expose_function("oopzPushRemotePcm", _on_remote_pcm)
+        except Exception:
+            logger.debug("expose oopzPushRemotePcm failed", exc_info=True)
+
         html_path = Path(__file__).resolve().parent.parent / "assets" / "voice" / "agora_player.html"
         await page.goto(html_path.as_uri())
 
@@ -461,6 +488,35 @@ class BrowserVoiceTransport:
         )
 
         return bool(result and result.get("ok"))
+
+    def set_remote_pcm_callback(self, callback) -> None:
+        self._remote_pcm_callback = callback
+
+    async def enable_listen(self, enabled: bool = True) -> dict[str, Any]:
+        result = await self._run_on_browser("agoraSetListen", bool(enabled))
+        return result if isinstance(result, dict) else {"ok": bool(result)}
+
+    async def push_tts_pcm(
+        self,
+        pcm16: bytes,
+        sample_rate: int,
+        *,
+        finish: bool = False,
+    ) -> dict[str, Any]:
+        import base64 as _b64
+
+        payload = _b64.b64encode(pcm16 or b"").decode("ascii")
+        result = await self._run_on_browser(
+            "agoraPushTtsPcm",
+            payload,
+            int(sample_rate),
+            bool(finish),
+        )
+        return result if isinstance(result, dict) else {"ok": bool(result)}
+
+    async def stop_tts(self) -> dict[str, Any]:
+        result = await self._run_on_browser("agoraStopTts")
+        return result if isinstance(result, dict) else {"ok": bool(result)}
 
     async def set_volume(self, volume: int) -> bool:
         result = await self._run_on_browser("agoraSetVolume", int(volume))

@@ -7,12 +7,13 @@ const ADV_KEY = 'oopz.webui.advanced';
 const POLL_MS = 3000;
 
 const PAGE_META = {
-  overview: ['概览', '一眼看清两条链路、流量与最近动态'],
+  overview: ['总览', '一眼看清链路、语音会话、流量与最近动态'],
   logs: ['日志', '实时跟随日志文件，可过滤、换行、下载'],
-  config: ['配置', '常用项直接改；其余默认值适用于绝大多数情况，收在「高级选项」里'],
+  voice: ['语音台', '进房对话、房间成员、人格与共享记忆'],
+  config: ['配置', '连接 / 语音模型 / 系统；常用项直接改'],
   account: ['账号', '查看凭据状态，或重新登录 Oopz'],
 };
-const GROUP_TITLE = { oopz: 'Oopz 账号与事件', onebot: 'OneBot v11 桥接', webui: 'Web 控制台' };
+const GROUP_TITLE = { oopz: 'Oopz 账号与事件', onebot: 'OneBot v11 桥接', webui: 'Web 控制台', voice: '语音对话 Agent', voice_api: '语音 HTTP API' };
 
 let token = '';
 let pollTimer = null;
@@ -246,7 +247,7 @@ function setupNav() {
   if (navReady) return;
   navReady = true;
   document.querySelectorAll('.nav-item[data-page]').forEach((item) => {
-    item.addEventListener('click', () => switchPage(item.dataset.page));
+    item.addEventListener('click', () => switchPage(item.dataset.page, item.dataset.tab || ''));
   });
   $('ev-filter').addEventListener('click', (event) => {
     const button = event.target.closest('.seg-btn');
@@ -260,10 +261,12 @@ function setupNav() {
   });
 }
 
-function switchPage(name) {
+function switchPage(name, tab) {
   const meta = PAGE_META[name] || PAGE_META.overview;
   document.querySelectorAll('.nav-item[data-page]').forEach((item) => {
-    item.classList.toggle('is-active', item.dataset.page === name);
+    const match = item.dataset.page === name && (!item.dataset.tab || item.dataset.tab === (tab || ''));
+    const primary = item.dataset.page === name && !item.dataset.tab;
+    item.classList.toggle('is-active', match || (primary && !tab));
   });
   document.querySelectorAll('.page').forEach((page) => {
     page.classList.toggle('is-active', page.id === 'page-' + name);
@@ -275,6 +278,10 @@ function switchPage(name) {
   else stopLogStream();
   if (name === 'config') loadConfig();
   if (name === 'account') refreshCredentials();
+  if (name === 'voice') {
+    if (tab) switchVoiceTab(tab);
+    refreshVoiceStatus();
+  }
 }
 
 function renderPageTools(name) {
@@ -622,10 +629,50 @@ async function loadConfig() {
   }
 }
 
+const CONFIG_TAB_MAP = {
+  connection: ['oopz', 'onebot'],
+  voice: ['voice', 'voice_api'],
+  system: ['webui'],
+};
+
+function activeConfigTab() {
+  return localStorage.getItem('oopz.webui.cfgtab') || 'connection';
+}
+
+function renderConfigTabs() {
+  const host = $('config-groups');
+  if (!host) return;
+  let bar = document.getElementById('config-tabs');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.className = 'subtabs';
+    bar.id = 'config-tabs';
+    host.parentNode.insertBefore(bar, host);
+    bar.addEventListener('click', (event) => {
+      const btn = event.target.closest('.subtab');
+      if (!btn) return;
+      localStorage.setItem('oopz.webui.cfgtab', btn.dataset.tab);
+      renderConfig();
+    });
+  }
+  const current = activeConfigTab();
+  bar.innerHTML = [
+    ['connection', '连接'],
+    ['voice', '语音模型'],
+    ['system', '系统'],
+  ].map(([id, label]) =>
+    '<button type="button" class="subtab' + (current === id ? ' is-active' : '') +
+    '" data-tab="' + id + '">' + label + '</button>'
+  ).join('');
+}
+
 function renderConfig() {
+  renderConfigTabs();
   const host = $('config-groups');
   host.innerHTML = '';
+  const allow = CONFIG_TAB_MAP[activeConfigTab()] || null;
   Object.entries(configSchema || {}).forEach(([group, spec]) => {
+    if (allow && !allow.includes(group)) return;
     const card = document.createElement('article');
     card.className = 'cfg-group';
     const live = (group === 'onebot' || group === 'oopz')
@@ -655,7 +702,22 @@ function renderConfig() {
     else extra.remove();
     host.appendChild(card);
   });
+  applyVendorVisibility();
   syncConfigChips();
+}
+
+function currentBackend() {
+  const dirtyBackend = dirty.voice && dirty.voice.backend;
+  if (dirtyBackend != null) return String(dirtyBackend);
+  const meta = configSchema && configSchema.voice && configSchema.voice.fields && configSchema.voice.fields.backend;
+  return meta ? String(meta.value || 'gemini_live') : 'gemini_live';
+}
+
+function applyVendorVisibility() {
+  const backend = currentBackend();
+  document.querySelectorAll('.cfg-field[data-vendor]').forEach((el) => {
+    el.hidden = el.dataset.vendor !== backend;
+  });
 }
 
 function syncConfigChips() {
@@ -673,6 +735,7 @@ function syncConfigChips() {
 function fieldRow(group, field, meta) {
   const wrap = document.createElement('div');
   wrap.className = 'cfg-field';
+  if (meta.vendor) wrap.dataset.vendor = meta.vendor;
 
   if (meta.type === 'bool') {
     wrap.innerHTML = '<label class="cfg-switch"><input type="checkbox"><span>' + escapeHtml(meta.label || field) + '</span></label>';
@@ -683,9 +746,13 @@ function fieldRow(group, field, meta) {
     return wrap;
   }
 
+  if (meta.type === 'select') {
+    return selectFieldRow(group, field, meta, wrap);
+  }
+
   const type = meta.sensitive ? 'password' : (meta.type === 'int' || meta.type === 'float' ? 'number' : 'text');
   const value = meta.type === 'list' ? (meta.value || []).join(', ') : (meta.value ?? '');
-  const placeholder = meta.sensitive ? (meta.is_set ? '已设置（留空不改）' : '未设置') : '';
+  const placeholder = meta.sensitive ? (meta.is_set ? '已设置（留空不改）' : (meta.placeholder || '未设置')) : (meta.placeholder || '');
   wrap.innerHTML = '<label><span>' + escapeHtml(meta.label || field) + '</span><input type="' + type + '"' +
     (type === 'number' ? ' step="any"' : '') + ' autocomplete="off" placeholder="' + escapeHtml(placeholder) + '"></label>';
   const input = wrap.querySelector('input');
@@ -698,6 +765,79 @@ function fieldRow(group, field, meta) {
   return wrap;
 }
 
+function selectFieldRow(group, field, meta, wrap) {
+  const options = (meta.options || []).map((opt) =>
+    typeof opt === 'object' && opt
+      ? { value: String(opt.value ?? ''), label: String(opt.label ?? opt.value ?? '') }
+      : { value: String(opt), label: String(opt) }
+  );
+  const allowCustom = !!meta.allow_custom;
+  const current = meta.value == null ? '' : String(meta.value);
+  const inPreset = options.some((opt) => opt.value === current);
+  const CUSTOM = '__custom__';
+
+  let html = '<label><span>' + escapeHtml(meta.label || field) + '</span><select class="cfg-select">';
+  options.forEach((opt) => {
+    html += '<option value="' + escapeHtml(opt.value) + '">' + escapeHtml(opt.label) + '</option>';
+  });
+  if (allowCustom) {
+    html += '<option value="' + CUSTOM + '">' + (inPreset && current ? '自定义…' : '自定义…') + '</option>';
+  }
+  html += '</select></label>';
+  if (allowCustom) {
+    html += '<input class="cfg-custom" type="text" autocomplete="off" placeholder="输入自定义值"' +
+      (inPreset || !current ? ' hidden' : '') + '>';
+  }
+  wrap.innerHTML = html;
+
+  const select = wrap.querySelector('select');
+  const custom = wrap.querySelector('.cfg-custom');
+
+  if (inPreset) {
+    select.value = current;
+    if (custom) custom.hidden = true;
+  } else if (allowCustom && current) {
+    select.value = CUSTOM;
+    if (custom) {
+      custom.hidden = false;
+      custom.value = current;
+    }
+  } else {
+    select.value = options.length ? options[0].value : '';
+    if (custom) {
+      custom.hidden = true;
+      custom.value = '';
+    }
+  }
+
+  const emit = () => {
+    if (select.value === CUSTOM) {
+      const raw = custom ? custom.value.trim() : '';
+      markDirty(group, field, meta, raw, wrap);
+    } else {
+      if (custom) {
+        custom.hidden = true;
+        custom.value = '';
+      }
+      markDirty(group, field, meta, select.value, wrap);
+    }
+  };
+
+  select.addEventListener('change', () => {
+    if (select.value === CUSTOM) {
+      if (custom) {
+        custom.hidden = false;
+        custom.focus();
+      }
+    }
+    emit();
+  });
+  if (custom) custom.addEventListener('change', emit);
+
+  if (meta.hint) wrap.insertAdjacentHTML('beforeend', '<p class="hint">' + escapeHtml(meta.hint) + '</p>');
+  return wrap;
+}
+
 function markDirty(group, field, meta, value, wrap) {
   dirty[group] = dirty[group] || {};
   const blank = meta.sensitive && typeof value === 'string' && !value.trim();
@@ -705,6 +845,7 @@ function markDirty(group, field, meta, value, wrap) {
   else dirty[group][field] = value;
   if (Object.keys(dirty[group]).length === 0) delete dirty[group];
   wrap.classList.toggle('is-dirty', !blank);
+  if (group === 'voice' && field === 'backend') applyVendorVisibility();
   updateSavebar();
 }
 
@@ -720,14 +861,21 @@ async function saveConfig(restartAfter) {
   $('config-save').disabled = $('config-save-restart').disabled = true;
   try {
     const result = await api('/api/config', { method: 'POST', body: { updates: dirty } });
-    toast('配置已保存', Object.entries(result.changed || {}).map(([g, f]) => g + ': ' + f.join('/')).join('；'), 'ok');
+    const fields = Object.entries(result.changed || {}).map(([g, f]) => g + ': ' + f.join('/')).join('；');
+    const notes = result.notes || [];
+    if (notes.length) {
+      // 语音配置会真正热应用，把后端回传的结果如实告诉用户
+      toast('已保存并热生效', notes.join('；'), 'ok');
+    } else {
+      toast('配置已保存', fields, 'ok');
+    }
     await loadConfig();
     if (restartAfter) {
       await api('/api/bridge/restart', { method: 'POST', body: {} });
       toast('正在重新连接', '桥接会按新配置重建连接', 'ok');
       setTimeout(refreshStatus, 1500);
     } else if (result.restart_required) {
-      toast('需要重新连接才生效', '这些字段在下次启动桥接时读取', 'warn');
+      toast('部分字段需重启才生效', fields, 'warn');
     }
   } catch (err) {
     toast('保存失败', err.message, 'err');
@@ -904,6 +1052,48 @@ function wireRail() {
     const ok = await confirmDialog('退出登录', '会清除本机浏览器里保存的访问令牌。服务器端配置不受影响。', '退出');
     if (ok) logout();
   });
+  const checkBtn = $('btn-check-update');
+  if (checkBtn) checkBtn.addEventListener('click', checkUpdate);
+  const githubBtn = $('btn-github');
+  if (githubBtn) githubBtn.addEventListener('click', openGithubRepo);
+}
+
+const GITHUB_REPO_URL = 'https://github.com/Eason4869/Ooptra';
+
+function openGithubRepo() {
+  window.open(GITHUB_REPO_URL, '_blank', 'noopener');
+}
+
+async function checkUpdate() {
+  const btn = $('btn-check-update');
+  if (btn) btn.disabled = true;
+  try {
+    toast('正在检查更新', '查询 GitHub 仓库…', 'ok');
+    const data = await api('/api/update');
+    const current = data.current_version || '';
+    const latest = data.latest_version || '';
+    if (data.update_available) {
+      const url = data.release_url || data.branch_url || data.repo_url || GITHUB_REPO_URL;
+      toast('发现新版本', '当前 v' + current + ' → 最新 v' + latest, 'warn');
+      if (await confirmDialog('发现新版本', '当前 v' + current + '，最新 v' + latest + '。是否打开 GitHub 仓库查看？', '打开 GitHub')) {
+        window.open(url, '_blank', 'noopener');
+      }
+    } else if (data.ok) {
+      toast('已是最新版本', data.message || ('当前 v' + current), 'ok');
+    } else {
+      toast('检查更新失败', data.error || '未知错误', 'err');
+      if (await confirmDialog('检查更新失败', (data.error || '无法连接 GitHub') + '。是否直接打开 GitHub 仓库？', '打开 GitHub')) {
+        window.open(data.repo_url || GITHUB_REPO_URL, '_blank', 'noopener');
+      }
+    }
+  } catch (err) {
+    toast('检查更新失败', err.message, 'err');
+    if (await confirmDialog('检查更新失败', err.message + '。是否直接打开 GitHub 仓库？', '打开 GitHub')) {
+      window.open(GITHUB_REPO_URL, '_blank', 'noopener');
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 async function boot() {
@@ -920,3 +1110,534 @@ async function boot() {
 
 document.addEventListener('DOMContentLoaded', boot);
 window.addEventListener('beforeunload', () => { stopPolling(); stopLogStream(); });
+
+
+/* ───────── 语音台 ───────── */
+
+let voiceReady = false;
+let voicePoll = null;
+let voiceAreaNames = {};
+let voiceChannelNames = {};
+let voiceDefaultArea = '';
+let voiceDefaultChannel = '';
+
+function currentJoinArea() {
+  const el = $('join-area');
+  return (el && el.value) || '';
+}
+
+function currentJoinChannel() {
+  const el = $('join-channel');
+  return (el && el.value) || '';
+}
+
+function updateDefaultHint() {
+  const hint = $('default-target-hint');
+  if (!hint) return;
+  const areaName = voiceDefaultArea ? (voiceAreaNames[voiceDefaultArea] || voiceDefaultArea) : '';
+  const channelName = voiceDefaultChannel
+    ? (voiceChannelNames[voiceDefaultChannel] || voiceDefaultChannel)
+    : '';
+  if (voiceDefaultArea && voiceDefaultChannel) {
+    hint.textContent = '默认目标：' + areaName + ' / ' + channelName + '。插件不带参数进房时用它；一个 QQ 群绑了多个域时也按默认域查询。';
+  } else if (voiceDefaultArea) {
+    hint.textContent = '默认域：' + areaName + '（未设默认频道）。一个 QQ 群绑了多个域时按默认域查询；插件进房仍需默认频道。';
+  } else {
+    hint.textContent = '默认目标：未设置。选中域与频道后点「设为默认」，作为插件 /进语音 的默认目标。';
+  }
+  document.querySelectorAll('#area-tabs .chip-tab').forEach((el) => {
+    const id = el.dataset.area || '';
+    el.classList.toggle('is-default', !!id && id === voiceDefaultArea);
+  });
+  document.querySelectorAll('#channel-grid .channel-card').forEach((el) => {
+    const id = el.dataset.channel || '';
+    el.classList.toggle('is-default', !!id && id === voiceDefaultChannel);
+  });
+  const btn = $('voice-set-default');
+  if (btn) {
+    const area = currentJoinArea();
+    const channel = currentJoinChannel();
+    btn.disabled = !area;
+    btn.title = area
+      ? ('把 ' + (voiceAreaNames[area] || area) + (channel ? ' / ' + (voiceChannelNames[channel] || channel) : '') + ' 写为默认')
+      : '先点选一个域标签';
+  }
+}
+
+async function setDefaultTarget() {
+  const area = currentJoinArea();
+  if (!area) {
+    toast('请先选域', '点上方域标签选中目标域', 'warn');
+    return;
+  }
+  const channel = currentJoinChannel();
+  const btn = $('voice-set-default');
+  if (btn) btn.disabled = true;
+  try {
+    await api('/api/config', {
+      method: 'POST',
+      body: { updates: { oopz: { default_area: area, default_channel: channel } } },
+    });
+    voiceDefaultArea = area;
+    voiceDefaultChannel = channel;
+    updateDefaultHint();
+    toast('已设为默认', (voiceAreaNames[area] || area) + (channel ? ' / ' + (voiceChannelNames[channel] || channel) : ''), 'ok');
+  } catch (err) {
+    toast('设置失败', err.message, 'err');
+  } finally {
+    if (btn) btn.disabled = false;
+    updateDefaultHint();
+  }
+}
+
+function updateBindBar() {
+  const areaId = currentJoinArea();
+  const channelId = currentJoinChannel();
+  const areaShown = areaId || '<域ID>';
+  const channelShown = channelId || '<频道ID>';
+  const cmd = $('bind-cmd');
+  if (cmd) {
+    cmd.textContent = '/语音绑定 ' + areaShown + (channelId ? ' ' + channelShown : '');
+    cmd.title = areaId
+      ? ('域 ID：' + areaId + (channelId ? '\n频道 ID：' + channelId : '\n尚未选择频道'))
+      : '尚未选择域，将用配置默认域';
+  }
+  const areaBtn = $('copy-area-id');
+  if (areaBtn) {
+    areaBtn.disabled = !areaId;
+    areaBtn.title = areaId ? ('复制域 ID：' + areaId) : '先点选一个域标签';
+  }
+  const channelBtn = $('copy-channel-id');
+  if (channelBtn) {
+    channelBtn.disabled = !channelId;
+    channelBtn.title = channelId ? ('复制频道 ID：' + channelId) : '先点选一个频道卡片';
+  }
+  const bindBtn = $('copy-bind-cmd');
+  if (bindBtn) {
+    bindBtn.disabled = !areaId;
+    bindBtn.title = areaId ? '复制完整 /语音绑定 指令' : '先点选一个域标签';
+  }
+  updateDefaultHint();
+}
+
+function wireBindBar() {
+  const areaBtn = $('copy-area-id');
+  const channelBtn = $('copy-channel-id');
+  const bindBtn = $('copy-bind-cmd');
+  const cmd = $('bind-cmd');
+  if (areaBtn) areaBtn.addEventListener('click', () => {
+    const id = currentJoinArea();
+    if (id) copyText(id);
+  });
+  if (channelBtn) channelBtn.addEventListener('click', () => {
+    const id = currentJoinChannel();
+    if (id) copyText(id);
+  });
+  if (bindBtn) bindBtn.addEventListener('click', () => {
+    const areaId = currentJoinArea();
+    if (!areaId) return;
+    const channelId = currentJoinChannel();
+    copyText('/语音绑定 ' + areaId + (channelId ? ' ' + channelId : ''));
+  });
+  if (cmd) cmd.addEventListener('click', () => {
+    const areaId = currentJoinArea();
+    if (!areaId) return;
+    const channelId = currentJoinChannel();
+    copyText('/语音绑定 ' + areaId + (channelId ? ' ' + channelId : ''));
+  });
+  updateBindBar();
+}
+
+function switchVoiceTab(tab) {
+  const name = tab || 'session';
+  document.querySelectorAll('#voice-tabs .subtab').forEach((el) => {
+    el.classList.toggle('is-active', el.dataset.tab === name);
+  });
+  document.querySelectorAll('.vpane').forEach((el) => {
+    el.classList.toggle('is-active', el.id === 'vpane-' + name);
+  });
+  if (name === 'members') refreshMembers();
+  if (name === 'persona') {
+    loadPersona();
+    loadMemory();
+  }
+}
+
+function setupVoice() {
+  if (voiceReady) return;
+  voiceReady = true;
+  const tabs = $('voice-tabs');
+  if (tabs) {
+    tabs.addEventListener('click', (event) => {
+      const btn = event.target.closest('.subtab');
+      if (btn) switchVoiceTab(btn.dataset.tab);
+    });
+  }
+  const join = $('voice-join');
+  const leave = $('voice-leave');
+  const speak = $('speak-btn');
+  const memRefresh = $('memory-refresh');
+  const memClear = $('memory-clear');
+  const personaSave = $('persona-save');
+  const memberRefresh = $('member-refresh');
+  const targetsRefresh = $('voice-targets-refresh');
+  if (join) join.onclick = () => voiceAction('join');
+  if (leave) leave.onclick = () => voiceAction('leave');
+  if (targetsRefresh) targetsRefresh.onclick = () => loadVoiceTargets(true);
+  const setDefault = $('voice-set-default');
+  if (setDefault) setDefault.onclick = setDefaultTarget;
+  wireBindBar();
+  const areaTabs = $('area-tabs');
+  if (areaTabs) {
+    areaTabs.addEventListener('click', (event) => {
+      const btn = event.target.closest('.chip-tab');
+      if (!btn) return;
+      const area = btn.dataset.area || '';
+      localStorage.setItem('oopz.webui.voice.area', area);
+      setJoinArea(area);
+      loadChannels(area, localStorage.getItem('oopz.webui.voice.channel') || '');
+      syncMemberArea(area);
+    });
+  }
+  const channelGrid = $('channel-grid');
+  if (channelGrid) {
+    channelGrid.addEventListener('click', (event) => {
+      const btn = event.target.closest('.channel-card');
+      if (!btn) return;
+      const channel = btn.dataset.channel || '';
+      localStorage.setItem('oopz.webui.voice.channel', channel);
+      setJoinChannel(channel);
+    });
+  }
+  if (speak) speak.onclick = voiceSpeak;
+  if (memRefresh) memRefresh.onclick = loadMemory;
+  if (memClear) memClear.onclick = clearMemory;
+  if (personaSave) personaSave.onclick = savePersona;
+  if (memberRefresh) memberRefresh.onclick = refreshMembers;
+}
+
+async function voiceAction(kind) {
+  try {
+    const body = {};
+    if (kind === 'join') {
+      const areaSel = $('join-area');
+      const channelSel = $('join-channel');
+      const area = areaSel ? areaSel.value.trim() : '';
+      const channel = channelSel ? channelSel.value.trim() : '';
+      if (area) body.area = area;
+      if (channel) body.channel = channel;
+    }
+    const data = await api(kind === 'join' ? '/api/voice/join' : '/api/voice/leave', {
+      method: 'POST',
+      body,
+    });
+    toast(kind === 'join' ? '已进房' : '已退房', (data.area || '') + ' ' + (data.channel || ''), 'ok');
+    refreshVoiceStatus();
+  } catch (err) {
+    toast('语音操作失败', err.message, 'err');
+  }
+}
+
+async function voiceSpeak() {
+  const input = $('speak-text');
+  const status = $('speak-status');
+  const value = input ? input.value.trim() : '';
+  if (!value) {
+    if (status) status.textContent = '请输入要说的话';
+    return;
+  }
+  try {
+    if (status) status.textContent = '合成中…';
+    const data = await api('/api/voice/speak', { method: 'POST', body: { text: value } });
+    if (status) status.textContent = '已推送（' + (data.pcm_bytes || 0) + ' bytes）';
+    toast('已开口', value.slice(0, 24), 'ok');
+  } catch (err) {
+    if (status) status.textContent = err.message;
+    toast('开口失败', err.message, 'err');
+  }
+}
+
+async function refreshVoiceStatus() {
+  setupVoice();
+  try {
+    const data = await api('/api/voice/status');
+    const st = data.status || {};
+    const joined = !!st.joined;
+    text('v-backend', st.backend || '—');
+    text('v-backend-sub', (st.enabled ? '已启用' : '未启用') + ' · 对话后端');
+    text('v-joined', joined ? '在房' : '不在房');
+    text('v-target', joined ? ((st.area || '') + ' / ' + (st.channel || '')) : '未绑定频道');
+    text('v-turns', String(st.turns || 0));
+    text('v-speaking', st.speaking ? '正在说话' : '空闲');
+    const title = $('voice-verdict-title');
+    const detail = $('voice-verdict-detail');
+    if (title) title.textContent = joined ? '语音会话进行中' : (st.enabled ? '语音 Agent 就绪' : '语音 Agent 未启用');
+    if (detail) {
+      detail.textContent = st.last_reply
+        ? '最近回复：' + String(st.last_reply).slice(0, 80)
+        : (joined ? '可对语音房说话，或点「说一句」' : '点「进房」开始语音对话');
+    }
+    renderTranscript(st);
+  } catch (err) {
+    const detail = $('voice-verdict-detail');
+    if (detail) detail.textContent = err.message;
+  }
+}
+
+function renderTranscript(st) {
+  const host = $('voice-transcript');
+  if (!host) return;
+  const rows = [];
+  if (st.last_user_text) rows.push(['user', st.last_user_text]);
+  if (st.last_reply) rows.push(['assistant', st.last_reply]);
+  if (!rows.length) {
+    host.innerHTML = '<li class="muted">暂无对话</li>';
+    return;
+  }
+  host.innerHTML = rows.map(([role, content]) =>
+    '<li class="feed-item"><span class="chip">' + (role === 'user' ? '用户' : 'Bot') +
+    '</span><span>' + escapeHtml(content) + '</span></li>'
+  ).join('');
+}
+
+async function refreshMembers() {
+  const status = $('member-status');
+  const areaInput = $('member-area');
+  const area = areaInput ? areaInput.value.trim() : '';
+  try {
+    if (status) status.textContent = '加载中…';
+    const qs = area ? ('?area=' + encodeURIComponent(area)) : '';
+    const data = await api('/api/voice/members' + qs);
+    const body = $('member-body');
+    const rows = data.members || [];
+    text('member-count', String(data.count || rows.length));
+    if (!rows.length) {
+      body.innerHTML = '<tr><td colspan="4" class="muted">暂无成员（确认已进房 / 域 ID 正确）</td></tr>';
+    } else {
+      // Oopz 的 membersByChannels 不返回静音状态，后端会给 null；不要伪造成「开麦」
+      const muteCell = (flag, onText, offText) => {
+        if (flag === null || flag === undefined) return '<span class="badge">未知</span>';
+        return '<span class="badge ' + (flag ? 'warn' : 'ok') + '">' +
+          (flag ? onText : offText) + '</span>';
+      };
+      body.innerHTML = rows.map((row) =>
+        '<tr><td class="mono">' + escapeHtml(row.uid || '—') + '</td>' +
+        '<td>' + escapeHtml(row.name || '—') + '</td>' +
+        '<td>' + muteCell(row.mic_muted, '已闭麦', '开麦') + '</td>' +
+        '<td>' + muteCell(row.speaker_muted, '已闭听', '正常') + '</td></tr>'
+      ).join('');
+    }
+    if (status) status.textContent = '已更新';
+  } catch (err) {
+    if (status) status.textContent = err.message;
+  }
+}
+
+async function loadPersona() {
+  try {
+    const data = await api('/api/persona');
+    const ta = $('persona-text');
+    if (ta) ta.value = data.persona || '';
+    const status = $('persona-status');
+    if (status) status.textContent = '';
+  } catch (err) {
+    const status = $('persona-status');
+    if (status) status.textContent = err.message;
+  }
+}
+
+async function savePersona() {
+  const ta = $('persona-text');
+  const status = $('persona-status');
+  try {
+    const data = await api('/api/persona', {
+      method: 'PUT',
+      body: { persona: ta ? ta.value : '' },
+    });
+    if (status) status.textContent = '已保存';
+    toast('人格已保存', '长度 ' + String((data.persona || '').length), 'ok');
+  } catch (err) {
+    if (status) status.textContent = err.message;
+    toast('保存失败', err.message, 'err');
+  }
+}
+
+async function loadMemory() {
+  try {
+    const data = await api('/api/memory');
+    const host = $('memory-list');
+    const rows = data.messages || [];
+    if (!rows.length) {
+      host.innerHTML = '<li class="muted">暂无记忆</li>';
+      return;
+    }
+    host.innerHTML = rows.slice(-20).map((row) =>
+      '<li class="feed-item"><span class="chip">' + escapeHtml(row.role || 'user') +
+      '</span><span>' + escapeHtml(row.content || '') + '</span></li>'
+    ).join('');
+  } catch (err) {
+    toast('记忆读取失败', err.message, 'err');
+  }
+}
+
+async function clearMemory() {
+  const yes = await confirmDialog('清空共享记忆', '将删除所有语音对话记忆，且不可恢复。', '清空');
+  if (!yes) return;
+  try {
+    await api('/api/memory', { method: 'DELETE', body: {} });
+    toast('已清空', '', 'ok');
+    loadMemory();
+  } catch (err) {
+    toast('清空失败', err.message, 'err');
+  }
+}
+
+/* ───────── 域 / 频道选择（标签 + 卡片） ───────── */
+
+function setJoinArea(area) {
+  const hidden = $('join-area');
+  if (hidden) hidden.value = area || '';
+  document.querySelectorAll('#area-tabs .chip-tab').forEach((el) => {
+    el.classList.toggle('is-active', (el.dataset.area || '') === (area || ''));
+  });
+  const label = $('channel-area-label');
+  if (label) {
+    const tab = document.querySelector('#area-tabs .chip-tab.is-active');
+    const name = (tab && tab.textContent.trim()) || '默认域';
+    label.textContent = '频道 · ' + name;
+    if (area) label.title = '域 ID：' + area;
+  }
+  updateBindBar();
+}
+
+function setJoinChannel(channel) {
+  const hidden = $('join-channel');
+  if (hidden) hidden.value = channel || '';
+  document.querySelectorAll('#channel-grid .channel-card').forEach((el) => {
+    el.classList.toggle('is-active', (el.dataset.channel || '') === (channel || ''));
+  });
+  updateBindBar();
+}
+
+function syncMemberArea(area) {
+  const memberArea = $('member-area');
+  if (!memberArea) return;
+  // 成员页若仍是 select，保持同步；若是隐藏/显示，只写 dataset
+  if (memberArea.tagName === 'SELECT') {
+    if (area && Array.from(memberArea.options).some((o) => o.value === area)) {
+      memberArea.value = area;
+    }
+  } else {
+    memberArea.dataset.area = area || '';
+  }
+}
+
+async function loadVoiceTargets(force) {
+  const areaTabs = $('area-tabs');
+  const hint = $('join-hint');
+  if (!areaTabs) return;
+  if (!force && areaTabs.childElementCount > 1) {
+    const current = localStorage.getItem('oopz.webui.voice.area') || '';
+    setJoinArea(current);
+    await loadChannels(current, localStorage.getItem('oopz.webui.voice.channel') || '');
+    return;
+  }
+  try {
+    if (hint) hint.textContent = '加载域列表…';
+    const data = await api('/api/oopz/areas');
+    const areas = data.areas || [];
+    voiceAreaNames = {};
+    areas.forEach((row) => { if (row.id) voiceAreaNames[row.id] = row.name || row.id; });
+    voiceDefaultArea = data.default_area || '';
+    voiceDefaultChannel = data.default_channel || '';
+    const savedArea = localStorage.getItem('oopz.webui.voice.area') || data.default_area || '';
+    areaTabs.innerHTML = '';
+    // 默认域占位
+    const def = document.createElement('button');
+    def.type = 'button';
+    def.className = 'chip-tab';
+    def.dataset.area = '';
+    def.textContent = '默认域';
+    def.title = '使用配置里的默认域';
+    areaTabs.appendChild(def);
+    areas.forEach((row) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'chip-tab';
+      btn.dataset.area = row.id || '';
+      btn.textContent = row.name || row.id || '未命名';
+      btn.title = '域 ID：' + (row.id || '') + '\n点击切换，ID 见下方绑定栏';
+      areaTabs.appendChild(btn);
+    });
+    // 成员页域下拉同步
+    const memberArea = $('member-area');
+    if (memberArea && memberArea.tagName === 'SELECT') {
+      memberArea.innerHTML = '<option value="">（当前会话）</option>' + areas.map((row) =>
+        '<option value="' + escapeHtml(row.id) + '">' + escapeHtml(row.name || row.id) + '</option>'
+      ).join('');
+      if (savedArea) memberArea.value = savedArea;
+    }
+    setJoinArea(savedArea);
+    const savedChannel = localStorage.getItem('oopz.webui.voice.channel') || data.default_channel || '';
+    await loadChannels(savedArea, savedChannel);
+    if (hint) hint.textContent = '点域标签切换、点频道卡片选中；下方可复制域/频道 ID 用于 /语音绑定';
+  } catch (err) {
+    if (hint) hint.textContent = '域列表加载失败：' + err.message;
+    areaTabs.innerHTML = '<button type="button" class="chip-tab is-active" data-area="">默认域</button>';
+    updateBindBar();
+  }
+}
+
+async function loadChannels(area, preferred) {
+  const grid = $('channel-grid');
+  const hint = $('join-hint');
+  if (!grid) return;
+  voiceChannelNames = {};
+  // 先放默认频道卡
+  grid.innerHTML = '';
+  const def = document.createElement('button');
+  def.type = 'button';
+  def.className = 'channel-card';
+  def.dataset.channel = '';
+  def.innerHTML = '<span class="ch-name">默认频道</span><span class="ch-sub">config 默认</span>';
+  grid.appendChild(def);
+
+  if (!area) {
+    setJoinChannel(preferred || '');
+    if (hint) hint.textContent = '未选域时用配置默认频道；点「默认域」以外的标签可列频道';
+    return;
+  }
+  try {
+    if (hint) hint.textContent = '加载频道…';
+    const data = await api('/api/oopz/channels?area=' + encodeURIComponent(area));
+    const channels = data.channels || [];
+    channels.forEach((row) => {
+      if (row.id) voiceChannelNames[row.id] = row.name || row.id;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'channel-card';
+      btn.dataset.channel = row.id || '';
+      btn.title = '频道 ID：' + (row.id || '') + '\n点击选中，ID 见下方绑定栏';
+      btn.innerHTML =
+        '<span class="ch-name">' + escapeHtml(row.name || row.id) + '</span>' +
+        '<span class="ch-sub"><span class="ch-id">' + escapeHtml(row.id || '—') + '</span></span>';
+      grid.appendChild(btn);
+    });
+    const pick = preferred || '';
+    setJoinChannel(pick);
+    if (hint) hint.textContent = channels.length
+      ? ('该域共 ' + channels.length + ' 个语音频道，点卡片选中并复制 ID')
+      : '该域下未发现语音频道，将使用默认';
+  } catch (err) {
+    if (hint) hint.textContent = '频道加载失败：' + err.message;
+    setJoinChannel('');
+  }
+}
+
+// 进入语音台时预加载目标
+const _origRefreshVoiceStatus = typeof refreshVoiceStatus === 'function' ? refreshVoiceStatus : null;
+refreshVoiceStatus = async function () {
+  if (_origRefreshVoiceStatus) await _origRefreshVoiceStatus();
+  await loadVoiceTargets(false);
+};
+

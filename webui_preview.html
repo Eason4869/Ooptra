@@ -1,0 +1,1004 @@
+<!-- AI生成 -->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="dark" />
+<title>Ooptra 控制台 · 完整交互预览</title>
+<style>
+:root {
+  --bg:#070b16; --bg-2:#0a1020; --panel:#0f1626; --panel-2:#131c30; --panel-3:#182238;
+  --line:rgba(148,163,184,.13); --line-2:rgba(148,163,184,.24);
+  --text:#e8eefb; --muted:#94a3bd; --dim:#64748b;
+  --accent:#5eead4; --accent-2:#38bdf8;
+  --ok:#34d399; --warn:#fbbf24; --err:#fb7185;
+  --r-xl:20px; --r-lg:14px; --r-md:10px; --r-sm:8px;
+  --sans:"Segoe UI",system-ui,-apple-system,"Microsoft YaHei",sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Consolas,monospace;
+}
+*{box-sizing:border-box} [hidden]{display:none!important}
+html,body{height:100%}
+body{
+  margin:0;font-family:var(--sans);font-size:14px;line-height:1.55;color:var(--text);
+  background:
+    radial-gradient(900px 520px at 8% -8%,rgba(94,234,212,.10),transparent 62%),
+    radial-gradient(760px 460px at 96% 4%,rgba(56,189,248,.10),transparent 60%),
+    linear-gradient(180deg,var(--bg-2),var(--bg) 42%);
+  background-attachment:fixed;-webkit-font-smoothing:antialiased;
+}
+h1,h2,h3{margin:0;font-weight:650;letter-spacing:.2px}
+h1{font-size:22px}h2{font-size:19px}h3{font-size:14px}
+p{margin:0} ul{margin:0;padding:0;list-style:none}
+code{font-family:var(--mono);font-size:12px;color:var(--accent)}
+a{color:var(--accent-2);text-decoration:none}a:hover{text-decoration:underline}
+hr{border:0;border-top:1px solid var(--line);margin:14px 0}
+.hint{color:var(--muted);font-size:12.5px}
+.mono{font-family:var(--mono)}
+.spacer{flex:1 1 auto}
+.muted{color:var(--muted)}
+.err{color:var(--err)}
+
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:9px 15px;
+  border-radius:var(--r-md);border:1px solid transparent;font:inherit;font-weight:600;color:var(--text);
+  cursor:pointer;background:rgba(148,163,184,.12);transition:transform .12s,background .16s,border-color .16s,opacity .16s}
+.btn:hover{background:rgba(148,163,184,.2)}
+.btn:active{transform:translateY(1px)}
+.btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
+.btn.primary{color:#04211d;background:linear-gradient(120deg,var(--accent),var(--accent-2))}
+.btn.primary:hover{filter:brightness(1.07)}
+.btn.ghost{background:transparent;border-color:var(--line-2)}
+.btn.ghost:hover{background:rgba(148,163,184,.1)}
+.btn.subtle{background:transparent;color:var(--muted)}
+.btn.warn{background:rgba(251,191,36,.14);border-color:rgba(251,191,36,.4);color:#fde68a}
+.btn.lg{padding:12px 18px;font-size:15px}
+.btn.sm{padding:6px 11px;font-size:12.5px}
+.btn.block{width:100%}
+
+.control{padding:8px 11px;border-radius:var(--r-md);font:inherit;color:var(--text);
+  background:var(--panel-2);border:1px solid var(--line);outline:none}
+.control:focus-visible,.btn:focus-visible,input:focus-visible,textarea:focus-visible{
+  border-color:rgba(94,234,212,.6);box-shadow:0 0 0 3px rgba(94,234,212,.16)}
+.control.sm{padding:7px 9px;font-size:12.5px}
+.control.grow{flex:1 1 220px;min-width:140px}
+.field{display:block;margin-bottom:12px}
+.field>span{display:block;margin-bottom:5px;font-size:12.5px;color:var(--muted)}
+.field input,.field select,.field textarea{
+  width:100%;padding:10px 12px;border-radius:var(--r-md);font:inherit;color:var(--text);
+  background:var(--panel-2);border:1px solid var(--line);outline:none}
+.switch{display:inline-flex;align-items:center;gap:7px;color:var(--muted);font-size:12.5px;cursor:pointer}
+.switch input{width:16px;height:16px;accent-color:var(--accent)}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:rgba(148,163,184,.22);border-radius:8px}
+
+/* login */
+.screen-login{display:grid;grid-template-columns:1.05fr .95fr;min-height:100vh}
+.login-art{padding:48px 40px;display:flex;flex-direction:column;justify-content:center;gap:22px}
+.art-head{display:flex;gap:14px;align-items:center}
+.mark{width:48px;height:48px;border-radius:14px;display:inline-flex;align-items:center;justify-content:center;
+  background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#04211d;font-weight:800;font-size:22px}
+.mark.sm{width:28px;height:28px;font-size:13px;border-radius:8px}
+.art-points{display:flex;flex-direction:column;gap:10px;color:var(--muted);font-size:13px}
+.art-points b{color:var(--text)}
+.login-side{display:flex;align-items:center;justify-content:center;padding:32px}
+.login-card{width:min(400px,100%);background:var(--panel);border:1px solid var(--line);
+  border-radius:var(--r-xl);padding:28px;box-shadow:0 24px 60px -30px rgba(2,6,23,.95)}
+.login-msg{min-height:20px;font-size:12.5px;color:var(--muted);margin-top:10px}
+.login-msg.ok{color:var(--ok)} .login-msg.err{color:var(--err)}
+.login-alt{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+
+/* app shell */
+.screen-app{display:grid;grid-template-columns:220px 1fr;min-height:100vh}
+.rail{background:rgba(10,16,32,.72);border-right:1px solid var(--line);
+  display:flex;flex-direction:column;padding:18px 0 12px;position:sticky;top:0;height:100vh}
+.rail-brand{display:flex;gap:10px;align-items:center;padding:4px 16px 18px;
+  border-bottom:1px solid var(--line);margin-bottom:12px}
+.rail-brand b{display:block;font-size:14px}
+.rail-brand i{font-style:normal;font-size:11px;color:var(--muted)}
+.rail-nav{display:flex;flex-direction:column;gap:14px;padding:8px 10px;overflow:auto}
+.nav-group{display:flex;flex-direction:column;gap:3px}
+.nav-group-label{padding:4px 12px 6px;font-size:11px;letter-spacing:.12em;color:var(--dim);user-select:none}
+.nav-item{display:flex;align-items:center;gap:9px;border:0;background:transparent;color:var(--muted);
+  font:inherit;font-weight:600;text-align:left;padding:9px 14px;border-radius:var(--r-md);cursor:pointer;
+  margin:1px 8px;width:calc(100% - 16px)}
+.nav-item:hover{background:rgba(148,163,184,.1);color:var(--text)}
+.nav-item.is-active{background:linear-gradient(90deg,rgba(94,234,212,.16),rgba(56,189,248,.08));
+  color:var(--accent);box-shadow:inset 2px 0 0 var(--accent)}
+.nav-item.sub{padding-left:28px;font-weight:500;font-size:13px}
+.nav-item svg{width:17px;height:17px;fill:currentColor;flex:0 0 auto}
+.rail-foot{margin-top:auto;padding:10px 8px 0;border-top:1px solid var(--line)}
+.rail-meta,.rail-ver{padding:4px 12px;font-size:11px;color:var(--dim)}
+.workspace{padding:22px 28px 40px;max-width:1200px}
+.page-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;gap:12px}
+.page{display:none}.page.is-active{display:block}
+
+.verdict{display:flex;align-items:center;gap:14px;background:var(--panel);border:1px solid var(--line);
+  border-radius:var(--r-xl);padding:18px 20px;margin-bottom:16px}
+.verdict-rail{width:4px;height:42px;border-radius:4px;background:linear-gradient(180deg,var(--accent),var(--accent-2))}
+.verdict-text{flex:1}.verdict-text b{font-size:15px}
+.verdict-text p{color:var(--muted);font-size:12.5px;margin-top:2px}
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}
+.tile{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg);padding:14px 16px}
+.tile header{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:12px;margin-bottom:8px}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px rgba(94,234,212,.15)}
+.dot.warn{background:var(--warn);box-shadow:0 0 0 3px rgba(251,191,36,.15)}
+.dot.err{background:var(--err);box-shadow:0 0 0 3px rgba(251,113,133,.15)}
+.tile-value{display:block;font-size:20px}
+.tile-sub{color:var(--muted);font-size:12px;margin-top:4px}
+.split{display:grid;grid-template-columns:1.1fr .9fr;gap:12px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg);padding:16px}
+.card-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.card-head h3{flex:1}
+.chip{display:inline-flex;align-items:center;padding:2px 9px;border-radius:999px;
+  background:rgba(148,163,184,.14);color:var(--muted);font-size:11.5px;font-weight:600}
+.feed{display:flex;flex-direction:column;gap:8px}
+.feed-item{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:var(--r-md);
+  background:rgba(148,163,184,.06);font-size:13px}
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+.badge{display:inline-flex;padding:2px 8px;border-radius:999px;font-size:11.5px;font-weight:600}
+.badge.ok{background:rgba(52,211,153,.15);color:var(--ok)}
+.badge.warn{background:rgba(251,191,36,.15);color:var(--warn)}
+.badge.err{background:rgba(251,113,133,.15);color:var(--err)}
+.table-wrap{overflow:auto}
+.table{width:100%;border-collapse:collapse;font-size:13px}
+.table th,.table td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--line)}
+.table th{color:var(--muted);font-weight:600;font-size:12px}
+
+.subtabs{display:flex;gap:6px;padding:4px;margin-bottom:16px;background:rgba(15,22,38,.7);
+  border:1px solid var(--line);border-radius:var(--r-lg);width:fit-content;flex-wrap:wrap}
+.subtab{border:0;background:transparent;color:var(--muted);font:inherit;font-weight:600;
+  padding:8px 16px;border-radius:var(--r-md);cursor:pointer}
+.subtab:hover{color:var(--text);background:rgba(148,163,184,.1)}
+.subtab.is-active{color:#04211d;background:linear-gradient(120deg,var(--accent),var(--accent-2))}
+.vpane{display:none}.vpane.is-active{display:block;animation:fadeIn .18s ease}
+@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.btn-row{display:inline-flex;gap:8px;align-items:center;flex-wrap:wrap}
+.chip-tabs{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 14px}
+.chip-tab{border:1px solid var(--line);background:rgba(148,163,184,.08);color:var(--muted);
+  font:inherit;font-weight:600;font-size:12.5px;padding:7px 14px;border-radius:999px;cursor:pointer}
+.chip-tab.is-active{color:#04211d;background:linear-gradient(120deg,var(--accent),var(--accent-2));border-color:transparent}
+.channel-panel{background:rgba(10,16,32,.45);border:1px solid var(--line);border-radius:var(--r-lg);padding:12px}
+.channel-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:10px}
+.channel-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px}
+.channel-card{display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding:12px 14px;
+  border-radius:var(--r-md);border:1px solid var(--line);background:var(--panel-2);color:var(--text);
+  font:inherit;text-align:left;cursor:pointer;transition:border-color .15s,transform .12s}
+.channel-card:hover{border-color:rgba(94,234,212,.45);transform:translateY(-1px)}
+.channel-card.is-active{border-color:var(--accent);
+  background:linear-gradient(145deg,rgba(94,234,212,.16),rgba(56,189,248,.08))}
+.ch-name{font-weight:650;font-size:13px}
+.ch-sub{color:var(--muted);font-size:11.5px}
+
+.cfg-group{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg);padding:16px;margin-bottom:12px}
+.cfg-group header{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.cfg-group h3{flex:1}
+.cfg-desc{color:var(--muted);font-size:12.5px;margin-bottom:12px}
+.cfg-row{display:grid;grid-template-columns:160px 1fr;gap:8px 14px;align-items:center;margin-bottom:10px}
+.cfg-row label{color:var(--muted);font-size:12.5px}
+.savebar{position:sticky;bottom:12px;display:flex;gap:8px;align-items:center;
+  background:var(--panel-3);border:1px solid var(--line-2);border-radius:var(--r-lg);padding:12px 16px;
+  box-shadow:0 18px 40px -20px rgba(2,6,23,.9)}
+.kv{display:grid;grid-template-columns:140px 1fr;gap:8px 12px;font-size:13px}
+.kv dt{color:var(--muted)}.kv dd{margin:0}
+.note{background:rgba(56,189,248,.1);border:1px solid rgba(56,189,248,.28);
+  border-radius:var(--r-md);padding:10px 12px;color:#bae6fd;font-size:12.5px;margin-bottom:14px}
+.logview{background:#0a1020;border:1px solid var(--line);border-radius:var(--r-lg);
+  padding:12px;font-family:var(--mono);font-size:12px;line-height:1.75;height:420px;overflow:auto}
+.log-line{white-space:pre-wrap}
+.log-line.warn{color:var(--warn)} .log-line.error{color:var(--err)}
+.toasts{position:fixed;right:18px;bottom:18px;display:flex;flex-direction:column;gap:8px;z-index:50}
+.toast{background:var(--panel-3);border:1px solid var(--line-2);border-radius:var(--r-md);
+  padding:10px 14px;min-width:220px;box-shadow:0 16px 40px -20px rgba(2,6,23,.9);animation:fadeIn .18s ease}
+.toast b{display:block;font-size:13px} .toast span{color:var(--muted);font-size:12px}
+.toast.err{border-color:rgba(251,113,133,.45)} .toast.ok{border-color:rgba(52,211,153,.45)}
+.preview-banner{margin:0 0 16px;padding:10px 14px;border-radius:var(--r-md);
+  background:rgba(56,189,248,.12);border:1px solid rgba(56,189,248,.35);color:#bae6fd;font-size:12.5px}
+@media(max-width:980px){
+  .tiles{grid-template-columns:repeat(2,1fr)} .split{grid-template-columns:1fr}
+  .screen-login{grid-template-columns:1fr} .login-art{display:none}
+}
+</style>
+</head>
+<body>
+<p data-aigc-mark="1" style="margin:0 0 8px;font-size:10px;line-height:1.3;color:#6b6560;font-weight:400;">AI生成</p>
+
+
+<!-- ================= 登录 ================= -->
+<div class="screen-login" id="screen-login">
+  <div class="login-art">
+    <div class="art-head">
+      <span class="mark">路</span>
+      <div>
+        <h1>Ooptra</h1>
+        <p class="hint">Oopz ↔ OneBot v11 反向 WebSocket 桥接控制台</p>
+      </div>
+    </div>
+    <ul class="art-points">
+      <li><b>上行</b> Oopz 频道消息 → OneBot v11 事件 → 对端框架</li>
+      <li><b>下行</b> 对端 action → Oopz 发送 / 管理</li>
+      <li><b>语音</b> 进房对话 · 房间成员 · 人格与共享记忆</li>
+      <li><b>本页</b> 登录后可配置连接、语音模型与账号凭据</li>
+    </ul>
+    <p class="hint">交互预览 · 数据为示意，不连真实后端</p>
+  </div>
+  <div class="login-side">
+    <form class="login-card" id="login-form">
+      <h2 id="login-title">需要登录</h2>
+      <p class="hint" id="login-sub">请输入访问令牌（config.py 的 WEBUI_CONFIG.token）</p>
+
+      <label class="field" id="login-token-field">
+        <span>访问令牌</span>
+        <input id="login-token" type="password" placeholder="demo-token" value="demo-token" />
+      </label>
+
+      <div id="login-oopz-field" hidden>
+        <label class="field"><span>Oopz 手机号</span>
+          <input id="login-phone" type="text" placeholder="留空则用 config.py 中的账号" value="13800000000" /></label>
+        <label class="field"><span>Oopz 密码</span>
+          <input id="login-password" type="password" placeholder="留空则用 config.py 中的密码" value="demo-password" /></label>
+      </div>
+
+      <button class="btn primary block lg" id="login-submit" type="submit">进入控制台</button>
+      <div class="login-alt" id="login-alt" hidden>
+        <button class="btn ghost block" type="button" id="login-browser">改用网页版登录（可手动过验证）</button>
+      </div>
+      <p class="login-msg" id="login-msg" role="status"></p>
+    </form>
+  </div>
+</div>
+
+<!-- ================= 主面板 ================= -->
+<div class="screen-app" id="screen-app" hidden>
+  <aside class="rail">
+    <div class="rail-brand">
+      <span class="mark sm">路</span>
+      <div><b>Ooptra</b><i>桥接控制台 · 交互预览</i></div>
+    </div>
+    <nav class="rail-nav">
+      <div class="nav-group">
+        <div class="nav-group-label">监控</div>
+        <button class="nav-item is-active" data-page="overview">
+          <svg viewBox="0 0 24 24"><path d="M4 13h6V4H4v9Zm0 7h6v-4H4v4Zm10 0h6v-9h-6v9Zm0-16v4h6V4h-6Z"/></svg>总览
+        </button>
+        <button class="nav-item" data-page="logs">
+          <svg viewBox="0 0 24 24"><path d="M4 5h16v3H4V5Zm0 6h16v2H4v-2Zm0 5h10v2H4v-2Z"/></svg>日志
+        </button>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">语音</div>
+        <button class="nav-item" data-page="voice" data-tab="session">
+          <svg viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Zm-7 9a7 7 0 0 0 14 0h-2a5 5 0 1 1-10 0H5Zm6 8h2v3h-2v-3Z"/></svg>语音台
+        </button>
+        <button class="nav-item sub" data-page="voice" data-tab="members">房间成员</button>
+        <button class="nav-item sub" data-page="voice" data-tab="persona">人格与记忆</button>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">系统</div>
+        <button class="nav-item" data-page="config" data-tab="connection">
+          <svg viewBox="0 0 24 24"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm9 4-2 1.2.3 2.3-2.1 2.1-2.3-.3L13.7 21h-3.4l-1.2-2.7-2.3.3-2.1-2.1.3-2.3L3 13v-2l2-1.2-.3-2.3 2.1-2.1 2.3.3L10.3 3h3.4l1.2 2.7 2.3-.3 2.1 2.1-.3 2.3L21 11v1Z"/></svg>配置
+        </button>
+        <button class="nav-item" data-page="account">
+          <svg viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm0 2c-4 0-8 2-8 5v1h16v-1c0-3-4-5-8-5Z"/></svg>账号
+        </button>
+      </div>
+    </nav>
+    <div class="rail-foot">
+      <button class="nav-item small" id="btn-restart">
+        <svg viewBox="0 0 24 24"><path d="M12 5V2L7 6l5 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7Z"/></svg>重新连接
+      </button>
+      <button class="nav-item small" id="btn-logout">
+        <svg viewBox="0 0 24 24"><path d="M10 17v-2h4v-2h-4V4H4v16h6v-3Zm6-9-1.4 1.4L16.2 11H20v2h-3.8l-1.6 1.6L16 16l4-4-4-4Z"/></svg>退出登录
+      </button>
+      <p class="rail-meta">demo · 127.0.0.1:3090</p>
+      <p class="rail-ver">Ooptra preview v0.1</p>
+    </div>
+  </aside>
+
+  <main class="workspace">
+    <div class="preview-banner">
+      <b>完整交互预览</b>：登录、总览、日志、语音台、配置、账号均可点击体验。
+      真实运行请 <code>python main.py</code> 后打开 <code>http://127.0.0.1:3090</code>。
+    </div>
+    <header class="page-head">
+      <div>
+        <h2 id="page-title">总览</h2>
+        <p class="hint" id="page-sub">一眼看清链路、语音会话、流量与最近动态</p>
+      </div>
+      <div class="page-tools" id="page-tools"></div>
+    </header>
+
+    <!-- 总览 -->
+    <section class="page is-active" id="page-overview">
+      <div class="verdict" id="verdict">
+        <span class="verdict-rail"></span>
+        <div class="verdict-text">
+          <b id="verdict-title">桥接正常</b>
+          <p id="verdict-detail">Oopz 与 OneBot 反向 WS 已连接 · 语音 Agent 就绪</p>
+        </div>
+        <button class="btn warn" id="verdict-action">重新连接</button>
+      </div>
+      <div class="tiles">
+        <article class="tile">
+          <header><i class="dot"></i>Oopz 事件链路</header>
+          <b class="tile-value" id="t-oopz">已连接</b>
+          <p class="tile-sub">wss://ws.oopz.cn · 延迟 42ms</p>
+        </article>
+        <article class="tile">
+          <header><i class="dot"></i>OneBot v11 反向 WS</header>
+          <b class="tile-value" id="t-onebot">已连接</b>
+          <p class="tile-sub">ws://127.0.0.1:6200/ws</p>
+        </article>
+        <article class="tile">
+          <header><i class="dot" id="v-dot"></i>语音会话</header>
+          <b class="tile-value" id="t-voice">未进房</b>
+          <p class="tile-sub" id="t-voice-sub">mimo_cascade</p>
+        </article>
+        <article class="tile">
+          <header><i class="dot"></i>事件吞吐</header>
+          <b class="tile-value" id="t-total">128</b>
+          <p class="tile-sub">msg 96 · notice 12 · meta 20</p>
+        </article>
+      </div>
+      <div class="split">
+        <section class="card">
+          <header class="card-head"><h3>最近推送</h3><span class="chip" id="ev-count">3</span></header>
+          <ul class="feed" id="feed-events">
+            <li class="feed-item"><span class="chip">group</span><span>小明：晚上开黑吗？</span></li>
+            <li class="feed-item"><span class="chip">group</span><span>阿强：我 8 点到</span></li>
+            <li class="feed-item"><span class="chip">notice</span><span>消息撤回 · msg_id=18291</span></li>
+          </ul>
+        </section>
+        <section class="card">
+          <header class="card-head"><h3>最近指令</h3><span class="chip">2</span></header>
+          <ul class="feed" id="feed-actions">
+            <li class="feed-item"><span class="chip">send</span><span>send_group_msg → 成功</span></li>
+            <li class="feed-item"><span class="chip">voice</span><span>join 语音频道「晚上开黑」</span></li>
+          </ul>
+        </section>
+      </div>
+    </section>
+
+    <!-- 日志 -->
+    <section class="page" id="page-logs">
+      <div class="toolbar">
+        <select class="control" id="log-file">
+          <option>logs/oopz_bot.log</option>
+          <option>logs/voice_agent.log</option>
+        </select>
+        <select class="control sm" id="log-lines">
+          <option>200 行</option><option selected>500 行</option><option>2000 行</option>
+        </select>
+        <input class="control grow" id="log-search" type="search" placeholder="过滤关键字" />
+        <select class="control sm" id="log-level">
+          <option value="">全部级别</option>
+          <option value="WARN">警告以上</option>
+          <option value="ERROR">仅错误</option>
+        </select>
+        <label class="switch"><input type="checkbox" id="log-follow" checked /><span>实时跟随</span></label>
+        <label class="switch"><input type="checkbox" id="log-wrap" /><span>自动换行</span></label>
+        <span class="spacer"></span>
+        <button class="btn ghost sm" id="log-clear">清屏</button>
+        <button class="btn ghost sm" id="log-download">下载</button>
+      </div>
+      <div class="logview" id="log-view"></div>
+    </section>
+
+    <!-- 语音台 -->
+    <section class="page" id="page-voice">
+      <div class="subtabs" id="voice-tabs">
+        <button class="subtab is-active" data-tab="session">会话控制</button>
+        <button class="subtab" data-tab="members">房间成员</button>
+        <button class="subtab" data-tab="persona">人格与记忆</button>
+      </div>
+
+      <div class="vpane is-active" id="vpane-session">
+        <div class="verdict">
+          <span class="verdict-rail"></span>
+          <div class="verdict-text">
+            <b id="voice-verdict-title">语音 Agent 就绪</b>
+            <p id="voice-verdict-detail">选择域与频道后进房；对语音房说话会触发 VAD 断句</p>
+          </div>
+        </div>
+
+        <section class="card" style="margin-bottom:16px">
+          <header class="card-head">
+            <h3>进入语音频道</h3>
+            <button class="btn ghost sm" id="voice-refresh">刷新列表</button>
+            <button class="btn primary sm" id="voice-join">进房</button>
+            <button class="btn ghost sm" id="voice-leave">退房</button>
+          </header>
+          <div class="chip-tabs" id="area-tabs">
+            <button type="button" class="chip-tab is-active" data-area="">默认域</button>
+            <button type="button" class="chip-tab" data-area="a1">开黑大厅</button>
+            <button type="button" class="chip-tab" data-area="a2">学习区</button>
+            <button type="button" class="chip-tab" data-area="a3">朋友房</button>
+          </div>
+          <div class="channel-panel">
+            <div class="channel-head">
+              <b id="channel-area-label">频道 · 默认域</b>
+              <span class="hint" id="join-hint">点域标签切换，再点频道卡片选中目标</span>
+            </div>
+            <div class="channel-grid" id="channel-grid"></div>
+          </div>
+        </section>
+
+        <div class="tiles">
+          <article class="tile"><header><i class="dot"></i>模型</header>
+            <b class="tile-value" id="v-backend">mimo_cascade</b>
+            <p class="tile-sub">已启用 · 对话后端</p></article>
+          <article class="tile"><header><i class="dot" id="s-dot"></i>会话</header>
+            <b class="tile-value" id="v-joined">不在房</b>
+            <p class="tile-sub" id="v-target">未绑定频道</p></article>
+          <article class="tile"><header><i class="dot"></i>回合</header>
+            <b class="tile-value" id="v-turns">0</b>
+            <p class="tile-sub" id="v-speaking">空闲</p></article>
+          <article class="tile"><header><i class="dot"></i>API</header>
+            <b class="tile-value">/api/voice/*</b>
+            <p class="tile-sub">与控制台同端口 3090</p></article>
+        </div>
+
+        <div class="split">
+          <section class="card">
+            <header class="card-head"><h3>快捷开口</h3></header>
+            <p class="hint">合成一句话并推到当前语音房（需已进房）。</p>
+            <div style="display:flex;gap:8px;margin:10px 0">
+              <input class="control grow" id="speak-text" placeholder="例如：大家好，我是语音助手" />
+              <button class="btn primary" id="speak-btn">说一句</button>
+            </div>
+            <p class="hint" id="speak-status"></p>
+          </section>
+          <section class="card">
+            <header class="card-head"><h3>最近对话</h3></header>
+            <ul class="feed" id="voice-transcript">
+              <li class="muted" style="padding:8px">暂无对话</li>
+            </ul>
+          </section>
+        </div>
+      </div>
+
+      <div class="vpane" id="vpane-members">
+        <div class="toolbar">
+          <select class="control grow" id="member-area">
+            <option value="">（当前会话）</option>
+            <option value="a1">开黑大厅</option>
+            <option value="a2">学习区</option>
+          </select>
+          <button class="btn primary" id="member-refresh">刷新成员</button>
+          <span class="hint" id="member-status"></span>
+        </div>
+        <section class="card">
+          <header class="card-head"><h3>语音房成员</h3><span class="chip" id="member-count">3</span></header>
+          <div class="table-wrap">
+            <table class="table">
+              <thead><tr><th>UID</th><th>昵称</th><th>麦克风</th><th>扬声器</th></tr></thead>
+              <tbody id="member-body"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      <div class="vpane" id="vpane-persona">
+        <div class="split">
+          <section class="card">
+            <header class="card-head"><h3>人格提示词</h3>
+              <button class="btn primary sm" id="persona-save">保存</button></header>
+            <p class="hint">语音 Agent 的角色设定；与配置页 persona 同步。</p>
+            <textarea class="field" id="persona-text" rows="8"
+              style="margin-top:8px;resize:vertical;font-family:var(--sans)">你是 Oopz 语音频道助手，说话简洁友好，像在语音房里自然聊天。</textarea>
+            <p class="hint" id="persona-status"></p>
+          </section>
+          <section class="card">
+            <header class="card-head"><h3>共享记忆</h3>
+              <div class="btn-row">
+                <button class="btn ghost sm" id="memory-refresh">刷新</button>
+                <button class="btn warn sm" id="memory-clear">清空</button>
+              </div>
+            </header>
+            <ul class="feed" id="memory-list"></ul>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <!-- 配置 -->
+    <section class="page" id="page-config">
+      <div class="note">
+        改动只写回 <code>config.py</code> 的对应字段；敏感项留空表示不修改。本预览可编辑表单并「保存」。
+      </div>
+      <div class="subtabs" id="config-tabs">
+        <button class="subtab is-active" data-tab="connection">连接</button>
+        <button class="subtab" data-tab="voice">语音模型</button>
+        <button class="subtab" data-tab="system">系统</button>
+      </div>
+
+      <div id="cfg-connection">
+        <article class="cfg-group">
+          <header><h3>Oopz 账号与目标</h3><span class="chip">OOPZ_CONFIG</span></header>
+          <p class="cfg-desc">bot 在 Oopz 侧的身份与默认落点。</p>
+          <div class="cfg-row"><label>默认域 ID</label><input class="control" id="cfg-area" value="area_demo_01" /></div>
+          <div class="cfg-row"><label>默认频道 ID</label><input class="control" id="cfg-channel" value="ch_voice_01" /></div>
+          <div class="cfg-row"><label>网络出口</label><input class="control" value="" placeholder="留空=系统代理；direct=直连" /></div>
+          <div class="cfg-row"><label>登录手机号</label><input class="control" value="13800000000" /></div>
+          <div class="cfg-row"><label>登录密码</label><input class="control" type="password" value="••••••••" /></div>
+        </article>
+        <article class="cfg-group">
+          <header><h3>OneBot v11 连接</h3><span class="chip">ONEBOT_V11_CONFIG</span></header>
+          <p class="cfg-desc">本程序作为客户端拨出，连到对端框架的反向 WebSocket。</p>
+          <div class="cfg-row"><label>反向 WS 地址</label><input class="control" id="cfg-ws" value="ws://127.0.0.1:6200/ws" /></div>
+          <div class="cfg-row"><label>access_token</label><input class="control" type="password" value="••••••" /></div>
+          <div class="cfg-row"><label>启用 OneBot v11</label><label class="switch"><input type="checkbox" checked /><span>enabled</span></label></div>
+          <div class="cfg-row"><label>启用反向 WebSocket</label><label class="switch"><input type="checkbox" checked /><span>ws_reverse</span></label></div>
+          <div class="cfg-row"><label>心跳间隔(秒)</label><input class="control" type="number" value="15" /></div>
+        </article>
+      </div>
+
+      <div id="cfg-voice" hidden>
+        <article class="cfg-group">
+          <header><h3>语音对话 Agent</h3><span class="chip">VOICE_AGENT_CONFIG</span></header>
+          <p class="cfg-desc">Oopz 语音房实时对话：听人说话、调用模型开口回话。</p>
+          <div class="cfg-row"><label>启用语音 Agent</label><label class="switch"><input type="checkbox" id="cfg-voice-enabled" checked /><span>enabled</span></label></div>
+          <div class="cfg-row"><label>对话模型</label>
+            <select class="control" id="cfg-backend">
+              <option>mimo_cascade</option><option>gemini_live</option><option>openai_realtime</option>
+            </select>
+          </div>
+          <div class="cfg-row"><label>人格提示词</label>
+            <textarea class="control" id="cfg-persona" rows="3">你是 Oopz 语音频道助手，说话简洁友好。</textarea>
+          </div>
+          <div class="cfg-row"><label>允许抢话打断</label><label class="switch"><input type="checkbox" checked /><span>barge_in</span></label></div>
+          <div class="cfg-row"><label>MiMo API Key</label><input class="control" type="password" placeholder="或环境变量 MIMO_API_KEY" /></div>
+        </article>
+      </div>
+
+      <div id="cfg-system" hidden>
+        <article class="cfg-group">
+          <header><h3>Web 控制台</h3><span class="chip">WEBUI_CONFIG</span></header>
+          <p class="cfg-desc">本页面的监听地址与访问令牌。</p>
+          <div class="cfg-row"><label>监听地址</label><input class="control" value="127.0.0.1" /></div>
+          <div class="cfg-row"><label>监听端口</label><input class="control" type="number" value="3090" /></div>
+          <div class="cfg-row"><label>访问令牌</label><input class="control" type="password" value="••••••" /></div>
+        </article>
+      </div>
+
+      <div class="savebar" id="savebar" hidden>
+        <span id="savebar-text">有未保存的改动</span>
+        <button class="btn subtle" id="config-discard">放弃</button>
+        <button class="btn primary" id="config-save">保存</button>
+        <button class="btn primary" id="config-save-restart">保存并重新连接</button>
+      </div>
+    </section>
+
+    <!-- 账号 -->
+    <section class="page" id="page-account">
+      <div class="split">
+        <section class="card">
+          <header class="card-head"><h3>当前凭据</h3><span class="chip" id="cred-chip">有效</span></header>
+          <dl class="kv" id="cred-list">
+            <dt>person_uid</dt><dd class="mono">6ad0261bc4eb41e882692531981a0972</dd>
+            <dt>device_id</dt><dd class="mono">dev_8f2a…c1</dd>
+            <dt>jwt_token</dt><dd class="mono">••••••••</dd>
+            <dt>过期时间</dt><dd>2026-10-29 12:00:00</dd>
+          </dl>
+        </section>
+        <section class="card">
+          <header class="card-head"><h3>重新登录 Oopz</h3></header>
+          <p class="hint">登录成功后会写入 <code>config.py</code> 与 <code>private_key.py</code>，并自动重连。</p>
+          <label class="field"><span>手机号</span><input id="api-phone" type="text" placeholder="留空则用 config.py 中的账号" /></label>
+          <label class="field"><span>密码</span><input id="api-password" type="password" placeholder="留空则用 config.py 中的密码" /></label>
+          <button class="btn primary block" id="api-login">账号密码登录</button>
+          <p class="login-msg" id="api-login-status"></p>
+          <hr />
+          <label class="switch"><input type="checkbox" id="browser-headless" /><span>无头模式（不推荐）</span></label>
+          <button class="btn ghost block" id="browser-login" style="margin-top:10px">网页版登录</button>
+          <p class="login-msg" id="browser-login-status"></p>
+        </section>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="toasts" id="toasts"></div>
+
+<script>
+'use strict';
+const $ = (id) => document.getElementById(id);
+const show = (el, on) => { if (el) el.hidden = !on; };
+
+const META = {
+  overview: ['总览', '一眼看清链路、语音会话、流量与最近动态'],
+  logs: ['日志', '实时跟随日志文件，可过滤、换行、下载'],
+  voice: ['语音台', '进房对话、房间成员、人格与共享记忆'],
+  config: ['配置', '连接 / 语音模型 / 系统；常用项直接改'],
+  account: ['账号', '查看凭据状态，或重新登录 Oopz'],
+};
+
+const AREA_CHANNELS = {
+  '': [{id:'', name:'默认频道', sub:'config 默认'}],
+  a1: [
+    {id:'', name:'默认频道', sub:'config 默认'},
+    {id:'c11', name:'晚上开黑', sub:'语音频道'},
+    {id:'c12', name:'排位冲分', sub:'语音频道'},
+    {id:'c13', name:'挂机房', sub:'语音频道'},
+  ],
+  a2: [
+    {id:'', name:'默认频道', sub:'config 默认'},
+    {id:'c21', name:'自习室', sub:'语音频道'},
+    {id:'c22', name:'讨论组', sub:'语音频道'},
+  ],
+  a3: [
+    {id:'', name:'默认频道', sub:'config 默认'},
+    {id:'c31', name:'闲聊', sub:'语音频道'},
+  ],
+};
+
+const MEMBERS = [
+  {uid:'6ad0261b…', name:'小明', mic:'开麦', speaker:'正常'},
+  {uid:'374010679', name:'语音助手', mic:'已闭麦', speaker:'正常'},
+  {uid:'a91cc2e0…', name:'阿强', mic:'开麦', speaker:'已闭听'},
+];
+
+const LOGS = [
+  ['INFO','2026-09-29 12:00:01','bridge connected oopz ws'],
+  ['INFO','2026-09-29 12:00:02','OneBot reverse ws -> ws://127.0.0.1:6200/ws'],
+  ['INFO','2026-09-29 12:00:03','WebUI listening http://127.0.0.1:3090'],
+  ['INFO','2026-09-29 12:00:04','voice agent ready backend=mimo_cascade'],
+  ['DEBUG','2026-09-29 12:01:10','[VOICE] remote pcm uid=6ad0… samples=1600'],
+  ['DEBUG','2026-09-29 12:01:11','[VOICE] asr text="晚上有人开黑吗？"'],
+  ['INFO','2026-09-29 12:01:12','[VOICE] tts bytes=48200 pushed'],
+  ['WARN','2026-09-29 12:02:00','identity heartbeat late, retry'],
+  ['ERROR','2026-09-29 12:03:00','remote pcm queue full, drop chunk'],
+  ['INFO','2026-09-29 12:04:00','voice leave ok'],
+];
+
+let state = {
+  joined: false,
+  area: '',
+  areaName: '默认域',
+  channel: '',
+  channelName: '默认频道',
+  turns: 0,
+  transcript: [],
+  memory: [
+    {role:'user', content:'晚上有人开黑吗？'},
+    {role:'assistant', content:'我在语音房，随时可以来～'},
+  ],
+  dirty: false,
+  configTab: 'connection',
+};
+
+function toast(title, text, kind) {
+  const box = document.createElement('div');
+  box.className = 'toast ' + (kind || '');
+  box.innerHTML = '<b></b><span></span>';
+  box.querySelector('b').textContent = title;
+  box.querySelector('span').textContent = text || '';
+  $('toasts').appendChild(box);
+  setTimeout(() => box.remove(), kind === 'err' ? 5000 : 3200);
+}
+
+/* ── 登录 ── */
+$('login-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const title = $('login-title').textContent;
+  if (title.includes('访问令牌') || title.includes('需要登录')) {
+    const token = $('login-token').value.trim();
+    if (!token) {
+      $('login-msg').textContent = '请填写访问令牌';
+      $('login-msg').className = 'login-msg err';
+      return;
+    }
+    // 模拟：token 任意非空即可；下一步 Oopz
+    $('login-msg').textContent = '令牌有效，继续…';
+    $('login-msg').className = 'login-msg ok';
+    setTimeout(() => {
+      $('login-title').textContent = '登录 Oopz';
+      $('login-sub').textContent = '桥接需要一份可用的 Oopz 凭据';
+      show($('login-token-field'), false);
+      show($('login-oopz-field'), true);
+      show($('login-alt'), true);
+      $('login-submit').textContent = '登录并进入';
+      $('login-msg').textContent = '';
+    }, 400);
+    return;
+  }
+  // Oopz 登录
+  $('login-msg').textContent = '登录中…';
+  setTimeout(() => {
+    $('login-msg').textContent = '登录成功，正在进入控制台';
+    $('login-msg').className = 'login-msg ok';
+    setTimeout(() => {
+      show($('screen-login'), false);
+      show($('screen-app'), true);
+      enterApp();
+      toast('已进入控制台', '欢迎使用 Ooptra 预览', 'ok');
+    }, 500);
+  }, 700);
+});
+$('login-browser').addEventListener('click', () => {
+  toast('网页版登录', '预览中仅演示：真实版会打开 Oopz 网页', 'ok');
+});
+
+$('btn-logout').addEventListener('click', () => {
+  show($('screen-app'), false);
+  show($('screen-login'), true);
+  $('login-title').textContent = '需要登录';
+  $('login-sub').textContent = '请输入访问令牌（config.py 的 WEBUI_CONFIG.token）';
+  show($('login-token-field'), true);
+  show($('login-oopz-field'), false);
+  show($('login-alt'), false);
+  $('login-submit').textContent = '进入控制台';
+  $('login-msg').textContent = '已退出登录';
+  $('login-msg').className = 'login-msg';
+});
+
+/* ── 导航 ── */
+function switchPage(name, tab) {
+  const meta = META[name] || META.overview;
+  document.querySelectorAll('.nav-item[data-page]').forEach((el) => {
+    const pageOk = el.dataset.page === name;
+    const tabOk = !el.dataset.tab || !tab || el.dataset.tab === tab;
+    el.classList.toggle('is-active', pageOk && (tabOk || (!tab && !el.dataset.tab)));
+  });
+  document.querySelectorAll('.page').forEach((el) => {
+    el.classList.toggle('is-active', el.id === 'page-' + name);
+  });
+  $('page-title').textContent = meta[0];
+  $('page-sub').textContent = meta[1];
+  if (name === 'voice') switchVoiceTab(tab || 'session');
+  if (name === 'config') switchConfigTab(tab || state.configTab);
+  if (name === 'logs') renderLogs();
+}
+document.querySelectorAll('.nav-item[data-page]').forEach((el) => {
+  el.addEventListener('click', () => switchPage(el.dataset.page, el.dataset.tab || ''));
+});
+
+$('btn-restart').addEventListener('click', () => {
+  toast('重新连接', '已请求重建桥接连接', 'ok');
+  $('t-oopz').textContent = '重连中…';
+  setTimeout(() => {
+    $('t-oopz').textContent = '已连接';
+    $('t-onebot').textContent = '已连接';
+    toast('桥接正常', '两条链路已恢复', 'ok');
+  }, 900);
+});
+
+/* ── 总览 ── */
+$('verdict-action').addEventListener('click', () => $('btn-restart').click());
+
+/* ── 日志 ── */
+function renderLogs() {
+  const q = ($('log-search').value || '').trim().toLowerCase();
+  const level = $('log-level').value;
+  const wrap = $('log-wrap').checked;
+  const host = $('log-view');
+  host.innerHTML = LOGS.filter(([lv, , msg]) => {
+    if (level === 'WARN' && lv === 'DEBUG') return false;
+    if (level === 'ERROR' && lv !== 'ERROR') return false;
+    if (q && !(lv + ' ' + msg).toLowerCase().includes(q)) return false;
+    return true;
+  }).map(([lv, ts, msg]) => {
+    const cls = lv === 'ERROR' ? 'error' : (lv === 'WARN' ? 'warn' : '');
+    const style = wrap ? '' : 'white-space:pre';
+    return '<div class="log-line ' + cls + '" style="' + style + '">' +
+      ts + '  ' + lv.padEnd(5) + '  ' + msg + '</div>';
+  }).join('') || '<div class="muted">无匹配日志</div>';
+}
+['log-search','log-level','log-wrap'].forEach((id) => {
+  $(id).addEventListener('input', renderLogs);
+  $(id).addEventListener('change', renderLogs);
+});
+$('log-clear').addEventListener('click', () => {
+  $('log-view').innerHTML = '<div class="muted">已清屏</div>';
+  toast('日志', '视图已清空（源文件未删）', 'ok');
+});
+$('log-download').addEventListener('click', () => toast('下载', '预览中不提供文件', 'ok'));
+
+/* ── 语音台 ── */
+function switchVoiceTab(tab) {
+  const name = tab || 'session';
+  document.querySelectorAll('#voice-tabs .subtab').forEach((el) => {
+    el.classList.toggle('is-active', el.dataset.tab === name);
+  });
+  ['session','members','persona'].forEach((id) => {
+    $('vpane-' + id).classList.toggle('is-active', id === name);
+  });
+  if (name === 'members') renderMembers();
+  if (name === 'persona') renderMemory();
+}
+$('voice-tabs').addEventListener('click', (e) => {
+  const btn = e.target.closest('.subtab');
+  if (btn) switchVoiceTab(btn.dataset.tab);
+});
+
+function renderChannels() {
+  const grid = $('channel-grid');
+  const list = AREA_CHANNELS[state.area] || AREA_CHANNELS[''];
+  grid.innerHTML = '';
+  list.forEach((ch) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'channel-card' + (ch.id === state.channel ? ' is-active' : '');
+    btn.dataset.channel = ch.id;
+    btn.innerHTML = '<span class="ch-name">' + ch.name + '</span><span class="ch-sub">' + ch.sub + '</span>';
+    grid.appendChild(btn);
+  });
+  $('channel-area-label').textContent = '频道 · ' + state.areaName;
+}
+$('area-tabs').addEventListener('click', (e) => {
+  const btn = e.target.closest('.chip-tab');
+  if (!btn) return;
+  document.querySelectorAll('#area-tabs .chip-tab').forEach((el) => el.classList.remove('is-active'));
+  btn.classList.add('is-active');
+  state.area = btn.dataset.area || '';
+  state.areaName = btn.textContent.trim();
+  state.channel = '';
+  renderChannels();
+  $('join-hint').textContent = '该域共 ' + ((AREA_CHANNELS[state.area] || []).length - 1) + ' 个语音频道';
+});
+$('channel-grid').addEventListener('click', (e) => {
+  const btn = e.target.closest('.channel-card');
+  if (!btn) return;
+  state.channel = btn.dataset.channel || '';
+  const list = AREA_CHANNELS[state.area] || [];
+  const hit = list.find((c) => c.id === state.channel);
+  state.channelName = hit ? hit.name : '默认频道';
+  renderChannels();
+});
+
+$('voice-refresh').addEventListener('click', () => {
+  toast('列表已刷新', '域与频道来自 Oopz', 'ok');
+  renderChannels();
+});
+
+$('voice-join').addEventListener('click', () => {
+  state.joined = true;
+  state.turns = 0;
+  $('v-joined').textContent = '在房';
+  $('v-target').textContent = state.areaName + ' / ' + state.channelName;
+  $('voice-verdict-title').textContent = '语音会话进行中';
+  $('voice-verdict-detail').textContent = '可对语音房说话，或点「说一句」';
+  $('t-voice').textContent = '在房';
+  $('t-voice-sub').textContent = state.channelName;
+  $('s-dot').className = 'dot';
+  toast('已进房', state.areaName + ' · ' + state.channelName, 'ok');
+});
+
+$('voice-leave').addEventListener('click', () => {
+  state.joined = false;
+  $('v-joined').textContent = '不在房';
+  $('v-target').textContent = '未绑定频道';
+  $('voice-verdict-title').textContent = '语音 Agent 就绪';
+  $('voice-verdict-detail').textContent = '选择域与频道后进房';
+  $('t-voice').textContent = '未进房';
+  toast('已退房', '', 'ok');
+});
+
+$('speak-btn').addEventListener('click', () => {
+  const text = $('speak-text').value.trim();
+  if (!text) {
+    $('speak-status').textContent = '请输入要说的话';
+    return;
+  }
+  if (!state.joined) {
+    toast('未进房', '请先选择频道并进房', 'err');
+    return;
+  }
+  $('speak-status').textContent = '合成中…';
+  setTimeout(() => {
+    state.turns += 1;
+    $('v-turns').textContent = String(state.turns);
+    $('speak-status').textContent = '已推送（48200 bytes）';
+    state.transcript.push(['Bot', text]);
+    renderTranscript();
+    toast('已开口', text.slice(0, 20), 'ok');
+  }, 500);
+});
+
+function renderTranscript() {
+  const host = $('voice-transcript');
+  if (!state.transcript.length) {
+    host.innerHTML = '<li class="muted" style="padding:8px">暂无对话</li>';
+    return;
+  }
+  host.innerHTML = state.transcript.map(([role, content]) =>
+    '<li class="feed-item"><span class="chip">' + role + '</span><span>' + content + '</span></li>'
+  ).join('');
+}
+
+function renderMembers() {
+  $('member-body').innerHTML = MEMBERS.map((m) => {
+    const mic = m.mic === '开麦'
+      ? '<span class="badge ok">开麦</span>'
+      : '<span class="badge warn">已闭麦</span>';
+    const sp = m.speaker === '正常'
+      ? '<span class="badge ok">正常</span>'
+      : '<span class="badge warn">已闭听</span>';
+    return '<tr><td class="mono">' + m.uid + '</td><td>' + m.name + '</td><td>' + mic + '</td><td>' + sp + '</td></tr>';
+  }).join('');
+}
+$('member-refresh').addEventListener('click', () => {
+  $('member-status').textContent = '已更新';
+  renderMembers();
+});
+
+function renderMemory() {
+  const host = $('memory-list');
+  host.innerHTML = state.memory.map((row) =>
+    '<li class="feed-item"><span class="chip">' + row.role + '</span><span>' + row.content + '</span></li>'
+  ).join('') || '<li class="muted">暂无记忆</li>';
+}
+$('memory-refresh').addEventListener('click', renderMemory);
+$('memory-clear').addEventListener('click', () => {
+  state.memory = [];
+  renderMemory();
+  toast('已清空', '共享记忆', 'ok');
+});
+$('persona-save').addEventListener('click', () => {
+  $('persona-status').textContent = '已保存';
+  $('cfg-persona').value = $('persona-text').value;
+  toast('人格已保存', '与配置页同步', 'ok');
+});
+
+/* ── 配置 ── */
+function switchConfigTab(tab) {
+  state.configTab = tab;
+  document.querySelectorAll('#config-tabs .subtab').forEach((el) => {
+    el.classList.toggle('is-active', el.dataset.tab === tab);
+  });
+  show($('cfg-connection'), tab === 'connection');
+  show($('cfg-voice'), tab === 'voice');
+  show($('cfg-system'), tab === 'system');
+}
+$('config-tabs').addEventListener('click', (e) => {
+  const btn = e.target.closest('.subtab');
+  if (btn) switchConfigTab(btn.dataset.tab);
+});
+document.querySelectorAll('#page-config input,#page-config select,#page-config textarea').forEach((el) => {
+  el.addEventListener('input', () => {
+    state.dirty = true;
+    show($('savebar'), true);
+  });
+});
+$('config-discard').addEventListener('click', () => {
+  state.dirty = false;
+  show($('savebar'), false);
+  toast('已放弃', '表单恢复为预览默认值', 'ok');
+});
+$('config-save').addEventListener('click', () => {
+  state.dirty = false;
+  show($('savebar'), false);
+  toast('已保存', '写入 config.py（预览模拟）', 'ok');
+});
+$('config-save-restart').addEventListener('click', () => {
+  state.dirty = false;
+  show($('savebar'), false);
+  toast('已保存', '并请求重新连接', 'ok');
+  $('btn-restart').click();
+});
+
+/* ── 账号 ── */
+$('api-login').addEventListener('click', () => {
+  $('api-login-status').textContent = '登录中…';
+  $('api-login-status').className = 'login-msg';
+  setTimeout(() => {
+    $('api-login-status').textContent = '登录成功，凭据已写入（预览模拟）';
+    $('api-login-status').className = 'login-msg ok';
+    toast('Oopz 登录成功', 'jwt 已续期', 'ok');
+  }, 800);
+});
+$('browser-login').addEventListener('click', () => {
+  $('browser-login-status').textContent = '已启动网页版登录任务…';
+  toast('网页版登录', '预览中仅演示', 'ok');
+});
+
+/* ── 启动 ── */
+function enterApp() {
+  renderChannels();
+  renderMembers();
+  renderMemory();
+  renderLogs();
+}
+renderLogs();
+</script>
+</body>
+</html>

@@ -103,8 +103,73 @@ WEBUI_CONFIG = {
     "host": "127.0.0.1",   # 监听地址：127.0.0.1 仅本机；0.0.0.0 允许局域网访问
     "port": 3090,
     # 访问令牌：留空表示不校验；填入后需用 ?token=... 访问。
+    # 语音 HTTP API 默认挂在此端口，外部插件（如 astrbot_plugin_ooptra）的令牌也填这一项。
     "token": "",
     "log_lines": 300,
+}
+
+# 语音实时对话（Voice Agent）—— Web 控制台「配置」页可改
+VOICE_AGENT_CONFIG = {
+    "enabled": False,                 # 总开关；不影响纯 OneBot 桥接
+    "auto_join": False,
+    "area": "",                       # 留空用 OOPZ_CONFIG["default_area"]
+    "channel": "",                    # 留空用 OOPZ_CONFIG["default_channel"]
+
+    # 语音对话架构：Live 端到端（推荐）| 级联兜底
+    #   gemini_live   —— 语音进语音出（Live，类似电话）
+    #   mimo_cascade  —— ASR→LLM→TTS（延迟更高，可离线/国内节点）
+    #   openai_realtime —— 骨架，协议待接
+    "backend": "gemini_live",
+    "persona": "你是 Oopz 语音频道助手，说话简洁友好，像在语音房里自然聊天。",
+    "barge_in": True,
+    "vad_mode": "local",
+    "listen_only_uids": [],
+    "reply_text_to_channel": False,
+
+    "sample_rate_in": 16000,
+    "sample_rate_out": 24000,
+    "silence_ms": 700,
+    "max_utterance_ms": 15000,
+
+    # 模型 API 网络代理（选填）：""=不启用；"clash"=http://127.0.0.1:7890；
+    # "direct"=强制直连；也可填显式地址 "http://主机:端口"
+    "proxy": "",
+
+    "mimo": {
+        "api_key": "",                # 或环境变量 MIMO_API_KEY
+        "base_url": "https://api.xiaomimimo.com/v1",
+        "asr_model": "mimo-v2.5-asr",
+        "llm_model": "mimo-v2.6-flash",
+        "tts_model": "mimo-v2.5-tts",
+        "tts_voice": "冰糖",
+    },
+    "gemini": {
+        "api_key": "",                # 或 GEMINI_API_KEY
+        "base_url": "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent",
+        "model": "gemini-2.0-flash-live-001",
+        "voice": "Puck",
+    },
+    "openai": {
+        "api_key": "",
+        "base_url": "https://api.openai.com/v1",
+        "realtime_model": "gpt-4o-mini-realtime-preview",
+        "voice": "alloy",
+    },
+
+    "memory_path": "data/voice_memory.jsonl",
+    "memory_max_turns": 30,
+}
+
+# 语音 HTTP API —— 已合并到 WebUI（http://127.0.0.1:3090/voice/* 与 /api/voice/*）。
+# 外部插件（astrbot_plugin_ooptra）请直接用 3090，令牌填 WEBUI_CONFIG.token。
+# 下面这个独立端口是与 3090 **完全等价**的副本（同一套路由），一般无需开启；
+# 只在「不想把语音 API 暴露在 WebUI 端口上」时才打开，并务必填 token——
+# token 留空时该端口不做任何校验。
+VOICE_API_CONFIG = {
+    "enabled": False,
+    "host": "127.0.0.1",
+    "port": 3091,
+    "token": "",
 }
 
 # 名称映射表（手工补充 ID -> 名称；运行时会自动发现新 ID 并写入 data/names.json）

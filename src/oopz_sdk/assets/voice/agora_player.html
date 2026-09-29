@@ -708,6 +708,228 @@ window.agoraGetStatus = () => {
     ws: window.agoraWsUrls(),
   };
 };
+
+/* -------------------- Duplex: listen remote + push TTS -------------------- */
+
+let listenEnabled = false;
+const remoteCaptures = new Map(); // uid -> {processor, source, ctx}
+
+let ttsCtx = null;
+let ttsDest = null;
+let ttsTrack = null;
+let ttsPublished = false;
+let ttsPlaying = false;
+
+function floatTo16BitPCM(float32) {
+  const out = new Int16Array(float32.length);
+  for (let i = 0; i < float32.length; i++) {
+    let s = Math.max(-1, Math.min(1, float32[i]));
+    out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  return out;
+}
+
+function base64ToUint8(b64) {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+function base64ToInt16(b64) {
+  const bytes = base64ToUint8(b64);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const out = new Int16Array(bytes.length >> 1);
+  for (let i = 0; i < out.length; i++) out[i] = view.getInt16(i * 2, true);
+  return out;
+}
+
+async function emitRemotePcm(uid, int16, sampleRate) {
+  if (!listenEnabled || !int16.length) return;
+  // 100ms 一块，降低 IPC 压力
+  const bytes = new Uint8Array(int16.buffer, int16.byteOffset, int16.byteLength);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  const b64 = btoa(bin);
+  try {
+    if (typeof window.oopzPushRemotePcm === "function") {
+      await window.oopzPushRemotePcm(String(uid), b64, sampleRate);
+    }
+  } catch (e) {
+    console.warn("[duplex] push remote pcm failed", e);
+  }
+}
+
+function stopRemoteCapture(uid) {
+  const cap = remoteCaptures.get(uid);
+  if (!cap) return;
+  try { cap.processor.disconnect(); } catch (_) {}
+  try { cap.source.disconnect(); } catch (_) {}
+  try { cap.ctx.close(); } catch (_) {}
+  remoteCaptures.delete(uid);
+}
+
+function stopAllRemoteCaptures() {
+  for (const uid of Array.from(remoteCaptures.keys())) stopRemoteCapture(uid);
+}
+
+async function startRemoteCapture(user) {
+  const uid = String(user.uid);
+  if (remoteCaptures.has(uid)) return;
+  if (!user.audioTrack) return;
+  try {
+    const mst = user.audioTrack.getMediaStreamTrack();
+    const ctx = new AudioContext({ sampleRate: 16000 });
+    const src = ctx.createMediaStreamSource(new MediaStream([mst]));
+    const processor = ctx.createScriptProcessor(4096, 1, 1);
+    let pending = [];
+    let pendingSamples = 0;
+    const flushSamples = 1600; // 100ms @16k
+
+    processor.onaudioprocess = (ev) => {
+      if (!listenEnabled) return;
+      const input = ev.inputBuffer.getChannelData(0);
+      const pcm = floatTo16BitPCM(input);
+      pending.push(pcm);
+      pendingSamples += pcm.length;
+      if (pendingSamples >= flushSamples) {
+        const merged = new Int16Array(pendingSamples);
+        let off = 0;
+        for (const part of pending) {
+          merged.set(part, off);
+          off += part.length;
+        }
+        pending = [];
+        pendingSamples = 0;
+        emitRemotePcm(uid, merged, 16000);
+      }
+    };
+
+    const mute = ctx.createGain();
+    mute.gain.value = 0;
+    src.connect(processor);
+    processor.connect(mute);
+    mute.connect(ctx.destination);
+    remoteCaptures.set(uid, { ctx, src, processor, mute });
+    console.log("[duplex] capture started", uid);
+  } catch (e) {
+    console.warn("[duplex] start capture failed", uid, e);
+  }
+}
+
+function ensureClientDuplexHooks() {
+  if (!client || client.__oopzDuplexHooked) return;
+  client.__oopzDuplexHooked = true;
+  client.on("user-published", async (user, mediaType) => {
+    try {
+      await client.subscribe(user, mediaType);
+    } catch (e) {
+      console.warn("[duplex] subscribe failed", e);
+      return;
+    }
+    if (mediaType === "audio" && listenEnabled) {
+      await startRemoteCapture(user);
+    }
+  });
+  client.on("user-unpublished", (user, mediaType) => {
+    if (mediaType === "audio") stopRemoteCapture(String(user.uid));
+  });
+  client.on("user-left", (user) => stopRemoteCapture(String(user.uid)));
+}
+
+window.agoraSetListen = async (enabled) => {
+  listenEnabled = !!enabled;
+  if (!listenEnabled) {
+    stopAllRemoteCaptures();
+    return { ok: true, listen: false };
+  }
+  if (!client) return { ok: false, error: "not joined" };
+  ensureClientDuplexHooks();
+  // 已在房用户
+  try {
+    const users = client.remoteUsers || [];
+    for (const user of users) {
+      if (user.hasAudio) {
+        try {
+          await client.subscribe(user, "audio");
+        } catch (_) {}
+        await startRemoteCapture(user);
+      }
+    }
+  } catch (e) {
+    console.warn("[duplex] resubscribe failed", e);
+  }
+  return { ok: true, listen: true };
+};
+
+async function ensureTtsTrack(sampleRate) {
+  if (!client) throw new Error("not joined");
+  if (!ttsCtx) {
+    ttsCtx = new AudioContext({ sampleRate: sampleRate || 24000 });
+    ttsDest = ttsCtx.createMediaStreamDestination();
+    const mst = ttsDest.stream.getAudioTracks()[0];
+    ttsTrack = AgoraRTC.createCustomAudioTrack({ mediaStreamTrack: mst });
+    ttsTrack.setVolume(_currentVolume);
+  }
+  if (!ttsPublished && ttsTrack) {
+    await client.publish([ttsTrack]);
+    ttsPublished = true;
+  }
+  return ttsTrack;
+}
+
+window.agoraStopTts = async () => {
+  ttsPlaying = false;
+  try {
+    if (ttsTrack) ttsTrack.stopProcessAudioBuffer && ttsTrack.stopProcessAudioBuffer();
+  } catch (_) {}
+  // CustomAudioTrack 没有 processAudioBuffer；通过静音实现中断
+  try {
+    if (ttsTrack) ttsTrack.setVolume(0);
+    await new Promise((r) => setTimeout(r, 30));
+    if (ttsTrack) ttsTrack.setVolume(_currentVolume);
+  } catch (_) {}
+  return { ok: true };
+};
+
+window.agoraPushTtsPcm = async (b64, sampleRate, finish) => {
+  try {
+    if (!client) return { ok: false, error: "not joined" };
+    if (b64 && b64.length) {
+      const pcm = base64ToInt16(b64);
+      if (pcm.length) {
+        await ensureTtsTrack(sampleRate || 24000);
+        const buf = ttsCtx.createBuffer(1, pcm.length, sampleRate || 24000);
+        const ch = buf.getChannelData(0);
+        for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 32768;
+        const src = ttsCtx.createBufferSource();
+        src.buffer = buf;
+        src.connect(ttsDest);
+        src.start();
+        ttsPlaying = true;
+      }
+    }
+    if (finish) {
+      ttsPlaying = false;
+    }
+    return { ok: true, playing: ttsPlaying, finish: !!finish };
+  } catch (e) {
+    return { ok: false, error: e && e.message ? e.message : String(e) };
+  }
+};
+
+// join 成功后挂上 duplex 钩子
+const _origJoin = window.agoraJoin;
+window.agoraJoin = async (...args) => {
+  const result = await _origJoin(...args);
+  if (result && result.ok) {
+    ensureClientDuplexHooks();
+    if (listenEnabled) {
+      await window.agoraSetListen(true);
+    }
+  }
+  return result;
+};
 </script>
 </body>
 </html>

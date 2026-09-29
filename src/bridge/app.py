@@ -215,6 +215,13 @@ class BridgeController:
         self.state.running = True
         self._log_plan(onebot_cfg)
 
+        try:
+            from voice_agent.runtime import get_voice_runtime
+
+            get_voice_runtime().bind_bot(bot)
+        except Exception:
+            logger.debug("bind voice runtime failed", exc_info=True)
+
         task = asyncio.create_task(bot.start(), name="oopz-bridge")
         self._run_task = task
         # 让「凭据无效 / 首次连接失败」在此刻就抛出来，而不是等监督循环下一轮。

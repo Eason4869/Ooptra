@@ -345,6 +345,14 @@ class VoiceChannelMemberInfo(BaseModel):
 
     sort: int = 0
 
+    # 静音状态：membersByChannels 目前不返回这些字段，这里做**透传**——
+    # pydantic 默认丢弃未声明的字段，声明后服务端哪天带上了就直接可用。
+    # 取不到时保持 None，表示「未知」，不要伪造成 False（=开麦）。
+    mic_muted: bool | None = Field(default=None, alias="micMuted")
+    speaker_muted: bool | None = Field(default=None, alias="speakerMuted")
+    m: int | None = None
+    hm: int | None = None
+
     @model_validator(mode="before")
     @classmethod
     def validate_and_normalize(cls, data: Any) -> Any:

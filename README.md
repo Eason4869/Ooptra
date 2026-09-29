@@ -14,6 +14,7 @@
   <a href="#快速开始">快速开始</a> ·
   <a href="#对端对接">对端对接</a> ·
   <a href="#web-控制台">Web 控制台</a> ·
+  <a href="#语音对话">语音对话</a> ·
   <a href="#关键配置">关键配置</a> ·
   <a href="#常见问题">常见问题</a> ·
   <a href="CHANGELOG.md">更新日志</a>
@@ -37,6 +38,8 @@ Ooptra 把 Oopz 的频道会话转换为 [OneBot v11](https://github.com/botuniv
 | 身份映射 | `group_id` / `user_id` 与 Oopz 域、频道、成员双向映射，持久化在 SQLite，重启后编号稳定 |
 | 凭据维护 | 账号密码或网页版登录；`device_id` / `person_uid` / `jwt_token` / RSA 私钥自动写回配置并自动重连 |
 | Web 控制台 | 状态总览、实时日志、配置编辑、账号与凭据管理；前端单文件无外部依赖 |
+| 语音对话 | 可选模块：进 Oopz 语音房 **Live 端到端语音**（类似 Gemini Live，语音进语音出） |
+| 语音 API | 与控制台同端口的 `/api/voice/*`、`/api/persona`、`/api/memory`，供外部插件调用 |
 | 项目边界 | 单进程运行，不含内置命令、插件系统与消息存储，只做桥接与运维 |
 
 ## 运行链路
@@ -113,6 +116,49 @@ Windows 下可以双击 `start_silent.vbs` 静默后台启动；把它放进「�
 把 `WEBUI_CONFIG["host"]` 改成 `0.0.0.0` 可以让同网段的设备访问，但**务必同时设置 `token`**，否则任何人都能打开控制台。
 设置令牌后访问需带上它：`http://<你的 IP>:3090/?token=<token>`。
 
+## 语音对话（可选）
+
+启用 `VOICE_AGENT_CONFIG.enabled` 后，bot 可进入 Oopz 语音频道参与实时语音：
+
+- **听**：订阅 Agora 远端音轨，PCM **持续**灌入 Live 会话（不是先转文字）
+- **想**：模型在语音域直接推理（`gemini_live` / BidiGenerateContent）
+- **说**：模型音频 chunk **流式**推回语音房，支持抢话打断（`barge_in`）
+- **兜底**：可选 `mimo_cascade`（ASR→LLM→TTS），延迟更高，适合无 Live 配额时
+- **管**：Web 控制台「语音」页选域/频道进退房、看成员、改人格与共享记忆
+
+Web 控制台同时挂载 JSON API（与控制台同端口，默认 `3090`，复用 `WEBUI_CONFIG.token`）。**外部插件一律用这个入口**——它路由完整、契约是扁平的：
+
+```http
+GET  /health
+GET  /voice/status
+GET  /voice/members?area=&channel=
+GET  /voice/channels?area=
+POST /voice/join     {"area":"","channel":""}
+POST /voice/leave
+POST /voice/speak    {"text":"..."}
+```
+
+`VOICE_API_CONFIG`（默认 `3091`）只是给「不想走 WebUI 端口」的场景准备的**等价副本**：它挂载的是同一套 handler，路由与响应结构完全一致（有测试断言两者路由集合相同），鉴权用 `VOICE_API_CONFIG.token`。一般不需要开启；开启时记得配 token，否则该端口无鉴权。
+
+Web 控制台自身的接口（带 `/api` 前缀）：
+
+```http
+GET  /api/voice/status
+GET  /api/voice/members?area=
+POST /api/voice/join     {"area":"","channel":""}
+POST /api/voice/leave
+GET  /api/oopz/areas
+GET  /api/oopz/channels?area=
+GET  /api/persona        PUT /api/persona
+GET  /api/memory         POST /api/memory   DELETE /api/memory
+POST /api/voice/speak    {"text":"..."}
+GET  /voice/channels?area=   # 域内频道 + 在线人数（插件契约路径）
+```
+
+外部插件（如 [astrbot_plugin_ooptra](https://github.com/Eason4869/astrbot_plugin_ooptra)）调用这些接口时，令牌填 **`WEBUI_CONFIG.token`**（默认同端口）；只有单独启用 `VOICE_API_CONFIG` 独立端口时才改用 `VOICE_API_CONFIG.token`。两边都留空则不校验。域 ID / 频道 ID 可在「语音台 → 会话控制」页查看并一键复制，用于群绑定；选中目标后点**「设为默认」**可写入 `OOPZ_CONFIG.default_area` / `default_channel`，作为插件进房的默认目标。
+
+依赖：`playwright` + Chromium（见 `requirements-optional.txt`）。未启用语音时行为与纯桥接一致。
+
 ## 关键配置
 
 配置文件是 `config.py`，三个分组对应 `OOPZ_CONFIG`、`ONEBOT_V11_CONFIG`、`WEBUI_CONFIG`。
@@ -126,9 +172,13 @@ Windows 下可以双击 `start_silent.vbs` 静默后台启动；把它放进「�
 | `ONEBOT_V11_CONFIG.ws_reverse_url` | 对端的反向 WS 地址，最常修改的一项 |
 | `ONEBOT_V11_CONFIG.access_token` | 与对端一致的令牌 |
 | `ONEBOT_V11_CONFIG.db_path` | 身份映射数据库路径 |
-| `WEBUI_CONFIG.host` / `port` / `token` | 控制台监听地址、端口与访问令牌 |
+| `WEBUI_CONFIG.host` / `port` / `token` | 控制台监听地址、端口与访问令牌；语音 API 与外部插件默认也用这个 token |
+| `VOICE_AGENT_CONFIG.proxy` | 模型 API 代理（选填）：`clash` = `127.0.0.1:7890`，`direct` 直连，或显式 `http://主机:端口` |
+| `VOICE_AGENT_CONFIG.gemini.voice` | Gemini Live 音色（Puck / Charon / Kore…，可自定义） |
+| `VOICE_AGENT_CONFIG.mimo.tts_voice` | MiMo TTS 音色（冰糖 / 茉莉 / 苏打 / 白桦…，可自定义） |
 
 更细的开关（心跳间隔、重连间隔、本地接入、域语义映射等）都在控制台「配置」页的「高级选项」里，默认值适用于绝大多数情况。
+「语音模型」配置页按所选 Live 厂商（Gemini / MiMo / OpenAI）展示对应的 API Key、模型名与音色下拉；侧栏「检查更新」可查询 GitHub 最新版本并打开仓库。
 
 ## 环境变量
 
