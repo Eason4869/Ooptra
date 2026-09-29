@@ -36,6 +36,22 @@ AudioOutHandler = Callable[[bytes, int], Awaitable[None] | None]
 #: 回合结束回调：参数为「是否被抢话打断」。模型说完是 False，被 barge-in 打断是 True。
 TurnOutHandler = Callable[[bool], Awaitable[None] | None]
 
+#: 追加在人格之后的固定语言约束。
+#:
+#: Live 的原生音频模型**不能**用 ``speechConfig.languageCode`` 锁语言 —— 官方文档
+#: 原文：「Explicitly setting a language code is not supported for native audio
+#: output models」，它按输入音频自动选语言。而我们的输入是**整个语音房间**的混音
+#: （``listen_only_uids`` 默认空 = 谁的音频都吞），有人夹英文、有歌曲、有噪声时
+#: 自动选语言就会翻车，现象就是「语言时不时乱切换」。
+#:
+#: 提示词是唯一可用的杠杆，所以这里**在人格之后追加**一条硬约束：人格是用户可随时
+#: 改写/清空的配置项，这条不能跟着丢。放在最后是因为指令的收尾位置权重更高。
+LANGUAGE_GUARD = (
+    "\n\n# 语言（最高优先级）\n"
+    "无论听到什么语言、方言、外语、歌曲还是噪声，你一律只用中文普通话回答，"
+    "不要切换成英文或其他语言。"
+)
+
 
 def live_url_has_key(url: str) -> bool:
     """URL 的查询串里有没有非空的 ``key``。"""
@@ -256,7 +272,7 @@ class GeminiLiveBackend(VoiceBackend):
                     },
                 },
                 "system_instruction": {
-                    "parts": [{"text": self.settings.persona or ""}]
+                    "parts": [{"text": (self.settings.persona or "") + LANGUAGE_GUARD}]
                 },
                 "input_audio_transcription": {},
                 "output_audio_transcription": {},
@@ -291,13 +307,24 @@ class GeminiLiveBackend(VoiceBackend):
             self._schedule_reconnect()
 
     async def interrupt(self) -> None:
-        """barge-in：告诉模型用户抢话，丢掉当前响应。"""
-        if not self.session_active:
-            return
-        try:
-            await self._send({"realtimeInput": {"audioStreamEnd": True}})
-        except Exception:
-            logger.debug("live interrupt failed", exc_info=True)
+        """barge-in 的**客户端侧**动作：本地静音即可，不再向服务端发信号。
+
+        这里以前发 ``realtimeInput.audioStreamEnd``，但那个字段的语义是
+        **「用户说完了，立刻处理并回答」**（官方文档：客户端 VAD 检测到句尾时发，
+        用来省掉服务端静音等待）。用它来抢话正好说反了：用户**刚开始**说话时发它，
+        等于逼模型把当时缓冲区里的音频碎片当成一个完整回合去回答 —— 一段没有内容
+        的输入，模型只能瞎猜，语言就是这里开始飘的（实测同一会话里中英文乱切）。
+
+        正确做法：本会话用的是**服务端自动 VAD**（setup 里没有关闭
+        ``automaticActivityDetection``）。文档明确「检测到打断时模型会取消正在进行的
+        生成，并通过 serverContent.interrupted 通知客户端」—— 而我们的远端音频本来
+        就在持续灌入，服务端听得到，抢话由它判定。客户端只要立刻停掉本地已排期的
+        播放（``duplex.stop_tts()``，在 agent 侧做）就够了；服务端的 ``interrupted``
+        到达后会再清一次并把回合收尾。
+
+        保留这个方法是为了接口稳定（agent 无条件调用），它现在是**有意的空操作**。
+        """
+        logger.debug("live interrupt: 客户端侧无操作（抢话由服务端自动 VAD 判定）")
 
     async def _session_loop(self) -> None:
         ws = self._ws
@@ -374,6 +401,15 @@ class GeminiLiveBackend(VoiceBackend):
 
         if server.get("turnComplete") or server.get("interrupted"):
             self._turns += 1
+            # 转写落日志：语言乱切换这类问题**只能**从这里看出来（模型到底听到了
+            # 什么、又用什么语言回答）。记忆里本来就存了这两段文本，日志不增加暴露。
+            if self._last_user_text or self._last_reply:
+                logger.info(
+                    "Live 回合：用户=%r 回复=%r%s",
+                    self._last_user_text[:80],
+                    self._last_reply[:80],
+                    "（被抢话打断）" if server.get("interrupted") else "",
+                )
             # 回合边界：先通知上层（它据此把「正在说话」落回 False、结束一次轮次），
             # 再写记忆。被抢话时上层还要就地丢掉本地已排期的音频。
             turn_handler = self._turn_out

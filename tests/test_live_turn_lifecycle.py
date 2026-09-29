@@ -24,7 +24,7 @@ from typing import Any
 import pytest
 
 from voice_agent.agent import VoiceAgent
-from voice_agent.backends.gemini_live import GeminiLiveBackend
+from voice_agent.backends.gemini_live import LANGUAGE_GUARD, GeminiLiveBackend
 from voice_agent.settings import VoiceAgentSettings, load_voice_agent_settings
 from voice_agent.ws_transport import _AiohttpWs
 
@@ -344,6 +344,10 @@ def opened(monkeypatch: pytest.MonkeyPatch) -> list[FakeLiveWs]:
     created: list[FakeLiveWs] = []
 
     async def fake_open(url: str, *, proxy: str | None = None, **kwargs: Any) -> FakeLiveWs:
+        # 这个 await 是**用例有效性**的前提：没有它，start_session 的临界区里
+        # 一个真正的挂起点都没有，5 个协程会被逐个同步跑完，锁与复检根本没被走到 ——
+        # 修锁之前这个用例也是绿的（空转）。见 test_concurrent_start_session_connects_once。
+        await asyncio.sleep(0)
         ws = FakeLiveWs()
         created.append(ws)
         return ws
@@ -354,23 +358,92 @@ def opened(monkeypatch: pytest.MonkeyPatch) -> list[FakeLiveWs]:
     return created
 
 
+def _backend(persona: str = "测试") -> GeminiLiveBackend:
+    return GeminiLiveBackend(
+        VoiceAgentSettings(
+            enabled=True,
+            gemini_api_key="test-key",
+            gemini_model="gemini-test",
+            persona=persona,
+            proxy="",
+        ),
+        type("M", (), {"append": lambda *a, **k: None, "set_persona": lambda *a: None})(),
+    )
+
+
 def test_concurrent_start_session_connects_once(opened: list[FakeLiveWs]) -> None:
     """并发 start_session（push_audio 在热路径上也会调）只真正建连一次。"""
 
     async def run() -> None:
-        backend = GeminiLiveBackend(
-            VoiceAgentSettings(
-                enabled=True,
-                gemini_api_key="test-key",
-                gemini_model="gemini-test",
-                persona="测试",
-                proxy="",
-            ),
-            type("M", (), {"append": lambda *a, **k: None, "set_persona": lambda *a: None})(),
-        )
+        backend = _backend()
         await asyncio.gather(*(backend.start_session() for _ in range(5)))
         assert len(opened) == 1, f"并发建连了 {len(opened)} 次会话"
         assert backend.session_active is True
+        await backend.aclose()
+
+    asyncio.run(run())
+
+
+# ----------------------------------------------------------------------
+# 9：抢话不再向服务端发 audioStreamEnd
+# ----------------------------------------------------------------------
+
+
+def test_interrupt_sends_no_server_signal(opened: list[FakeLiveWs]) -> None:
+    """``audioStreamEnd`` 的语义是「用户说完了，立刻回答」，拿它抢话说反了。
+
+    它会让模型把缓冲里的音频**碎片**当成一个完整回合去回答 —— 一整段没有内容的
+    输入，模型只能瞎猜（语言乱切换就是从这里开始的）。抢话由服务端自动 VAD 判定，
+    客户端只需要停掉本地播放。
+    """
+
+    async def run() -> None:
+        backend = _backend()
+        await backend.start_session()
+        ws = opened[0]
+
+        await backend.interrupt()
+
+        assert not [
+            m for m in ws.sent if "audioStreamEnd" in json.dumps(m)
+        ], "抢话又向服务端发了 audioStreamEnd"
+        assert backend.session_active is True, "interrupt 不该把会话搞掉"
+        await backend.aclose()
+
+    asyncio.run(run())
+
+
+# ----------------------------------------------------------------------
+# 10：语言约束必须跟着人格一起下发
+# ----------------------------------------------------------------------
+
+
+def test_setup_appends_the_language_guard(opened: list[FakeLiveWs]) -> None:
+    """Live 原生音频模型不支持 speech_config.language_code 锁语言，只能靠提示词。"""
+
+    async def run() -> None:
+        backend = _backend("用中文回答。你是测试人格。")
+        await backend.start_session()
+        text = opened[0].sent[0]["setup"]["system_instruction"]["parts"][0]["text"]
+
+        assert "用中文回答。你是测试人格。" in text, "人格本身不能被吞掉"
+        assert LANGUAGE_GUARD in text, "语言约束没有下发"
+        assert text.index(LANGUAGE_GUARD) > text.index("测试人格"), (
+            "语言约束必须追加在人格之后（收尾位置权重更高）"
+        )
+        await backend.aclose()
+
+    asyncio.run(run())
+
+
+def test_language_guard_survives_an_empty_persona(opened: list[FakeLiveWs]) -> None:
+    """人格是用户可清空的配置项；清空后语言约束仍要在。"""
+
+    async def run() -> None:
+        backend = _backend("")
+        await backend.start_session()
+        text = opened[0].sent[0]["setup"]["system_instruction"]["parts"][0]["text"]
+        assert LANGUAGE_GUARD in text
         await backend.aclose()
 
     asyncio.run(run())

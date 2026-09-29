@@ -535,6 +535,10 @@ window.agoraJoin = async (appId, token, channelName, uid) => {
 window.agoraLeave = async () => {
   await stopCurrentPlayback({ bumpGen: true, nextState: "joined" });
 
+  // 必须在 client 还在的时候拆：unpublish 要走 client。
+  // 不拆的话 ttsTrack/ttsPublished 会残留到下一个房间 —— 见 teardownTtsPipeline。
+  await teardownTtsPipeline();
+
   if (client) {
     try {
       await client.leave();
@@ -803,6 +807,9 @@ let ttsCtx = null;
 let ttsDest = null;
 let ttsTrack = null;
 let ttsPublished = false;
+// ttsTrack 是**绑定在某个 Agora client 上**发布的：client 一换（退房重进、换频道），
+// 旧 track 就再也推不出声音。记下它发布在哪个 client 上，发现换了就整套重建。
+let ttsPublishedFor = null;
 let ttsPlaying = false;
 // 推流播放队列：Live 的分片常常快于实时到达（实测 5.76s 音频在 1.29s 内到齐），
 // 必须按时间轴排队播放，否则每片都「立即开始」会叠成一团噪音。
@@ -952,8 +959,37 @@ window.agoraSetListen = async (enabled) => {
   return { ok: true, listen: true };
 };
 
+async function teardownTtsPipeline() {
+  // CustomAudioTrack 的发布是绑定在具体 client 上的：client 一换，旧 track 就
+  // 推不出任何声音。以前退房只清播放队列、不拆 track，于是 ttsTrack/ttsPublished
+  // 残留成「已发布」，二次进房时 ensureTtsTrack 两个分支全部短路 —— 模型音频全
+  // 灌进一个已经离开的 client，听感就是「首次进房能对话，退出重进/换房后它一句
+  // 话都不说」，而服务端日志一切正常（session ready、joined）。
+  const track = ttsTrack;
+  ttsTrack = null;
+  ttsPublished = false;
+  ttsPublishedFor = null;
+  if (track) {
+    await unpublishTrackSafely(track);
+    closeTrackSafely(track);
+  }
+  if (ttsCtx) {
+    // 连 AudioContext 一起关：它按 sampleRate 建过一次就固定了，留着复用会
+    // 让下一场会话沿用旧的采样率与时间轴。
+    try { await ttsCtx.close(); } catch (_) {}
+  }
+  ttsCtx = null;
+  ttsDest = null;
+  ttsNextTime = 0;
+}
+
 async function ensureTtsTrack(sampleRate) {
   if (!client) throw new Error("not joined");
+  // 发布目标已经不是当前 client 了（换了房间/重进房）→ 整套重建，
+  // 否则 PCM 会被排进一个已经离开的会话。
+  if (ttsTrack && ttsPublishedFor !== client) {
+    await teardownTtsPipeline();
+  }
   if (!ttsCtx) {
     ttsCtx = new AudioContext({ sampleRate: sampleRate || 24000 });
     ttsDest = ttsCtx.createMediaStreamDestination();
@@ -965,6 +1001,7 @@ async function ensureTtsTrack(sampleRate) {
   if (!ttsPublished && ttsTrack) {
     await client.publish([ttsTrack]);
     ttsPublished = true;
+    ttsPublishedFor = client;
   }
   return ttsTrack;
 }
