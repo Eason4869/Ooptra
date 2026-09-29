@@ -20,6 +20,7 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit, urlunsplit
 
 from voice_agent.backends.base import VoiceBackend, VoiceReply
 
@@ -32,6 +33,36 @@ DEFAULT_LIVE_WS = (
 )
 
 AudioOutHandler = Callable[[bytes, int], Awaitable[None] | None]
+
+
+def live_url_has_key(url: str) -> bool:
+    """URL 的查询串里有没有非空的 ``key``。"""
+    return bool((parse_qs(urlsplit(url).query).get("key") or [""])[0].strip())
+
+
+def build_live_url(endpoint: str, api_key: str) -> str:
+    """把 API key 拼进 Live 端点 URL —— **幂等**，永远不会出现两个 ``?key=``。
+
+    ``gemini.base_url`` 里直接带 key 是合法配置（Google 文档给的就是
+    ``...BidiGenerateContent?key=API_KEY`` 这种形态）。旧代码无条件再拼一次
+    ``?key=``，URL 变成 ``...?key=<k>?key=<k>``：服务端解析出的 key 长度翻倍，
+    **不返回 error 帧、直接关 socket** —— 现象就是「bot 进房了但一句话不说」，
+    日志里连 ``Gemini Live session ready`` 都不会出现（2026-09-29 实测踩过）。
+
+    显式配置的 ``api_key`` 优先：它非空时覆盖 URL 里的同名参数；为空时保留
+    URL 自带的 key。
+    """
+    endpoint = str(endpoint or "").strip() or DEFAULT_LIVE_WS
+    key = str(api_key or "").strip()
+    if not key:
+        return endpoint
+
+    parts = urlsplit(endpoint)
+    query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k != "key"]
+    query.append(("key", key))
+    return urlunsplit(
+        (parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment)
+    )
 
 
 class GeminiLiveBackend(VoiceBackend):
@@ -82,12 +113,17 @@ class GeminiLiveBackend(VoiceBackend):
     async def start_session(self) -> None:
         if self.session_active:
             return
-        key = (self.settings.gemini_api_key or "").strip()
-        if not key:
-            raise RuntimeError("GEMINI_API_KEY / gemini.api_key 未配置（Live 模式必需）")
 
         from voice_agent.settings import resolve_agent_proxy_url
         from voice_agent.ws_transport import open_live_ws
+
+        endpoint = str(
+            getattr(self.settings, "gemini_base_url", "") or DEFAULT_LIVE_WS
+        ).strip() or DEFAULT_LIVE_WS
+        # key 可以来自 gemini.api_key，也可以直接写在 base_url 里（两者取其一即可）
+        url = build_live_url(endpoint, getattr(self.settings, "gemini_api_key", "") or "")
+        if not live_url_has_key(url):
+            raise RuntimeError("GEMINI_API_KEY / gemini.api_key 未配置（Live 模式必需）")
 
         # 上一轮可能留下未回收的会话（服务端断开、setup 超时、异常退出）
         await self._reset_session()
@@ -95,10 +131,6 @@ class GeminiLiveBackend(VoiceBackend):
 
         self._closed = False
         self._ready.clear()
-        endpoint = str(
-            getattr(self.settings, "gemini_base_url", "") or DEFAULT_LIVE_WS
-        ).strip() or DEFAULT_LIVE_WS
-        url = f"{endpoint}?key={key}"
         proxy = resolve_agent_proxy_url(getattr(self.settings, "proxy", "") or "")
 
         ws = await open_live_ws(url, proxy=proxy)
