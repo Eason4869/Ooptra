@@ -335,14 +335,14 @@ def build_voice_routes(
         )
         # 实时静音状态：成员用 Agora stream message 自己广播的那份（REST 不提供）
         live_states, live_rx = _voice_live_states(bot)
-        items = [
-            normalize_member(
-                row,
-                names.get(str(_field(row, "uid", default="") or ""), ""),
-                live_states.get(str(_field(row, "uid", default="") or "")),
-            )
-            for row in rows
-        ]
+        items = []
+        live_hits = 0
+        for row in rows:
+            uid = str(_field(row, "uid", default="") or "")
+            live = live_states.get(uid)
+            if live is not None:
+                live_hits += 1
+            items.append(normalize_member(row, names.get(uid, ""), live))
 
         return ok(
             {
@@ -352,6 +352,9 @@ def build_voice_routes(
                 "channel": channel or agent._channel or "",
                 # 0 = 本房一次广播都没收到 → 静音状态无法得知，不是「都没闭麦」
                 "live_state_received": live_rx,
+                # 拿到实时状态的人数。广播是「一个成员进房/改状态时发一条」，
+                # 所以这个数通常小于 count —— 差集是没广播过的人，不是我们没收到。
+                "live_members": live_hits,
                 "channel_counts": {
                     cid: len(
                         [

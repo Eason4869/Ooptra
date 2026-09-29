@@ -2,6 +2,23 @@
 
 本文件记录 Ooptra 的对外变更，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [2.0.2] - 2026-09-29
+
+### 修复
+
+- **推流语音分片相互重叠，人声无法辨识**：Gemini Live 生成音频**快于实时**——实测一段 4.43 秒的语音，13 个分片在 0.98 秒内即全部推送完毕。播放器对每个分片调用无参 `AudioBufferSourceNode.start()`（语义为「自当前时刻立即播放」而非接续上一分片），于是整段语音被叠合播放并压缩至 1.48 秒，叠加削波后完全听不清，表现为「能听见 bot 说话，但断断续续、听不懂」。现维护 `ttsNextTime` 游标按时间轴顺序排期，仅在缓冲耗尽（欠载）时以 `TTS_LEAD`（80 ms）重新起头以吸收到达抖动。
+- **抢话打断失效**：`agoraStopTts` 仅将轨道音量压低 30 ms 再恢复，在无队列时尚可勉强中断，队列引入后已排期的分片会在音量恢复后继续播完。现改为真正 `stop()` 全部已排期分片并归零游标；退房时一并清空队列。
+
+- **控制台的「复制域 ID / 复制频道 ID / 复制绑定指令」点击无反应**：`navigator.clipboard` **只在安全上下文**（https 或 localhost）存在，用局域网 IP（`http://192.168.x.x:3090`）打开时它是 `undefined`，旧代码直接 `navigator.clipboard.writeText(...).then(...)`——属性访问本身就抛 `TypeError`，`.then` 与失败分支都不会执行，所以既不复制也不报错。现改为：安全上下文优先用 Clipboard API，否则退回隐藏 `<textarea>` + `execCommand('copy')`，两条路都不通时弹 `prompt`（默认值为选中态，`Ctrl+C` 即可）并明确告知原因。
+- **房间成员列表的麦克风/扬声器状态始终为「未知」**：`GET /voice/members` 不带 `channel` 时是**整个域汇总**，而静音状态只有同一个 Agora 房间内的人会广播（实测：每人进房/改状态时发一条 `{"m","uid","cid","hm"}`，一次一人、无整房快照），因此列出的别房成员状态永远无法得知，整张表看起来就是「没修好」。现前端先读 `/api/voice/status` 取得 bot 当前所在频道，只查询该频道；未在房时不臆造频道、按域查询并在状态行说明原因。
+- **成员页把「没收到广播」显示成「未知」**：`未知` 无法区分「我们没收到」与「对方没广播」。现该列显示「未广播」（悬浮提示说明成因），状态行由累计广播条数改为已解析人数 `M/N`（新增 `live_members` 字段），不再出现「收到 7 条」被误读为 7 个人的情况。
+
+### 测试
+
+- 新增 `tests/test_tts_play_queue.py`（9 条），锁死「推流不得出现无参 `start()`」。
+- 新增 `tests/test_webui_clipboard.py`（6 条）锁死复制须在非安全上下文下可用；新增 `tests/test_webui_members.py`（6 条）与 `tests/test_voice_api_routes.py` 的成员范围用例（4 条）锁死「成员查询必须带上 bot 所在频道」。
+- 全量 **162 passed**。
+
 ## [2.0.1] - 2026-09-29
 
 ### 修复
@@ -10,7 +27,6 @@
 - **WebUI 与独立 VOICE_API 同端口时抢占本机回环流量**：Windows 下 aiohttp 默认启用 `SO_REUSEADDR`，`0.0.0.0:3090` 与 `127.0.0.1:3090` 可同时绑定，更具体的回环 socket 优先接收本机请求，导致 WebUI 页面与 `/api/*` 在 `127.0.0.1` 上返回 404，而局域网地址正常。`VoiceApiServer.start()` 现检测到与 WebUI 监听地址相同时跳过启动并记录 WARNING。
 - **`GET /api/update` 恒返回 HTTP 500**：`str(getattr(...)).get(...)` 对字符串调用 `.get()`，必然抛出 `AttributeError`。
 - **房间成员页无法获取麦克风/扬声器状态**：Oopz 的 REST（`membersByChannels`）与网关事件均不提供静音状态，唯一来源是各客户端经 Agora `sendStreamMessage` 广播的 `{m, uid, cid, hm}`，而播放器此前仅发送不接收。现播放器监听 `stream-message` 事件并将状态回传 Python；`/voice/members` 新增 `live_state_received` 计数，为 `0` 表示本房未收到任何广播，此时静音列保持 `null`（未知）。
-- **推流语音分片重叠，人声无法辨识**：Gemini Live 生成音频**快于实时**——实测一段 4.43 秒的语音，13 个分片在 0.98 秒内即全部推送完毕。播放器对每个分片调用无参 `AudioBufferSourceNode.start()`（自当前时刻立即播放，而非接续上一分片），导致全部分片叠合播放并被压缩至 1.48 秒，叠加削波后完全听不清。现维护 `ttsNextTime` 游标按时间轴顺序排期，缓冲耗尽（欠载）时以 `TTS_LEAD`（80 ms）重新起头。同时 `agoraStopTts` 改为真正 `stop()` 已排期分片——原先仅以静音 30 ms 模拟中断，队列中的分片会在音量恢复后继续播放，抢话打断失效；退房时一并清空队列。
 
 ### 变更
 
@@ -19,7 +35,7 @@
 
 ### 测试
 
-- 新增 `tests/test_gemini_live_url.py`（15 条）、`tests/test_voice_member_live_state.py`（32 条）与 `tests/test_tts_play_queue.py`（9 条）；全量 **145 passed**。
+- 新增 `tests/test_gemini_live_url.py`（15 条）与 `tests/test_voice_member_live_state.py`（32 条）；全量 **136 passed**。
 
 ## [2.0.0] - 2026-09-29
 
@@ -93,6 +109,7 @@
 - 配置页只读行溢出卡片，导致「复制」按钮被挤出可视区域。
 - 配置页高级字段在隐藏状态下仍参与表单布局，造成列宽不一致。
 
+[2.0.2]: https://github.com/Eason4869/Ooptra/releases/tag/v2.0.2
 [2.0.1]: https://github.com/Eason4869/Ooptra/releases/tag/v2.0.1
 [2.0.0]: https://github.com/Eason4869/Ooptra/releases/tag/v2.0.0
 [1.0.0]: https://github.com/Eason4869/Ooptra/releases/tag/v1.0.0
