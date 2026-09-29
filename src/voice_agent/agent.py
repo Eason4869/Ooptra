@@ -9,6 +9,7 @@ Live 模式（默认，gemini_live）：远端 PCM 持续灌入 Live 会话，�
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from typing import Any
 
@@ -93,10 +94,8 @@ class VoiceAgent:
         self._task = None
         if task is not None:
             task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await task
-            except asyncio.CancelledError:
-                pass
         try:
             await self.leave()
         except Exception:
@@ -244,10 +243,8 @@ class VoiceAgent:
                 if interrupt is not None:
                     await interrupt()
                 if self.duplex is not None:
-                    try:
+                    with contextlib.suppress(Exception):
                         await self.duplex.stop_tts()
-                    except Exception:
-                        pass
                 self._speaking = False
             push = getattr(self.backend, "push_audio", None)
             if push is not None:
@@ -260,7 +257,10 @@ class VoiceAgent:
         vad = self._vad_for(uid)
         utterance = vad.feed(pcm)
         if utterance:
-            asyncio.create_task(self._handle_utterance(uid, utterance, sample_rate))
+            self._utterance_tasks = getattr(self, "_utterance_tasks", set())
+            task = asyncio.create_task(self._handle_utterance(uid, utterance, sample_rate))
+            self._utterance_tasks.add(task)
+            task.add_done_callback(self._utterance_tasks.discard)
 
     async def _interrupt_speaking(self) -> None:
         self._speaking = False

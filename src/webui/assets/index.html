@@ -120,6 +120,12 @@
       <button class="nav-item small" id="btn-restart">
         <svg viewBox="0 0 24 24"><path d="M12 5V2L7 6l5 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7Z"/></svg>重新连接
       </button>
+      <button class="nav-item small" id="btn-check-update">
+        <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 .001 20.001A10 10 0 0 0 12 2Zm1 15h-2v-2h2v2Zm0-4h-2V7h2v6Z"/></svg>检查更新
+      </button>
+      <button class="nav-item small" id="btn-github">
+        <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.58 2 12.26c0 4.52 2.87 8.35 6.84 9.7.5.1.68-.22.68-.48 0-.24-.01-.87-.01-1.7-2.78.62-3.37-1.37-3.37-1.37-.45-1.18-1.11-1.5-1.11-1.5-.91-.64.07-.63.07-.63 1 .07 1.53 1.06 1.53 1.06.9 1.57 2.36 1.12 2.94.86.09-.67.35-1.12.63-1.38-2.22-.26-4.55-1.14-4.55-5.07 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.32.1-2.75 0 0 .84-.27 2.75 1.05A9.3 9.3 0 0 1 12 6.84c.85.004 1.71.12 2.51.35 1.9-1.32 2.74-1.05 2.74-1.05.55 1.43.2 2.49.1 2.75.64.72 1.03 1.63 1.03 2.75 0 3.94-2.34 4.8-4.57 5.06.36.32.68.94.68 1.9 0 1.38-.01 2.49-.01 2.83 0 .26.18.59.69.48A10.02 10.02 0 0 0 22 12.26C22 6.58 17.52 2 12 2Z"/></svg>GitHub
+      </button>
       <button class="nav-item small" id="btn-logout">
         <svg viewBox="0 0 24 24"><path d="M10 17v-2h4v-2h-4V4H4v16h6v-3Zm6-9-1.4 1.4L16.2 11H20v2h-3.8l-1.6 1.6L16 16l4-4-4-4Z"/></svg>退出登录
       </button>
@@ -244,9 +250,11 @@
           <header class="card-head">
             <h3>进入语音频道</h3>
             <button class="btn ghost sm" id="voice-targets-refresh">刷新列表</button>
+            <button class="btn ghost sm" id="voice-set-default" title="把当前选中的域/频道写入配置，作为插件 /进语音 的默认目标">设为默认</button>
             <button class="btn primary sm" id="voice-join">进房</button>
             <button class="btn ghost sm" id="voice-leave">退房</button>
           </header>
+          <p class="hint" id="default-target-hint">默认目标：未设置。插件不带参数进房时用它；一个 QQ 群绑了多个域时也按默认域查询。</p>
 
           <!-- 一级：域标签 -->
           <div class="chip-tabs" id="area-tabs" role="tablist">
@@ -264,6 +272,19 @@
                 <span class="ch-name">默认频道</span>
                 <span class="ch-sub">config 默认</span>
               </button>
+            </div>
+          </div>
+
+          <!-- 域/频道 ID 提示：可直接复制给 /语音绑定 -->
+          <div class="bind-bar" id="bind-bar">
+            <div class="bind-text">
+              <span class="hint">当前目标 ID（点击复制；用于 QQ 群 <code>/语音绑定</code>）</span>
+              <code class="bind-cmd" id="bind-cmd">/语音绑定 &lt;域ID&gt; &lt;频道ID&gt;</code>
+            </div>
+            <div class="btn-row">
+              <button class="btn ghost sm" id="copy-area-id" type="button">复制域 ID</button>
+              <button class="btn ghost sm" id="copy-channel-id" type="button">复制频道 ID</button>
+              <button class="btn primary sm" id="copy-bind-cmd" type="button">复制绑定指令</button>
             </div>
           </div>
           <input type="hidden" id="join-area" value="" />

@@ -10,17 +10,39 @@ import tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "src"))
 
+from voice_agent.backends.mimo_cascade import (  # noqa: E402
+    pcm16_to_wav,
+    resample_pcm16,
+    wav_to_pcm16,
+)
 from voice_agent.memory import MemoryStore  # noqa: E402
-from voice_agent.settings import load_voice_agent_settings  # noqa: E402
+from voice_agent.settings import load_voice_agent_settings, resolve_agent_proxy_url  # noqa: E402
 from voice_agent.vad import EnergyVad, VadvConfig  # noqa: E402
-from voice_agent.backends.mimo_cascade import pcm16_to_wav, resample_pcm16, wav_to_pcm16  # noqa: E402
 
 
 def test_settings_defaults() -> None:
     agent, api = load_voice_agent_settings()
     assert agent.backend in {"mimo_cascade", "gemini_live", "openai_realtime", ""} or agent.backend
     assert api.port == 3091 or api.port > 0
+    assert hasattr(agent, "proxy")
+    # 模型接入点与音色可配置
+    assert agent.gemini_base_url.startswith("wss://")
+    assert agent.gemini_voice
+    assert agent.mimo_base_url.startswith("http")
+    assert agent.mimo_tts_voice
+    assert agent.openai_base_url.startswith("http")
+    assert agent.openai_voice
     print("settings ok", agent.backend, api.port)
+
+
+def test_resolve_agent_proxy_url() -> None:
+    assert resolve_agent_proxy_url("") is None
+    assert resolve_agent_proxy_url("direct") is None
+    clash = resolve_agent_proxy_url("clash")
+    assert clash is not None and clash.startswith("http://") and "7890" in clash
+    explicit = resolve_agent_proxy_url("http://127.0.0.1:7890")
+    assert explicit == "http://127.0.0.1:7890"
+    print("proxy resolve ok", clash, explicit)
 
 
 def test_memory() -> None:
@@ -63,6 +85,7 @@ def test_wav_roundtrip_and_resample() -> None:
 
 if __name__ == "__main__":
     test_settings_defaults()
+    test_resolve_agent_proxy_url()
     test_memory()
     test_vad_silence_and_speech()
     test_wav_roundtrip_and_resample()

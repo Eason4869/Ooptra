@@ -8,7 +8,6 @@ import logging
 import struct
 import wave
 from io import BytesIO
-from typing import Any
 
 from voice_agent.backends.base import VoiceBackend, VoiceReply
 
@@ -84,7 +83,12 @@ class MimoCascadeBackend(VoiceBackend):
     def __init__(self, settings, memory) -> None:
         self.settings = settings
         self.memory = memory
-        self._session: aiohttp.ClientSession | None = None
+        self._session = None  # aiohttp.ClientSession，懒加载
+
+    def _proxy_url(self) -> str | None:
+        from voice_agent.settings import resolve_agent_proxy_url
+
+        return resolve_agent_proxy_url(getattr(self.settings, "proxy", "") or "")
 
     async def _http(self):
         if self._session is None or self._session.closed:
@@ -123,7 +127,9 @@ class MimoCascadeBackend(VoiceBackend):
         }
         session = await self._http()
         url = self.settings.mimo_base_url.rstrip("/") + "/chat/completions"
-        async with session.post(url, headers=self._headers(), json=body) as resp:
+        async with session.post(
+            url, headers=self._headers(), json=body, proxy=self._proxy_url()
+        ) as resp:
             data = await resp.json(content_type=None)
             if resp.status >= 400:
                 raise RuntimeError(f"ASR failed HTTP {resp.status}: {data}")
@@ -144,7 +150,9 @@ class MimoCascadeBackend(VoiceBackend):
         }
         session = await self._http()
         url = self.settings.mimo_base_url.rstrip("/") + "/chat/completions"
-        async with session.post(url, headers=self._headers(), json=body) as resp:
+        async with session.post(
+            url, headers=self._headers(), json=body, proxy=self._proxy_url()
+        ) as resp:
             data = await resp.json(content_type=None)
             if resp.status >= 400:
                 raise RuntimeError(f"LLM failed HTTP {resp.status}: {data}")
@@ -168,7 +176,9 @@ class MimoCascadeBackend(VoiceBackend):
         session = await self._http()
         url = self.settings.mimo_base_url.rstrip("/") + "/chat/completions"
         chunks: list[bytes] = []
-        async with session.post(url, headers=self._headers(), json=body) as resp:
+        async with session.post(
+            url, headers=self._headers(), json=body, proxy=self._proxy_url()
+        ) as resp:
             if resp.status >= 400:
                 raw = await resp.text()
                 raise RuntimeError(f"TTS failed HTTP {resp.status}: {raw}")

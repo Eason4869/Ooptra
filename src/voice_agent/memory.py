@@ -6,7 +6,7 @@ import json
 import os
 import threading
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from typing import Any
 
 from core.paths import project_path
@@ -50,9 +50,8 @@ class MemoryStore:
             ts=time.time(),
         )
         line = json.dumps(asdict(turn), ensure_ascii=False)
-        with self._lock:
-            with open(self._path, "a", encoding="utf-8") as fh:
-                fh.write(line + "\n")
+        with self._lock, open(self._path, "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
         return asdict(turn)
 
     def recent(self, *, user_key: str = "", limit: int | None = None) -> list[dict[str, Any]]:
@@ -60,19 +59,18 @@ class MemoryStore:
         rows: list[dict[str, Any]] = []
         if not os.path.exists(self._path):
             return rows
-        with self._lock:
-            with open(self._path, "r", encoding="utf-8") as fh:
-                for line in fh:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        row = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if user_key and row.get("user_key") and row.get("user_key") != user_key:
-                        continue
-                    rows.append(row)
+        with self._lock, open(self._path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if user_key and row.get("user_key") and row.get("user_key") != user_key:
+                    continue
+                rows.append(row)
         return rows[-limit:]
 
     def as_messages(self, *, user_key: str = "", limit: int | None = None) -> list[dict[str, str]]:
@@ -90,7 +88,7 @@ class MemoryStore:
         removed = 0
         kept: list[str] = []
         with self._lock:
-            with open(self._path, "r", encoding="utf-8") as fh:
+            with open(self._path, encoding="utf-8") as fh:
                 for line in fh:
                     if not line.strip():
                         continue

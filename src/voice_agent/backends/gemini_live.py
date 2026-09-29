@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import json
 import logging
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from voice_agent.backends.base import VoiceBackend, VoiceReply
 
@@ -66,22 +68,17 @@ class GeminiLiveBackend(VoiceBackend):
         if not key:
             raise RuntimeError("GEMINI_API_KEY / gemini.api_key 未配置（Live 模式必需）")
 
-        try:
-            import websockets
-        except ModuleNotFoundError as exc:
-            raise RuntimeError(
-                "Live 后端需要 websockets：pip install websockets"
-            ) from exc
+        from voice_agent.settings import resolve_agent_proxy_url
+        from voice_agent.ws_transport import open_live_ws
 
         self._closed = False
         self._ready.clear()
-        url = f"{DEFAULT_LIVE_WS}?key={key}"
-        self._ws = await websockets.connect(
-            url,
-            max_size=8 * 1024 * 1024,
-            ping_interval=20,
-            ping_timeout=20,
-        )
+        endpoint = str(
+            getattr(self.settings, "gemini_base_url", "") or DEFAULT_LIVE_WS
+        ).strip() or DEFAULT_LIVE_WS
+        url = f"{endpoint}?key={key}"
+        proxy = resolve_agent_proxy_url(getattr(self.settings, "proxy", "") or "")
+        self._ws = await open_live_ws(url, proxy=proxy)
         self._session_task = asyncio.create_task(self._session_loop(), name="gemini-live-session")
 
         # setup：系统指令 + 音频输入输出
@@ -97,10 +94,8 @@ class GeminiLiveBackend(VoiceBackend):
         self._ws = None
         if task is not None:
             task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await task
-            except asyncio.CancelledError:
-                pass
         if ws is not None:
             try:
                 await ws.close()
@@ -149,7 +144,7 @@ class GeminiLiveBackend(VoiceBackend):
             return
         if self._ws is None:
             await self.start_session()
-        mime = "audio/pcm;rate=%d" % int(sample_rate or self._in_sample)
+        mime = f"audio/pcm;rate={int(sample_rate or self._in_sample)}"
         payload = {
             "realtimeInput": {
                 "audio": {
@@ -225,10 +220,8 @@ class GeminiLiveBackend(VoiceBackend):
             rate = self._out_sample
             mime = str(inline.get("mimeType") or inline.get("mime_type") or "")
             if "rate=" in mime:
-                try:
+                with contextlib.suppress(ValueError):
                     rate = int(mime.split("rate=")[1].split(";")[0].strip())
-                except ValueError:
-                    pass
             handler = self._audio_out
             if handler is not None and pcm:
                 result = handler(pcm, rate)

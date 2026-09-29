@@ -9,6 +9,9 @@
     POST /voice/leave
     Authorization: Bearer <token>   # 可选
 
+令牌与 Ooptra 侧生效项一致：VOICE_API 默认挂在 WebUI 同端口，用 WEBUI_CONFIG.token；
+独立 VOICE_API_CONFIG 端口才用 VOICE_API_CONFIG.token。两边都留空则不校验。
+
 响应形态（扁平，插件 format_status / format_members 直接读）：
 
     status:  {ok, joined, area, channel, state, ...}
@@ -57,6 +60,14 @@ def mount_voice_routes(app: web.Application, voice_runtime: Any) -> None:
         state = "joined" if joined else "idle"
         if st.get("speaking"):
             state = "playing"
+        try:
+            import config as runtime_config
+
+            default_area = str(runtime_config.OOPZ_CONFIG.get("default_area") or "")
+            default_channel = str(runtime_config.OOPZ_CONFIG.get("default_channel") or "")
+        except Exception:
+            default_area = agent.settings.area
+            default_channel = agent.settings.channel
         return {
             "joined": joined,
             "area": st.get("area") or "",
@@ -68,6 +79,9 @@ def mount_voice_routes(app: web.Application, voice_runtime: Any) -> None:
             "turns": int(st.get("turns") or 0),
             "last_reply": st.get("last_reply") or "",
             "last_user_text": st.get("last_user_text") or "",
+            # 插件侧默认目标（WebUI「设为默认」写入 OOPZ_CONFIG）
+            "default_area": default_area or agent._area or "",
+            "default_channel": default_channel or agent._channel or "",
             # WebUI 兼容
             "status": st,
         }
@@ -103,21 +117,17 @@ def mount_voice_routes(app: web.Application, voice_runtime: Any) -> None:
         area = str(request.query.get("area") or agent._area or "")
         if not area:
             return err("缺少 area 参数")
+        channel = str(request.query.get("channel") or "").strip()
         members_raw = await bot.channels.get_voice_channel_members(area=area)
 
-        items: list[dict[str, Any]] = []
-        raw_list = members_raw
-        if isinstance(members_raw, dict):
-            raw_list = (
-                members_raw.get("members")
-                or members_raw.get("list")
-                or members_raw.get("data")
-                or []
-            )
-        # VoiceChannelMembersResult 可能是对象
-        if not isinstance(raw_list, list):
-            raw_list = getattr(members_raw, "members", None) or []
+        grouped = _channel_member_map(members_raw)
+        if channel:
+            raw_list = grouped.get(channel, [])
+        else:
+            # 未指定频道时汇总整个域；同时回传分频道人数
+            raw_list = [m for rows in grouped.values() for m in rows]
 
+        items: list[dict[str, Any]] = []
         for row in raw_list or []:
             if not isinstance(row, dict):
                 # pydantic 模型
@@ -176,7 +186,77 @@ def mount_voice_routes(app: web.Application, voice_runtime: Any) -> None:
                 "count": len(items),
                 "members": items,
                 "area": area,
-                "channel": request.query.get("channel") or agent._channel or "",
+                "channel": channel or agent._channel or "",
+                "channel_counts": {
+                    cid: len([m for m in rows if not getattr(m, "is_bot", False)])
+                    for cid, rows in grouped.items()
+                },
+            }
+        )
+
+    def _channel_member_map(members_raw: Any) -> dict[str, list[Any]]:
+        """把 get_voice_channel_members 结果归一成 {channel_id: [member, ...]}。"""
+        if members_raw is None:
+            return {}
+        grouped = getattr(members_raw, "channel_members", None)
+        if isinstance(grouped, dict):
+            return {str(k): list(v or []) for k, v in grouped.items()}
+        if isinstance(members_raw, dict):
+            src = members_raw.get("channelMembers") or members_raw.get("channel_members")
+            if isinstance(src, dict):
+                return {str(k): list(v or []) for k, v in src.items()}
+        return {}
+
+    async def voice_channels(request: web.Request) -> web.Response:
+        """列出域内语音频道及在线人数，供插件按域汇总、按名字找频道。"""
+        bot = agent._bot
+        if bot is None:
+            return err("Oopz bot 尚未就绪", 503)
+        area = str(request.query.get("area") or agent._area or "").strip()
+        if not area:
+            return err("缺少 area 参数")
+
+        names: dict[str, str] = {}
+        try:
+            groups = await bot.areas.get_area_channels(area)
+            for group in groups or []:
+                for ch in getattr(group, "channels", None) or []:
+                    ctype = str(getattr(ch, "channel_type", "") or "").upper()
+                    if ctype and ctype not in {"VOICE", "AUDIO"}:
+                        continue
+                    cid = str(getattr(ch, "channel_id", "") or getattr(ch, "id", "") or "")
+                    if not cid:
+                        continue
+                    names[cid] = str(getattr(ch, "name", "") or "")
+        except Exception as exc:
+            logger.warning("list area channels failed: %s", exc)
+
+        counts: dict[str, int] = {}
+        try:
+            members_raw = await bot.channels.get_voice_channel_members(area=area)
+            for cid, members in _channel_member_map(members_raw).items():
+                counts[cid] = len([m for m in members if not getattr(m, "is_bot", False)])
+        except Exception as exc:
+            logger.warning("count voice members failed: %s", exc)
+
+        channels = [
+            {"id": cid, "name": names.get(cid) or cid, "count": int(counts.get(cid) or 0)}
+            for cid in sorted(set(names) | set(counts), key=lambda x: (-counts.get(x, 0), names.get(x) or x))
+        ]
+        try:
+            import config as runtime_config
+
+            default_area = str(runtime_config.OOPZ_CONFIG.get("default_area") or "")
+            default_channel = str(runtime_config.OOPZ_CONFIG.get("default_channel") or "")
+        except Exception:
+            default_area = agent.settings.area
+            default_channel = agent.settings.channel
+        return ok(
+            {
+                "area": area,
+                "channels": channels,
+                "default_area": default_area or agent._area or "",
+                "default_channel": default_channel or agent._channel or "",
             }
         )
 
@@ -289,6 +369,7 @@ def mount_voice_routes(app: web.Application, voice_runtime: Any) -> None:
         ("GET", "/health", health),
         ("GET", "/voice/status", voice_status),
         ("GET", "/voice/members", voice_members),
+        ("GET", "/voice/channels", voice_channels),
         ("POST", "/voice/join", voice_join),
         ("POST", "/voice/leave", voice_leave),
         ("POST", "/voice/speak", voice_speak),

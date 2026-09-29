@@ -702,7 +702,22 @@ function renderConfig() {
     else extra.remove();
     host.appendChild(card);
   });
+  applyVendorVisibility();
   syncConfigChips();
+}
+
+function currentBackend() {
+  const dirtyBackend = dirty.voice && dirty.voice.backend;
+  if (dirtyBackend != null) return String(dirtyBackend);
+  const meta = configSchema && configSchema.voice && configSchema.voice.fields && configSchema.voice.fields.backend;
+  return meta ? String(meta.value || 'gemini_live') : 'gemini_live';
+}
+
+function applyVendorVisibility() {
+  const backend = currentBackend();
+  document.querySelectorAll('.cfg-field[data-vendor]').forEach((el) => {
+    el.hidden = el.dataset.vendor !== backend;
+  });
 }
 
 function syncConfigChips() {
@@ -720,6 +735,7 @@ function syncConfigChips() {
 function fieldRow(group, field, meta) {
   const wrap = document.createElement('div');
   wrap.className = 'cfg-field';
+  if (meta.vendor) wrap.dataset.vendor = meta.vendor;
 
   if (meta.type === 'bool') {
     wrap.innerHTML = '<label class="cfg-switch"><input type="checkbox"><span>' + escapeHtml(meta.label || field) + '</span></label>';
@@ -730,9 +746,13 @@ function fieldRow(group, field, meta) {
     return wrap;
   }
 
+  if (meta.type === 'select') {
+    return selectFieldRow(group, field, meta, wrap);
+  }
+
   const type = meta.sensitive ? 'password' : (meta.type === 'int' || meta.type === 'float' ? 'number' : 'text');
   const value = meta.type === 'list' ? (meta.value || []).join(', ') : (meta.value ?? '');
-  const placeholder = meta.sensitive ? (meta.is_set ? '已设置（留空不改）' : '未设置') : '';
+  const placeholder = meta.sensitive ? (meta.is_set ? '已设置（留空不改）' : (meta.placeholder || '未设置')) : (meta.placeholder || '');
   wrap.innerHTML = '<label><span>' + escapeHtml(meta.label || field) + '</span><input type="' + type + '"' +
     (type === 'number' ? ' step="any"' : '') + ' autocomplete="off" placeholder="' + escapeHtml(placeholder) + '"></label>';
   const input = wrap.querySelector('input');
@@ -745,6 +765,79 @@ function fieldRow(group, field, meta) {
   return wrap;
 }
 
+function selectFieldRow(group, field, meta, wrap) {
+  const options = (meta.options || []).map((opt) =>
+    typeof opt === 'object' && opt
+      ? { value: String(opt.value ?? ''), label: String(opt.label ?? opt.value ?? '') }
+      : { value: String(opt), label: String(opt) }
+  );
+  const allowCustom = !!meta.allow_custom;
+  const current = meta.value == null ? '' : String(meta.value);
+  const inPreset = options.some((opt) => opt.value === current);
+  const CUSTOM = '__custom__';
+
+  let html = '<label><span>' + escapeHtml(meta.label || field) + '</span><select class="cfg-select">';
+  options.forEach((opt) => {
+    html += '<option value="' + escapeHtml(opt.value) + '">' + escapeHtml(opt.label) + '</option>';
+  });
+  if (allowCustom) {
+    html += '<option value="' + CUSTOM + '">' + (inPreset && current ? '自定义…' : '自定义…') + '</option>';
+  }
+  html += '</select></label>';
+  if (allowCustom) {
+    html += '<input class="cfg-custom" type="text" autocomplete="off" placeholder="输入自定义值"' +
+      (inPreset || !current ? ' hidden' : '') + '>';
+  }
+  wrap.innerHTML = html;
+
+  const select = wrap.querySelector('select');
+  const custom = wrap.querySelector('.cfg-custom');
+
+  if (inPreset) {
+    select.value = current;
+    if (custom) custom.hidden = true;
+  } else if (allowCustom && current) {
+    select.value = CUSTOM;
+    if (custom) {
+      custom.hidden = false;
+      custom.value = current;
+    }
+  } else {
+    select.value = options.length ? options[0].value : '';
+    if (custom) {
+      custom.hidden = true;
+      custom.value = '';
+    }
+  }
+
+  const emit = () => {
+    if (select.value === CUSTOM) {
+      const raw = custom ? custom.value.trim() : '';
+      markDirty(group, field, meta, raw, wrap);
+    } else {
+      if (custom) {
+        custom.hidden = true;
+        custom.value = '';
+      }
+      markDirty(group, field, meta, select.value, wrap);
+    }
+  };
+
+  select.addEventListener('change', () => {
+    if (select.value === CUSTOM) {
+      if (custom) {
+        custom.hidden = false;
+        custom.focus();
+      }
+    }
+    emit();
+  });
+  if (custom) custom.addEventListener('change', emit);
+
+  if (meta.hint) wrap.insertAdjacentHTML('beforeend', '<p class="hint">' + escapeHtml(meta.hint) + '</p>');
+  return wrap;
+}
+
 function markDirty(group, field, meta, value, wrap) {
   dirty[group] = dirty[group] || {};
   const blank = meta.sensitive && typeof value === 'string' && !value.trim();
@@ -752,6 +845,7 @@ function markDirty(group, field, meta, value, wrap) {
   else dirty[group][field] = value;
   if (Object.keys(dirty[group]).length === 0) delete dirty[group];
   wrap.classList.toggle('is-dirty', !blank);
+  if (group === 'voice' && field === 'backend') applyVendorVisibility();
   updateSavebar();
 }
 
@@ -951,6 +1045,48 @@ function wireRail() {
     const ok = await confirmDialog('退出登录', '会清除本机浏览器里保存的访问令牌。服务器端配置不受影响。', '退出');
     if (ok) logout();
   });
+  const checkBtn = $('btn-check-update');
+  if (checkBtn) checkBtn.addEventListener('click', checkUpdate);
+  const githubBtn = $('btn-github');
+  if (githubBtn) githubBtn.addEventListener('click', openGithubRepo);
+}
+
+const GITHUB_REPO_URL = 'https://github.com/Eason4869/Ooptra';
+
+function openGithubRepo() {
+  window.open(GITHUB_REPO_URL, '_blank', 'noopener');
+}
+
+async function checkUpdate() {
+  const btn = $('btn-check-update');
+  if (btn) btn.disabled = true;
+  try {
+    toast('正在检查更新', '查询 GitHub 仓库…', 'ok');
+    const data = await api('/api/update');
+    const current = data.current_version || '';
+    const latest = data.latest_version || '';
+    if (data.update_available) {
+      const url = data.release_url || data.branch_url || data.repo_url || GITHUB_REPO_URL;
+      toast('发现新版本', '当前 v' + current + ' → 最新 v' + latest, 'warn');
+      if (await confirmDialog('发现新版本', '当前 v' + current + '，最新 v' + latest + '。是否打开 GitHub 仓库查看？', '打开 GitHub')) {
+        window.open(url, '_blank', 'noopener');
+      }
+    } else if (data.ok) {
+      toast('已是最新版本', data.message || ('当前 v' + current), 'ok');
+    } else {
+      toast('检查更新失败', data.error || '未知错误', 'err');
+      if (await confirmDialog('检查更新失败', (data.error || '无法连接 GitHub') + '。是否直接打开 GitHub 仓库？', '打开 GitHub')) {
+        window.open(data.repo_url || GITHUB_REPO_URL, '_blank', 'noopener');
+      }
+    }
+  } catch (err) {
+    toast('检查更新失败', err.message, 'err');
+    if (await confirmDialog('检查更新失败', err.message + '。是否直接打开 GitHub 仓库？', '打开 GitHub')) {
+      window.open(GITHUB_REPO_URL, '_blank', 'noopener');
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 async function boot() {
@@ -973,6 +1109,137 @@ window.addEventListener('beforeunload', () => { stopPolling(); stopLogStream(); 
 
 let voiceReady = false;
 let voicePoll = null;
+let voiceAreaNames = {};
+let voiceChannelNames = {};
+let voiceDefaultArea = '';
+let voiceDefaultChannel = '';
+
+function currentJoinArea() {
+  const el = $('join-area');
+  return (el && el.value) || '';
+}
+
+function currentJoinChannel() {
+  const el = $('join-channel');
+  return (el && el.value) || '';
+}
+
+function updateDefaultHint() {
+  const hint = $('default-target-hint');
+  if (!hint) return;
+  const areaName = voiceDefaultArea ? (voiceAreaNames[voiceDefaultArea] || voiceDefaultArea) : '';
+  const channelName = voiceDefaultChannel
+    ? (voiceChannelNames[voiceDefaultChannel] || voiceDefaultChannel)
+    : '';
+  if (voiceDefaultArea && voiceDefaultChannel) {
+    hint.textContent = '默认目标：' + areaName + ' / ' + channelName + '。插件不带参数进房时用它；一个 QQ 群绑了多个域时也按默认域查询。';
+  } else if (voiceDefaultArea) {
+    hint.textContent = '默认域：' + areaName + '（未设默认频道）。一个 QQ 群绑了多个域时按默认域查询；插件进房仍需默认频道。';
+  } else {
+    hint.textContent = '默认目标：未设置。选中域与频道后点「设为默认」，作为插件 /进语音 的默认目标。';
+  }
+  document.querySelectorAll('#area-tabs .chip-tab').forEach((el) => {
+    const id = el.dataset.area || '';
+    el.classList.toggle('is-default', !!id && id === voiceDefaultArea);
+  });
+  document.querySelectorAll('#channel-grid .channel-card').forEach((el) => {
+    const id = el.dataset.channel || '';
+    el.classList.toggle('is-default', !!id && id === voiceDefaultChannel);
+  });
+  const btn = $('voice-set-default');
+  if (btn) {
+    const area = currentJoinArea();
+    const channel = currentJoinChannel();
+    btn.disabled = !area;
+    btn.title = area
+      ? ('把 ' + (voiceAreaNames[area] || area) + (channel ? ' / ' + (voiceChannelNames[channel] || channel) : '') + ' 写为默认')
+      : '先点选一个域标签';
+  }
+}
+
+async function setDefaultTarget() {
+  const area = currentJoinArea();
+  if (!area) {
+    toast('请先选域', '点上方域标签选中目标域', 'warn');
+    return;
+  }
+  const channel = currentJoinChannel();
+  const btn = $('voice-set-default');
+  if (btn) btn.disabled = true;
+  try {
+    await api('/api/config', {
+      method: 'POST',
+      body: { updates: { oopz: { default_area: area, default_channel: channel } } },
+    });
+    voiceDefaultArea = area;
+    voiceDefaultChannel = channel;
+    updateDefaultHint();
+    toast('已设为默认', (voiceAreaNames[area] || area) + (channel ? ' / ' + (voiceChannelNames[channel] || channel) : ''), 'ok');
+  } catch (err) {
+    toast('设置失败', err.message, 'err');
+  } finally {
+    if (btn) btn.disabled = false;
+    updateDefaultHint();
+  }
+}
+
+function updateBindBar() {
+  const areaId = currentJoinArea();
+  const channelId = currentJoinChannel();
+  const areaShown = areaId || '<域ID>';
+  const channelShown = channelId || '<频道ID>';
+  const cmd = $('bind-cmd');
+  if (cmd) {
+    cmd.textContent = '/语音绑定 ' + areaShown + (channelId ? ' ' + channelShown : '');
+    cmd.title = areaId
+      ? ('域 ID：' + areaId + (channelId ? '\n频道 ID：' + channelId : '\n尚未选择频道'))
+      : '尚未选择域，将用配置默认域';
+  }
+  const areaBtn = $('copy-area-id');
+  if (areaBtn) {
+    areaBtn.disabled = !areaId;
+    areaBtn.title = areaId ? ('复制域 ID：' + areaId) : '先点选一个域标签';
+  }
+  const channelBtn = $('copy-channel-id');
+  if (channelBtn) {
+    channelBtn.disabled = !channelId;
+    channelBtn.title = channelId ? ('复制频道 ID：' + channelId) : '先点选一个频道卡片';
+  }
+  const bindBtn = $('copy-bind-cmd');
+  if (bindBtn) {
+    bindBtn.disabled = !areaId;
+    bindBtn.title = areaId ? '复制完整 /语音绑定 指令' : '先点选一个域标签';
+  }
+  updateDefaultHint();
+}
+
+function wireBindBar() {
+  const areaBtn = $('copy-area-id');
+  const channelBtn = $('copy-channel-id');
+  const bindBtn = $('copy-bind-cmd');
+  const cmd = $('bind-cmd');
+  if (areaBtn) areaBtn.addEventListener('click', () => {
+    const id = currentJoinArea();
+    if (id) copyText(id);
+  });
+  if (channelBtn) channelBtn.addEventListener('click', () => {
+    const id = currentJoinChannel();
+    if (id) copyText(id);
+  });
+  if (bindBtn) bindBtn.addEventListener('click', () => {
+    const areaId = currentJoinArea();
+    if (!areaId) return;
+    const channelId = currentJoinChannel();
+    copyText('/语音绑定 ' + areaId + (channelId ? ' ' + channelId : ''));
+  });
+  if (cmd) cmd.addEventListener('click', () => {
+    const areaId = currentJoinArea();
+    if (!areaId) return;
+    const channelId = currentJoinChannel();
+    copyText('/语音绑定 ' + areaId + (channelId ? ' ' + channelId : ''));
+  });
+  updateBindBar();
+}
 
 function switchVoiceTab(tab) {
   const name = tab || 'session';
@@ -1010,6 +1277,9 @@ function setupVoice() {
   if (join) join.onclick = () => voiceAction('join');
   if (leave) leave.onclick = () => voiceAction('leave');
   if (targetsRefresh) targetsRefresh.onclick = () => loadVoiceTargets(true);
+  const setDefault = $('voice-set-default');
+  if (setDefault) setDefault.onclick = setDefaultTarget;
+  wireBindBar();
   const areaTabs = $('area-tabs');
   if (areaTabs) {
     areaTabs.addEventListener('click', (event) => {
@@ -1222,8 +1492,11 @@ function setJoinArea(area) {
   const label = $('channel-area-label');
   if (label) {
     const tab = document.querySelector('#area-tabs .chip-tab.is-active');
-    label.textContent = '频道 · ' + ((tab && tab.textContent.trim()) || '默认域');
+    const name = (tab && tab.textContent.trim()) || '默认域';
+    label.textContent = '频道 · ' + name;
+    if (area) label.title = '域 ID：' + area;
   }
+  updateBindBar();
 }
 
 function setJoinChannel(channel) {
@@ -1232,6 +1505,7 @@ function setJoinChannel(channel) {
   document.querySelectorAll('#channel-grid .channel-card').forEach((el) => {
     el.classList.toggle('is-active', (el.dataset.channel || '') === (channel || ''));
   });
+  updateBindBar();
 }
 
 function syncMemberArea(area) {
@@ -1261,6 +1535,10 @@ async function loadVoiceTargets(force) {
     if (hint) hint.textContent = '加载域列表…';
     const data = await api('/api/oopz/areas');
     const areas = data.areas || [];
+    voiceAreaNames = {};
+    areas.forEach((row) => { if (row.id) voiceAreaNames[row.id] = row.name || row.id; });
+    voiceDefaultArea = data.default_area || '';
+    voiceDefaultChannel = data.default_channel || '';
     const savedArea = localStorage.getItem('oopz.webui.voice.area') || data.default_area || '';
     areaTabs.innerHTML = '';
     // 默认域占位
@@ -1269,6 +1547,7 @@ async function loadVoiceTargets(force) {
     def.className = 'chip-tab';
     def.dataset.area = '';
     def.textContent = '默认域';
+    def.title = '使用配置里的默认域';
     areaTabs.appendChild(def);
     areas.forEach((row) => {
       const btn = document.createElement('button');
@@ -1276,6 +1555,7 @@ async function loadVoiceTargets(force) {
       btn.className = 'chip-tab';
       btn.dataset.area = row.id || '';
       btn.textContent = row.name || row.id || '未命名';
+      btn.title = '域 ID：' + (row.id || '') + '\n点击切换，ID 见下方绑定栏';
       areaTabs.appendChild(btn);
     });
     // 成员页域下拉同步
@@ -1289,10 +1569,11 @@ async function loadVoiceTargets(force) {
     setJoinArea(savedArea);
     const savedChannel = localStorage.getItem('oopz.webui.voice.channel') || data.default_channel || '';
     await loadChannels(savedArea, savedChannel);
-    if (hint) hint.textContent = '点上方域标签切换，再点频道卡片选中目标';
+    if (hint) hint.textContent = '点域标签切换、点频道卡片选中；下方可复制域/频道 ID 用于 /语音绑定';
   } catch (err) {
     if (hint) hint.textContent = '域列表加载失败：' + err.message;
     areaTabs.innerHTML = '<button type="button" class="chip-tab is-active" data-area="">默认域</button>';
+    updateBindBar();
   }
 }
 
@@ -1300,6 +1581,7 @@ async function loadChannels(area, preferred) {
   const grid = $('channel-grid');
   const hint = $('join-hint');
   if (!grid) return;
+  voiceChannelNames = {};
   // 先放默认频道卡
   grid.innerHTML = '';
   const def = document.createElement('button');
@@ -1319,19 +1601,21 @@ async function loadChannels(area, preferred) {
     const data = await api('/api/oopz/channels?area=' + encodeURIComponent(area));
     const channels = data.channels || [];
     channels.forEach((row) => {
+      if (row.id) voiceChannelNames[row.id] = row.name || row.id;
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'channel-card';
       btn.dataset.channel = row.id || '';
+      btn.title = '频道 ID：' + (row.id || '') + '\n点击选中，ID 见下方绑定栏';
       btn.innerHTML =
         '<span class="ch-name">' + escapeHtml(row.name || row.id) + '</span>' +
-        '<span class="ch-sub">语音频道</span>';
+        '<span class="ch-sub"><span class="ch-id">' + escapeHtml(row.id || '—') + '</span></span>';
       grid.appendChild(btn);
     });
     const pick = preferred || '';
     setJoinChannel(pick);
     if (hint) hint.textContent = channels.length
-      ? ('该域共 ' + channels.length + ' 个语音频道，点卡片选中')
+      ? ('该域共 ' + channels.length + ' 个语音频道，点卡片选中并复制 ID')
       : '该域下未发现语音频道，将使用默认';
   } catch (err) {
     if (hint) hint.textContent = '频道加载失败：' + err.message;

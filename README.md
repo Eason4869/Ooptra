@@ -138,7 +138,10 @@ GET  /api/oopz/channels?area=
 GET  /api/persona        PUT /api/persona
 GET  /api/memory         POST /api/memory   DELETE /api/memory
 POST /api/voice/speak    {"text":"..."}
+GET  /voice/channels?area=   # 域内频道 + 在线人数（插件契约路径）
 ```
+
+外部插件（如 [astrbot_plugin_ooptra](https://github.com/Eason4869/astrbot_plugin_ooptra)）调用这些接口时，令牌填 **`WEBUI_CONFIG.token`**（默认同端口）；只有单独启用 `VOICE_API_CONFIG` 独立端口时才改用 `VOICE_API_CONFIG.token`。两边都留空则不校验。域 ID / 频道 ID 可在「语音台 → 会话控制」页查看并一键复制，用于群绑定；选中目标后点**「设为默认」**可写入 `OOPZ_CONFIG.default_area` / `default_channel`，作为插件进房的默认目标。
 
 依赖：`playwright` + Chromium（见 `requirements-optional.txt`）。未启用语音时行为与纯桥接一致。
 
@@ -155,9 +158,13 @@ POST /api/voice/speak    {"text":"..."}
 | `ONEBOT_V11_CONFIG.ws_reverse_url` | 对端的反向 WS 地址，最常修改的一项 |
 | `ONEBOT_V11_CONFIG.access_token` | 与对端一致的令牌 |
 | `ONEBOT_V11_CONFIG.db_path` | 身份映射数据库路径 |
-| `WEBUI_CONFIG.host` / `port` / `token` | 控制台监听地址、端口与访问令牌 |
+| `WEBUI_CONFIG.host` / `port` / `token` | 控制台监听地址、端口与访问令牌；语音 API 与外部插件默认也用这个 token |
+| `VOICE_AGENT_CONFIG.proxy` | 模型 API 代理（选填）：`clash` = `127.0.0.1:7890`，`direct` 直连，或显式 `http://主机:端口` |
+| `VOICE_AGENT_CONFIG.gemini.voice` | Gemini Live 音色（Puck / Charon / Kore…，可自定义） |
+| `VOICE_AGENT_CONFIG.mimo.tts_voice` | MiMo TTS 音色（冰糖 / 茉莉 / 苏打 / 白桦…，可自定义） |
 
 更细的开关（心跳间隔、重连间隔、本地接入、域语义映射等）都在控制台「配置」页的「高级选项」里，默认值适用于绝大多数情况。
+「语音模型」配置页按所选 Live 厂商（Gemini / MiMo / OpenAI）展示对应的 API Key、模型名与音色下拉；侧栏「检查更新」可查询 GitHub 最新版本并打开仓库。
 
 ## 环境变量
 

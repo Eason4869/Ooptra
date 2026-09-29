@@ -28,9 +28,7 @@ class VoiceApiServer:
             return True
         if request.query.get("token", "") == token:
             return True
-        if request.headers.get("X-Ooptra-Token", "") == token:
-            return True
-        return False
+        return request.headers.get("X-Ooptra-Token", "") == token
 
     def _err(self, message: str, status: int = 400) -> web.Response:
         return web.json_response({"ok": False, "error": message}, status=status)

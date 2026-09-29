@@ -240,10 +240,15 @@ FIELD_SPECS: dict[str, dict[str, dict[str, Any]]] = {
     "voice": {
         "enabled": {"type": "bool", "label": "启用语音 Agent", "tier": "basic"},
         "backend": {
-            "type": "str",
-            "label": "对话模型",
+            "type": "select",
+            "label": "Live 模型厂商",
             "tier": "basic",
-            "hint": "gemini_live（Live 端到端，默认）| mimo_cascade（级联兜底）| openai_realtime",
+            "options": [
+                {"value": "gemini_live", "label": "Gemini Live（语音进语音出）"},
+                {"value": "mimo_cascade", "label": "MiMo 级联（ASR→LLM→TTS）"},
+                {"value": "openai_realtime", "label": "OpenAI Realtime（骨架）"},
+            ],
+            "hint": "选择厂商后出现对应的模型与音色预设",
         },
         "persona": {
             "type": "str",
@@ -253,6 +258,166 @@ FIELD_SPECS: dict[str, dict[str, dict[str, Any]]] = {
         },
         "area": {"type": "str", "label": "默认域 ID", "tier": "basic"},
         "channel": {"type": "str", "label": "默认语音频道 ID", "tier": "basic"},
+        "proxy": {
+            "type": "select",
+            "label": "模型 API 网络代理",
+            "tier": "basic",
+            "options": [
+                {"value": "", "label": "不启用代理"},
+                {"value": "clash", "label": "启用代理 127.0.0.1:7890"},
+                {"value": "direct", "label": "强制直连"},
+            ],
+            "allow_custom": True,
+            "hint": "选填；模型接口与更新检查走此代理，也可填 http://主机:端口",
+        },
+        # ── Gemini Live 厂商预设 ──
+        "gemini.api_key": {
+            "type": "str",
+            "label": "Gemini API Key",
+            "sensitive": True,
+            "tier": "basic",
+            "vendor": "gemini_live",
+            "hint": "或环境变量 GEMINI_API_KEY",
+        },
+        "gemini.base_url": {
+            "type": "str",
+            "label": "Gemini 接口地址",
+            "tier": "basic",
+            "vendor": "gemini_live",
+            "hint": "Live WebSocket 端点；留空用官方默认，中转/代理可改自定义地址",
+            "placeholder": "wss://generativelanguage.googleapis.com/ws/...（默认）",
+        },
+        "gemini.model": {
+            "type": "select",
+            "label": "Gemini Live 模型",
+            "tier": "basic",
+            "vendor": "gemini_live",
+            "options": [
+                "gemini-2.0-flash-live-001",
+                "gemini-2.5-flash-live-preview",
+                "gemini-live-2.5-flash-preview",
+            ],
+            "allow_custom": True,
+        },
+        "gemini.voice": {
+            "type": "select",
+            "label": "Gemini 音色",
+            "tier": "basic",
+            "vendor": "gemini_live",
+            "options": [
+                {"value": "Puck", "label": "Puck"},
+                {"value": "Charon", "label": "Charon"},
+                {"value": "Kore", "label": "Kore"},
+                {"value": "Fenrir", "label": "Fenrir"},
+                {"value": "Aoede", "label": "Aoede"},
+                {"value": "Enceladus", "label": "Enceladus"},
+                {"value": "Iapetus", "label": "Iapetus"},
+                {"value": "Umbriel", "label": "Umbriel"},
+            ],
+            "allow_custom": True,
+            "hint": "下拉预设音色，或选「自定义」填入任意音色名",
+        },
+        # ── MiMo 级联厂商预设 ──
+        "mimo.api_key": {
+            "type": "str",
+            "label": "MiMo API Key",
+            "sensitive": True,
+            "tier": "basic",
+            "vendor": "mimo_cascade",
+            "hint": "或环境变量 MIMO_API_KEY",
+        },
+        "mimo.base_url": {
+            "type": "str",
+            "label": "MiMo 接口地址",
+            "tier": "basic",
+            "vendor": "mimo_cascade",
+        },
+        "mimo.asr_model": {
+            "type": "select",
+            "label": "MiMo ASR 模型",
+            "tier": "basic",
+            "vendor": "mimo_cascade",
+            "options": ["mimo-v2.5-asr"],
+            "allow_custom": True,
+        },
+        "mimo.llm_model": {
+            "type": "select",
+            "label": "MiMo LLM 模型",
+            "tier": "basic",
+            "vendor": "mimo_cascade",
+            "options": ["mimo-v2.6-flash", "mimo-v2.5-pro"],
+            "allow_custom": True,
+        },
+        "mimo.tts_model": {
+            "type": "select",
+            "label": "MiMo TTS 模型",
+            "tier": "basic",
+            "vendor": "mimo_cascade",
+            "options": ["mimo-v2.5-tts"],
+            "allow_custom": True,
+        },
+        "mimo.tts_voice": {
+            "type": "select",
+            "label": "MiMo 音色",
+            "tier": "basic",
+            "vendor": "mimo_cascade",
+            "options": [
+                {"value": "冰糖", "label": "冰糖（活泼女声）"},
+                {"value": "茉莉", "label": "茉莉（知性女声）"},
+                {"value": "苏打", "label": "苏打（阳光男声）"},
+                {"value": "白桦", "label": "白桦（沉稳男声）"},
+                {"value": "Mia", "label": "Mia"},
+                {"value": "Chloe", "label": "Chloe"},
+                {"value": "Milo", "label": "Milo"},
+                {"value": "Dean", "label": "Dean"},
+            ],
+            "allow_custom": True,
+            "hint": "下拉预设音色，或选「自定义」填入任意音色名",
+        },
+        # ── OpenAI Realtime 厂商预设 ──
+        "openai.api_key": {
+            "type": "str",
+            "label": "OpenAI API Key",
+            "sensitive": True,
+            "tier": "basic",
+            "vendor": "openai_realtime",
+            "hint": "或环境变量 OPENAI_API_KEY",
+        },
+        "openai.base_url": {
+            "type": "str",
+            "label": "OpenAI 接口地址",
+            "tier": "basic",
+            "vendor": "openai_realtime",
+            "hint": "兼容 OpenAI 的 API 根地址；留空用官方默认，中转站可改自定义",
+            "placeholder": "https://api.openai.com/v1（默认）",
+        },
+        "openai.realtime_model": {
+            "type": "select",
+            "label": "OpenAI Realtime 模型",
+            "tier": "basic",
+            "vendor": "openai_realtime",
+            "options": [
+                "gpt-4o-mini-realtime-preview",
+                "gpt-4o-realtime-preview",
+            ],
+            "allow_custom": True,
+        },
+        "openai.voice": {
+            "type": "select",
+            "label": "OpenAI 音色",
+            "tier": "basic",
+            "vendor": "openai_realtime",
+            "options": [
+                {"value": "alloy", "label": "alloy"},
+                {"value": "echo", "label": "echo"},
+                {"value": "fable", "label": "fable"},
+                {"value": "onyx", "label": "onyx"},
+                {"value": "nova", "label": "nova"},
+                {"value": "shimmer", "label": "shimmer"},
+            ],
+            "allow_custom": True,
+            "hint": "下拉预设音色，或选「自定义」填入任意音色名",
+        },
         "auto_join": {"type": "bool", "label": "启动后自动进房", "tier": "adv", "section": "行为"},
         "barge_in": {"type": "bool", "label": "允许抢话打断", "tier": "adv", "section": "行为"},
         "reply_text_to_channel": {
@@ -287,7 +452,7 @@ FIELD_SPECS: dict[str, dict[str, dict[str, Any]]] = {
             "label": "访问令牌",
             "sensitive": True,
             "tier": "basic",
-            "hint": "留空=不校验；建议填写",
+            "hint": "仅独立端口生效；默认关闭时请改填 WEBUI_CONFIG.token。外部插件填同一项",
         },
     },
     "webui": {
@@ -304,7 +469,7 @@ FIELD_SPECS: dict[str, dict[str, dict[str, Any]]] = {
             "label": "访问令牌",
             "sensitive": True,
             "tier": "basic",
-            "hint": "留空=不校验；填入后访问需带 ?token=...",
+            "hint": "留空=不校验；填入后访问需带 ?token=...。语音 API 与外部插件（astrbot_plugin_ooptra）默认也用 WEBUI_CONFIG.token",
         },
         "enabled": {"type": "bool", "label": "启用 Web 控制台", "tier": "adv", "section": "其他"},
         "log_lines": {
@@ -336,6 +501,19 @@ def _live_group(group: str) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _split_field_path(field: str) -> list[str]:
+    return [part for part in str(field).split(".") if part]
+
+
+def _nested_get(data: Any, path: list[str]) -> Any:
+    node = data
+    for part in path:
+        if not isinstance(node, dict):
+            return None
+        node = node.get(part)
+    return node
+
+
 def schema_payload() -> dict[str, Any]:
     """下发给前端：分组规范 + 当前值。敏感字段不回传明文，自动维护项不下发。"""
     groups: dict[str, Any] = {}
@@ -358,13 +536,16 @@ def schema_payload() -> dict[str, Any]:
             for bound in ("min", "max"):
                 if bound in meta:
                     entry[bound] = meta[bound]
+            for extra in ("options", "vendor", "allow_custom", "placeholder"):
+                if extra in meta:
+                    entry[extra] = meta[extra]
+            value = _nested_get(current, _split_field_path(field))
             if meta.get("readonly"):
-                entry["value"] = current.get(field)
+                entry["value"] = value
             elif meta.get("sensitive"):
                 entry["value"] = None
-                entry["is_set"] = bool(current.get(field))
+                entry["is_set"] = bool(value)
             else:
-                value = current.get(field)
                 entry["value"] = list(value) if isinstance(value, (list, tuple)) else value
             entries[field] = entry
         groups[group] = {
@@ -406,11 +587,26 @@ def _coerce(meta: dict[str, Any], value: Any, field: str) -> Any:
             return [str(item).strip() for item in value if str(item).strip()]
         return [item.strip() for item in str(value).split(",") if item.strip()]
     text = str(value).strip()
+    if kind == "select":
+        allowed = _select_values(meta)
+        if text in allowed or meta.get("allow_custom") or (not text and not meta.get("nonempty")):
+            return text
+        raise ValueError(f"{field} 取值不在预设内（可开自定义）")
     if text and meta.get("prefix") and not text.lower().startswith(tuple(meta["prefix"])):
         raise ValueError(f"{field} 必须以 {' 或 '.join(meta['prefix'])} 开头")
     if not text and meta.get("nonempty"):
         raise ValueError(f"{field} 不能为空")
     return text
+
+
+def _select_values(meta: dict[str, Any]) -> set[str]:
+    values: set[str] = set()
+    for option in meta.get("options") or []:
+        if isinstance(option, dict):
+            values.add(str(option.get("value", "")))
+        else:
+            values.add(str(option))
+    return values
 
 
 def _check_bounds(meta: dict[str, Any], value: float, field: str) -> None:
@@ -508,6 +704,79 @@ def _dict_assignments(tree: ast.AST) -> dict[str, ast.Dict]:
     return assignments
 
 
+def _dict_entries(dict_node: ast.Dict) -> dict[str, ast.expr]:
+    entries: dict[str, ast.expr] = {}
+    for key_node, value_node in zip(dict_node.keys, dict_node.values, strict=True):
+        if isinstance(key_node, ast.Constant) and isinstance(key_node.value, str):
+            entries[key_node.value] = value_node
+    return entries
+
+
+def _pretty_dict(value: dict[str, Any], indent: int = 0) -> str:
+    """把字典格式化成带缩进的 Python 字面量，便于写回 config.py 时保持可读。"""
+    if not value:
+        return "{}"
+    pad = "    " * (indent + 1)
+    closing = "    " * indent
+    lines = ["{"]
+    for key, item in value.items():
+        lines.append(f"{pad}{_python_literal(str(key))}: {_pretty_value(item, indent + 1)},")
+    lines.append(f"{closing}}}")
+    return "\n".join(lines)
+
+
+def _pretty_value(value: Any, indent: int) -> str:
+    if isinstance(value, dict):
+        return _pretty_dict(value, indent)
+    return _python_literal(value)
+
+
+def _merge_nested(base: dict[str, Any], field: str, value: Any) -> None:
+    path = _split_field_path(field)
+    node = base
+    for part in path[:-1]:
+        child = node.get(part)
+        if not isinstance(child, dict):
+            child = {}
+            node[part] = child
+        node = child
+    node[path[-1]] = value
+
+
+def _patch_field_inplace(
+    dict_node: ast.Dict,
+    field: str,
+    literal: str,
+    lines: list[str],
+    offsets: list[int],
+    replacements: list[tuple[int, int, str]],
+    insertions: dict[int, list[str]],
+) -> bool:
+    """把字段写进已有字典；路径完整时就地改叶子，返回 False 表示需要整段重写。"""
+    path = _split_field_path(field)
+    current = dict_node
+    for part in path[:-1]:
+        child = _dict_entries(current).get(part)
+        if not isinstance(child, ast.Dict):
+            return False
+        current = child
+    leaf = path[-1]
+    value_node = _dict_entries(current).get(leaf)
+    if value_node is not None:
+        start, end = _node_span(lines, offsets, value_node)
+        replacements.append((start, end, literal))
+        return True
+    end_lineno = current.end_lineno
+    if end_lineno is None:
+        return False
+    closing_line = lines[end_lineno - 1]
+    closing_indent = closing_line[: len(closing_line) - len(closing_line.lstrip())]
+    insertions.setdefault(offsets[end_lineno - 1], []).append(
+        f"{closing_indent}    {_python_literal(leaf)}: {literal},\n"
+    )
+    return True
+
+
 def _patched_text(text: str, updates: dict[str, dict[str, Any]]) -> str:
     try:
         tree = ast.parse(text, filename=CONFIG_PATH)
@@ -535,26 +804,35 @@ def _patched_text(text: str, updates: dict[str, dict[str, Any]]) -> str:
             if dict_node is None:
                 raise RuntimeError(f"config.py 找不到 {source_name}，无法写入")
 
-        existing: dict[str, ast.expr] = {}
-        for key_node, value_node in zip(dict_node.keys, dict_node.values, strict=True):
-            if isinstance(key_node, ast.Constant) and isinstance(key_node.value, str):
-                existing[key_node.value] = value_node
-
+        pending: dict[str, Any] = {}
         for field, value in values.items():
             literal = _python_literal(value)
-            value_node = existing.get(field)
-            if value_node is not None:
-                start, end = _node_span(lines, offsets, value_node)
-                replacements.append((start, end, literal))
+            if _patch_field_inplace(
+                dict_node, field, literal, lines, offsets, replacements, insertions
+            ):
                 continue
-            end_lineno = dict_node.end_lineno
-            if end_lineno is None:
-                raise RuntimeError(f"{source_name} 缺少结束行信息")
-            closing_line = lines[end_lineno - 1]
-            closing_indent = closing_line[: len(closing_line) - len(closing_line.lstrip())]
-            insertions.setdefault(offsets[end_lineno - 1], []).append(
-                f"{closing_indent}    {_python_literal(field)}: {literal},\n"
-            )
+            pending[field] = value
+
+        if pending:
+            # 中间层字典缺失等场景：整组合并后重写该分组，保证最终值正确
+            base: dict[str, Any] = {}
+            for key, node in _dict_entries(dict_node).items():
+                try:
+                    base[key] = ast.literal_eval(node)
+                except Exception:
+                    base[key] = None
+            for field, value in values.items():
+                _merge_nested(base, field, value)
+            start, end = _node_span(lines, offsets, dict_node)
+            replacements = [
+                (s, e, rep) for s, e, rep in replacements if not (start <= s and e <= end)
+            ]
+            insertions = {
+                pos: chunks
+                for pos, chunks in insertions.items()
+                if not (start <= pos <= end)
+            }
+            replacements.append((start, end, _pretty_dict(base)))
 
     edits: list[tuple[int, int, str]] = list(replacements)
     for position, chunks in insertions.items():

@@ -103,6 +103,7 @@ WEBUI_CONFIG = {
     "host": "127.0.0.1",   # 监听地址：127.0.0.1 仅本机；0.0.0.0 允许局域网访问
     "port": 3090,
     # 访问令牌：留空表示不校验；填入后需用 ?token=... 访问。
+    # 语音 HTTP API 默认挂在此端口，外部插件（如 astrbot_plugin_ooptra）的令牌也填这一项。
     "token": "",
     "log_lines": 300,
 }
@@ -130,6 +131,10 @@ VOICE_AGENT_CONFIG = {
     "silence_ms": 700,
     "max_utterance_ms": 15000,
 
+    # 模型 API 网络代理（选填）：""=不启用；"clash"=http://127.0.0.1:7890；
+    # "direct"=强制直连；也可填显式地址 "http://主机:端口"
+    "proxy": "",
+
     "mimo": {
         "api_key": "",                # 或环境变量 MIMO_API_KEY
         "base_url": "https://api.xiaomimimo.com/v1",
@@ -140,12 +145,15 @@ VOICE_AGENT_CONFIG = {
     },
     "gemini": {
         "api_key": "",                # 或 GEMINI_API_KEY
+        "base_url": "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent",
         "model": "gemini-2.0-flash-live-001",
         "voice": "Puck",
     },
     "openai": {
         "api_key": "",
+        "base_url": "https://api.openai.com/v1",
         "realtime_model": "gpt-4o-mini-realtime-preview",
+        "voice": "alloy",
     },
 
     "memory_path": "data/voice_memory.jsonl",
@@ -154,6 +162,7 @@ VOICE_AGENT_CONFIG = {
 
 # 语音 HTTP API —— 已合并到 WebUI（http://127.0.0.1:3090/api/voice/*）
 # 仅当需要独立端口给外部服务时再打开；默认关闭，用 WEBUI_CONFIG.token 鉴权。
+# 开启独立端口后才改用下面的 token；外部插件的令牌需与生效的这一项保持一致。
 VOICE_API_CONFIG = {
     "enabled": False,
     "host": "127.0.0.1",

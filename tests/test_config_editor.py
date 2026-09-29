@@ -118,7 +118,131 @@ def test_field_specs_are_well_formed():
                 assert meta.get("section"), (group, field)
             if tier == "hidden":
                 hidden.add(field)
+            if meta.get("type") == "select":
+                assert meta.get("options"), (group, field)
+            if meta.get("vendor"):
+                assert field in editor.FIELD_SPECS["voice"], (group, field)
     assert hidden == {"app_version", "device_id", "person_uid", "jwt_token"}
     for group in editor.FIELD_SPECS:
         assert editor.GROUP_META[group]["title"]
         assert editor.GROUP_META[group]["desc"]
+
+
+def test_normalize_select_rejects_unknown_option():
+    with pytest.raises(ValueError):
+        editor._normalize_updates({"voice": {"backend": "not_a_vendor"}})
+
+
+def test_normalize_select_accepts_preset_and_custom():
+    assert editor._normalize_updates({"voice": {"backend": "gemini_live"}})["voice"]["backend"] == "gemini_live"
+    # allow_custom 的字段可以填预设外的值
+    normalized = editor._normalize_updates({"voice": {"gemini.voice": "MyCustomVoice"}})
+    assert normalized["voice"]["gemini.voice"] == "MyCustomVoice"
+
+
+def test_normalize_nested_sensitive_blank_dropped():
+    normalized = editor._normalize_updates({"voice": {"gemini.api_key": None, "gemini.voice": "Kore"}})
+    assert normalized == {"voice": {"gemini.voice": "Kore"}}
+
+
+NESTED_SAMPLE = '''\
+VOICE_AGENT_CONFIG = {
+    "backend": "gemini_live",
+    "proxy": "",
+    "gemini": {
+        "api_key": "",
+        "model": "gemini-2.0-flash-live-001",
+        "voice": "Puck",
+    },
+}
+'''
+
+
+def test_patched_text_updates_nested_value():
+    patched = editor._patched_text(NESTED_SAMPLE, {"voice": {"gemini.voice": "Kore"}})
+    namespace: dict[str, object] = {}
+    exec(compile(patched, "<patched>", "exec"), namespace)
+    voice = namespace["VOICE_AGENT_CONFIG"]
+    assert isinstance(voice, dict)
+    assert voice["gemini"]["voice"] == "Kore"
+    assert voice["gemini"]["model"] == "gemini-2.0-flash-live-001"
+    assert voice["backend"] == "gemini_live"
+
+
+def test_patched_text_creates_missing_nested_dict():
+    text = 'VOICE_AGENT_CONFIG = {\n    "backend": "gemini_live",\n}\n'
+    patched = editor._patched_text(
+        text, {"voice": {"gemini.voice": "Aoede", "gemini.model": "gemini-2.0-flash-live-001"}}
+    )
+    namespace: dict[str, object] = {}
+    exec(compile(patched, "<patched>", "exec"), namespace)
+    voice = namespace["VOICE_AGENT_CONFIG"]
+    assert isinstance(voice, dict)
+    assert voice["gemini"]["voice"] == "Aoede"
+    assert voice["gemini"]["model"] == "gemini-2.0-flash-live-001"
+    assert voice["backend"] == "gemini_live"
+
+
+def test_patched_text_nested_and_flat_mixed():
+    patched = editor._patched_text(
+        NESTED_SAMPLE, {"voice": {"proxy": "clash", "gemini.voice": "Fenrir"}}
+    )
+    namespace: dict[str, object] = {}
+    exec(compile(patched, "<patched>", "exec"), namespace)
+    voice = namespace["VOICE_AGENT_CONFIG"]
+    assert isinstance(voice, dict)
+    assert voice["proxy"] == "clash"
+    assert voice["gemini"]["voice"] == "Fenrir"
+
+
+def test_patched_text_nested_preserves_comments():
+    """嵌套字段就地改写时，字典内注释必须原样保留。"""
+    text = (
+        "VOICE_AGENT_CONFIG = {\n"
+        "    \"backend\": \"gemini_live\",  # 总开关注释\n"
+        "    \"gemini\": {\n"
+        "        \"api_key\": \"\",                # 或 GEMINI_API_KEY\n"
+        "        \"voice\": \"Puck\",\n"
+        "    },\n"
+        "}\n"
+    )
+    patched = editor._patched_text(text, {"voice": {"gemini.voice": "Kore"}})
+    assert "# 总开关注释" in patched
+    assert "# 或 GEMINI_API_KEY" in patched
+    namespace: dict[str, object] = {}
+    exec(compile(patched, "<patched>", "exec"), namespace)
+    assert namespace["VOICE_AGENT_CONFIG"]["gemini"]["voice"] == "Kore"
+
+
+def test_proxy_select_options_cover_clash_default():
+    """模型页代理下拉必须包含 127.0.0.1:7890（clash 别名）入口。"""
+    meta = editor.FIELD_SPECS["voice"]["proxy"]
+    values = editor._select_values(meta)
+    assert "clash" in values
+    assert meta.get("allow_custom")
+
+
+def test_model_vendor_fields_cover_url_key_model_voice():
+    """模型配置页要能配 base_url / key / 模型名 / 音色。"""
+    voice = editor.FIELD_SPECS["voice"]
+    for field in (
+        "gemini.base_url",
+        "gemini.api_key",
+        "gemini.model",
+        "gemini.voice",
+        "mimo.base_url",
+        "mimo.api_key",
+        "mimo.llm_model",
+        "mimo.tts_voice",
+        "openai.base_url",
+        "openai.api_key",
+        "openai.realtime_model",
+        "openai.voice",
+    ):
+        assert field in voice, field
+        assert voice[field].get("vendor") in {"gemini_live", "mimo_cascade", "openai_realtime"}
+    # 音色与模型名支持预设下拉 + 自定义
+    for field in ("gemini.voice", "mimo.tts_voice", "openai.voice", "gemini.model"):
+        assert voice[field]["type"] == "select"
+        assert voice[field].get("options")
+        assert voice[field].get("allow_custom")

@@ -34,6 +34,9 @@ class VoiceAgentSettings:
     silence_ms: int = 700
     max_utterance_ms: int = 15000
 
+    # 模型 API 网络出口：""=直连/系统，"clash"=127.0.0.1:7890，或显式 URL
+    proxy: str = ""
+
     # MiMo 级联
     mimo_api_key: str = ""
     mimo_base_url: str = "https://api.xiaomimimo.com/v1"
@@ -44,12 +47,18 @@ class VoiceAgentSettings:
 
     # Gemini Live
     gemini_api_key: str = ""
+    gemini_base_url: str = (
+        "wss://generativelanguage.googleapis.com/ws/"
+        "google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
+    )
     gemini_model: str = "gemini-2.0-flash-live-001"
     gemini_voice: str = "Puck"
 
     # OpenAI Realtime（骨架）
     openai_api_key: str = ""
+    openai_base_url: str = "https://api.openai.com/v1"
     openai_realtime_model: str = "gpt-4o-mini-realtime-preview"
+    openai_voice: str = "alloy"
 
     memory_path: str = "data/voice_memory.jsonl"
     memory_max_turns: int = 30
@@ -92,6 +101,7 @@ def load_voice_agent_settings() -> tuple[VoiceAgentSettings, VoiceApiSettings]:
         sample_rate_out=int(_get(agent_raw, "sample_rate_out", 24000)),
         silence_ms=int(_get(agent_raw, "silence_ms", 700)),
         max_utterance_ms=int(_get(agent_raw, "max_utterance_ms", 15000)),
+        proxy=str(_get(agent_raw, "proxy", "") or ""),
         mimo_api_key=_env("MIMO_API_KEY", str(mimo.get("api_key", "") or "")),
         mimo_base_url=str(mimo.get("base_url", VoiceAgentSettings.mimo_base_url) or VoiceAgentSettings.mimo_base_url),
         mimo_asr_model=str(mimo.get("asr_model", "mimo-v2.5-asr") or "mimo-v2.5-asr"),
@@ -99,12 +109,15 @@ def load_voice_agent_settings() -> tuple[VoiceAgentSettings, VoiceApiSettings]:
         mimo_tts_model=str(mimo.get("tts_model", "mimo-v2.5-tts") or "mimo-v2.5-tts"),
         mimo_tts_voice=str(mimo.get("tts_voice", "冰糖") or "冰糖"),
         gemini_api_key=_env("GEMINI_API_KEY", str(gemini.get("api_key", "") or "")),
+        gemini_base_url=str(gemini.get("base_url", VoiceAgentSettings.gemini_base_url) or VoiceAgentSettings.gemini_base_url),
         gemini_model=str(gemini.get("model", "gemini-2.0-flash-live-001") or "gemini-2.0-flash-live-001"),
         gemini_voice=str(gemini.get("voice", "Puck") or "Puck"),
         openai_api_key=_env("OPENAI_API_KEY", str(openai.get("api_key", "") or "")),
+        openai_base_url=str(openai.get("base_url", VoiceAgentSettings.openai_base_url) or VoiceAgentSettings.openai_base_url),
         openai_realtime_model=str(
             openai.get("realtime_model", "gpt-4o-mini-realtime-preview") or "gpt-4o-mini-realtime-preview"
         ),
+        openai_voice=str(openai.get("voice", "alloy") or "alloy"),
         memory_path=str(_get(agent_raw, "memory_path", "data/voice_memory.jsonl") or "data/voice_memory.jsonl"),
         memory_max_turns=int(_get(agent_raw, "memory_max_turns", 30)),
     )
@@ -116,3 +129,16 @@ def load_voice_agent_settings() -> tuple[VoiceAgentSettings, VoiceApiSettings]:
         token=_env("VOICE_API_TOKEN", str(api_raw.get("token", "") or "")),
     )
     return agent, api
+
+
+def resolve_agent_proxy_url(proxy: str) -> str | None:
+    """把 VOICE_AGENT_CONFIG.proxy 解析成 aiohttp/websockets 可用的代理 URL。
+
+    返回 ``None`` 表示不指定代理（交给系统/库默认行为）。
+    """
+    from core.proxy_utils import resolve_proxy_settings
+
+    settings = resolve_proxy_settings(proxy)
+    if settings.mode != "explicit" or not settings.server:
+        return None
+    return str(settings.server)

@@ -96,6 +96,7 @@ class WebUIConsole:
                 web.get("/assets/{name}", self._handle_asset),
                 web.get("/api/status", self._handle_status),
                 web.get("/api/credentials", self._handle_credentials),
+                web.get("/api/update", self._handle_update_check),
                 web.get("/api/logs", self._handle_logs_list),
                 web.get("/api/logs/tail", self._handle_logs_tail),
                 web.get("/api/logs/stream", self._handle_logs_stream),
@@ -267,6 +268,20 @@ class WebUIConsole:
 
     async def _handle_credentials(self, _request: web.Request) -> web.StreamResponse:
         return web.json_response({"ok": True, "credentials": credentials_summary()})
+
+    # ------------------------------------------------------------------
+    # 更新检查
+    # ------------------------------------------------------------------
+
+    async def _handle_update_check(self, _request: web.Request) -> web.StreamResponse:
+        from voice_agent.settings import resolve_agent_proxy_url
+        from webui.update_check import check_github_update
+
+        proxy = resolve_agent_proxy_url(
+            str(getattr(runtime_config, "VOICE_AGENT_CONFIG", {}) or {}).get("proxy", "") or ""
+        )
+        payload = await check_github_update(proxy=proxy)
+        return web.json_response(payload)
 
     # ------------------------------------------------------------------
     # 日志
