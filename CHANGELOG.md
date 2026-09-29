@@ -2,6 +2,24 @@
 
 本文件记录 Ooptra 的对外变更，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [2.0.1] - 2026-09-29
+
+### 修复
+
+- **Gemini Live 端点 URL 重复拼接 `key`**：`start_session` 无条件追加 `?key=`，当 `gemini.base_url` 已包含 key（Google 文档给出的 `...BidiGenerateContent?key=API_KEY` 形式）时会生成 `...?key=<k>?key=<k>`，服务端解析出的 key 长度翻倍并直接关闭连接，且不返回错误帧。表现为进入语音频道后无任何语音输出，日志中亦不出现 `Gemini Live session ready`。新增 `build_live_url()` 幂等拼接：显式 `api_key` 优先，为空时保留 URL 自带的 key，其余查询参数原样保留，key 做 percent-encode；未配置 key 时在建连前报错。
+- **WebUI 与独立 VOICE_API 同端口时抢占本机回环流量**：Windows 下 aiohttp 默认启用 `SO_REUSEADDR`，`0.0.0.0:3090` 与 `127.0.0.1:3090` 可同时绑定，更具体的回环 socket 优先接收本机请求，导致 WebUI 页面与 `/api/*` 在 `127.0.0.1` 上返回 404，而局域网地址正常。`VoiceApiServer.start()` 现检测到与 WebUI 监听地址相同时跳过启动并记录 WARNING。
+- **`GET /api/update` 恒返回 HTTP 500**：`str(getattr(...)).get(...)` 对字符串调用 `.get()`，必然抛出 `AttributeError`。
+- **房间成员页无法获取麦克风/扬声器状态**：Oopz 的 REST（`membersByChannels`）与网关事件均不提供静音状态，唯一来源是各客户端经 Agora `sendStreamMessage` 广播的 `{m, uid, cid, hm}`，而播放器此前仅发送不接收。现播放器监听 `stream-message` 事件并将状态回传 Python；`/voice/members` 新增 `live_state_received` 计数，为 `0` 表示本房未收到任何广播，此时静音列保持 `null`（未知）。
+
+### 变更
+
+- **WebUI 左侧导航精简**：`房间成员`、`人格与记忆` 为语音台页内的子标签，侧栏重复列出会与页内标签栏重叠。侧栏「语音」组仅保留 `语音台`（点击进入「会话控制」）。
+- **`.gitignore` 补充**：新增 `/config.py.bak*` 与 `/private_key.py.bak*`。原规则仅覆盖 `/config.py` 与原子替换产生的 `/.config.py.*.bak`，手工备份存在被 `git add -A` 一并提交的风险（含 Oopz 账密与 JWT）。
+
+### 测试
+
+- 新增 `tests/test_gemini_live_url.py`（15 条）与 `tests/test_voice_member_live_state.py`（32 条）；全量 **136 passed**。
+
 ## [2.0.0] - 2026-09-29
 
 ### 修复
@@ -74,5 +92,6 @@
 - 配置页只读行溢出卡片，导致「复制」按钮被挤出可视区域。
 - 配置页高级字段在隐藏状态下仍参与表单布局，造成列宽不一致。
 
+[2.0.1]: https://github.com/Eason4869/Ooptra/releases/tag/v2.0.1
 [2.0.0]: https://github.com/Eason4869/Ooptra/releases/tag/v2.0.0
 [1.0.0]: https://github.com/Eason4869/Ooptra/releases/tag/v1.0.0
