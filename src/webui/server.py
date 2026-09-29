@@ -277,8 +277,13 @@ class WebUIConsole:
         from voice_agent.settings import resolve_agent_proxy_url
         from webui.update_check import check_github_update
 
+        # str() 必须包住整个表达式：写成 str(getattr(...)).get(...) 会对字符串调 .get()，
+        # 无条件抛 AttributeError，导致「检查更新」永远 500。
+        agent_config = getattr(runtime_config, "VOICE_AGENT_CONFIG", {}) or {}
         proxy = resolve_agent_proxy_url(
-            str(getattr(runtime_config, "VOICE_AGENT_CONFIG", {}) or {}).get("proxy", "") or ""
+            str(agent_config.get("proxy", "") or "")
+            if isinstance(agent_config, dict)
+            else ""
         )
         payload = await check_github_update(proxy=proxy)
         return web.json_response(payload)
