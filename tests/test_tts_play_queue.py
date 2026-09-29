@@ -98,6 +98,23 @@ def test_stop_tts_cancels_scheduled_sources() -> None:
     assert re.search(r"ttsNextTime\s*=\s*0", body), "打断后时间轴归零，下一句重新起头"
 
 
+def test_stop_tts_skips_mute_when_nothing_was_playing() -> None:
+    """队列本来就空时别白等 30ms —— stop_tts 在远端音频热路径上。
+
+    判定必须发生在 ``ttsPlaying`` 被清零**之前**，否则它永远为假、提前返回失效。
+    """
+    body = _fn(_player_source(), "agoraStopTts")
+    assert re.search(
+        r"const\s+hadAudio\s*=\s*ttsPlaying\s*\|\|\s*ttsSources\.size\s*>\s*0", body
+    ), "缺少「本次是否真有音频在播」的判定"
+    assert body.index("const hadAudio") < body.index("ttsPlaying = false"), (
+        "判定被放在清零之后，等于恒假"
+    )
+    guard = re.search(r"if\s*\(!hadAudio\)\s*return", body)
+    assert guard, "空队列要提前返回"
+    assert guard.start() < body.index("setVolume(0)"), "提前返回要在静音窗口之前"
+
+
 def test_sources_are_tracked_and_released() -> None:
     body = _fn(_player_source(), "agoraPushTtsPcm")
     assert "ttsSources.add(src)" in body

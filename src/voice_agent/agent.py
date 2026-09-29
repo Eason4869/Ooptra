@@ -72,6 +72,8 @@ class VoiceAgent:
         self._task: asyncio.Task | None = None
         self._busy = asyncio.Lock()
         self._speaking = False
+        # Live 模式的抢话闸门：一次「模型出声」最多只打断一次。见 _on_remote_pcm。
+        self._barge_in_armed = True
         self._joined = False
         self._area = settings.area
         self._channel = settings.channel
@@ -242,6 +244,8 @@ class VoiceAgent:
         self._area = area
         self._channel = channel
         self._joined = True
+        self._speaking = False
+        self._barge_in_armed = True
         await self.duplex.enable_listen(True)
 
         # Live：建立双向语音会话，并把模型出声接到推流
@@ -267,15 +271,27 @@ class VoiceAgent:
             return
 
         async def on_audio(pcm: bytes, rate: int) -> None:
+            # 收到分片只说明「这一回合正在出声」，**不代表回合结束**：
+            # 以前在这里 turns += 1，一次回复实测 13 个分片就虚增 13 轮；
+            # 而 _speaking 置 True 后没有任何地方回落，导致下面 _on_remote_pcm
+            # 的抢话分支被每个分片各触发一次。回合边界一律由 on_turn_end 负责。
             self._speaking = True
-            self.turns += 1
-            try:
-                await duplex.push_tts_pcm(pcm, rate, finish=False)
-            finally:
-                pass
+            await duplex.push_tts_pcm(pcm, rate, finish=False)
 
         async def on_text(text: str) -> None:
             self.last_reply = text
+
+        async def on_turn_end(interrupted: bool) -> None:
+            """一个回合结束（说完了，或被抢话打断）。"""
+            self._speaking = False
+            self.turns += 1
+            # 下一回合允许再打断一次
+            self._barge_in_armed = True
+            if interrupted and self.duplex is not None:
+                # 服务端自己判定用户抢话：模型已经停口，但本地排期的分片还在播，
+                # 必须就地清掉，否则「模型不说了、喇叭还在说」直到缓冲播完。
+                with contextlib.suppress(Exception):
+                    await self.duplex.stop_tts()
 
         setter_audio = getattr(self.backend, "set_audio_out", None)
         if setter_audio:
@@ -283,6 +299,9 @@ class VoiceAgent:
         setter_text = getattr(self.backend, "set_text_out", None)
         if setter_text:
             setter_text(on_text)
+        setter_turn = getattr(self.backend, "set_turn_out", None)
+        if setter_turn:
+            setter_turn(on_turn_end)
 
     async def leave(self) -> dict[str, Any]:
         if self._bot is not None and self._joined:
@@ -300,6 +319,7 @@ class VoiceAgent:
                 logger.debug("backend close on leave failed", exc_info=True)
         self._joined = False
         self._speaking = False
+        self._barge_in_armed = True
         self._user_buffers.clear()
         self._vad.reset()
         return {"ok": True}
@@ -344,8 +364,14 @@ class VoiceAgent:
             return
 
         if self.live_mode:
-            # Live：持续灌入，模型自己做打断/回合
-            if self._speaking and self.settings.barge_in:
+            # Live：持续灌入，模型自己做打断/回合。
+            # 抢话必须**边沿触发**：这是每个远端音频帧（20ms 一帧、房间里每个人）
+            # 都会走的路径。若按电平判定，模型每吐一个分片就会把 _speaking 顶回
+            # True，紧接着下一帧就把刚排好的播放队列整个清掉 —— 一次 4.4 秒的回复
+            # 被剁成 13 段碎片并夹 13 次 30ms 静音，听感就是「能听见但听不清」。
+            # 闸门保证一次出声只打断一次，直到该回合结束才重新武装。
+            if self.settings.barge_in and self._speaking and self._barge_in_armed:
+                self._barge_in_armed = False
                 interrupt = getattr(self.backend, "interrupt", None)
                 if interrupt is not None:
                     await interrupt()
@@ -434,7 +460,8 @@ class VoiceAgent:
                     channel_key=f"{self._area}/{self._channel}",
                 )
                 self.last_reply = text
-                self.turns += 1
+                # 轮次不在这里计：模型出声后会推 turnComplete，由 on_turn_end 计一次。
+                # 这里也 +1 的话，一次 /voice/speak 会被记成两轮。
                 return {"ok": True, "chars": len(text), "mode": "live"}
 
         if not hasattr(self.backend, "tts"):

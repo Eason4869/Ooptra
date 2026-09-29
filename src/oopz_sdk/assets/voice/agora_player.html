@@ -970,6 +970,10 @@ async function ensureTtsTrack(sampleRate) {
 }
 
 window.agoraStopTts = async () => {
+  // 本来就没什么在播（没有分片在队列里、也不在播），直接返回：省掉下面那次
+  // 30ms 静音窗口。服务端判定抢话后本地还会再 stop 一次，那一次通常就落在
+  // 这个分支里 —— 而 stop_tts 在远端音频热路径上，白等的 30ms 没必要。
+  const hadAudio = ttsPlaying || ttsSources.size > 0;
   ttsPlaying = false;
   // 队列里的分片要真正停掉：只调音量的话，已排期的 source 会在音量恢复后继续播。
   ttsNextTime = 0;
@@ -978,6 +982,7 @@ window.agoraStopTts = async () => {
     try { src.disconnect(); } catch (_) {}
   }
   ttsSources.clear();
+  if (!hadAudio) return { ok: true };
   try {
     if (ttsTrack) ttsTrack.stopProcessAudioBuffer && ttsTrack.stopProcessAudioBuffer();
   } catch (_) {}

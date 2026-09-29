@@ -7,8 +7,12 @@
 
 from __future__ import annotations
 
+import contextlib
+import logging
 from collections.abc import AsyncIterator
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class _AiohttpWs:
@@ -36,6 +40,19 @@ class _AiohttpWs:
                 aiohttp.WSMsgType.CLOSING,
                 aiohttp.WSMsgType.ERROR,
             ):
+                # 这里以前是**静默** break：关闭码与异常全丢，日志里只剩一句
+                # 「Gemini Live session ended」，排查断线原因时完全没有线索。
+                # 仍不抛异常（上层靠迭代自然结束来判断断开），但要把原因记下来。
+                exc = None
+                with contextlib.suppress(Exception):
+                    exc = self._ws.exception()
+                logger.info(
+                    "Live WebSocket 关闭：type=%s close_code=%s exception=%s detail=%r",
+                    msg.type.name,
+                    getattr(self._ws, "close_code", None),
+                    f"{type(exc).__name__}: {exc}" if exc else None,
+                    str(getattr(msg, "data", ""))[:200],
+                )
                 break
             data = getattr(msg, "data", msg)
             if isinstance(data, (bytes, str)):
