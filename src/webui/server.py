@@ -73,6 +73,13 @@ class WebUIConsole:
     def base_url(self) -> str:
         return f"http://{self._host}:{self._port}"
 
+    @property
+    def bind_address(self) -> tuple[str, int] | None:
+        """实际绑定的 (host, port)；未启用或端口被占导致启动失败时为 None。"""
+        if self._site is None:
+            return None
+        return (self._host, self._port)
+
     async def start(self) -> None:
         if not bool(self._config.get("enabled", True)):
             logger.info("Web 控制台已按 config.py 的 WEBUI_CONFIG.enabled 禁用")

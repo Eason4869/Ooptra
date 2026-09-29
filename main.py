@@ -65,6 +65,10 @@ async def run() -> None:
 
     # 先起控制台：即使凭据失效或对端还没起来，也能在网页上查看状态并登录。
     await console.start()
+    # 让 VOICE_API 知道控制台的真实监听地址，避免两者抢同一个端口（见 api.py 的说明）。
+    bound = console.bind_address
+    if voice_runtime is not None and bound is not None:
+        voice_runtime.api.set_webui_endpoint(bound[0], bound[1])
     await controller.start()
 
     try:

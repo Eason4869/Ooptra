@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 
 from aiohttp import web
@@ -19,12 +20,45 @@ from webui.voice_routes import build_voice_routes
 
 logger = logging.getLogger(__name__)
 
+_WILDCARD_HOSTS = {"", "*", "0.0.0.0", "::", "[::]"}
+
+
+def _is_loopback(host: str) -> bool:
+    text = str(host or "").strip().lower()
+    if text in {"localhost", "localhost.localdomain"}:
+        return True
+    try:
+        return ipaddress.ip_address(text).is_loopback
+    except ValueError:
+        return False
+
+
+def _same_bind_target(host_a: object, port_a: object, host_b: object, port_b: object) -> bool:
+    """两个监听地址是否会互相抢流量（同端口，且主机范围有交集）。"""
+    try:
+        if int(port_a) != int(port_b):  # type: ignore[arg-type]
+            return False
+    except (TypeError, ValueError):
+        return False
+    a = str(host_a or "").strip().lower()
+    b = str(host_b or "").strip().lower()
+    if a in _WILDCARD_HOSTS or b in _WILDCARD_HOSTS:
+        return True
+    if a == b:
+        return True
+    return _is_loopback(a) and _is_loopback(b)
+
 
 class VoiceApiServer:
     def __init__(self, runtime, settings: VoiceApiSettings) -> None:
         self.runtime = runtime
         self.settings = settings
         self._runner: web.AppRunner | None = None
+        self._webui_endpoint: tuple[str, int] | None = None
+
+    def set_webui_endpoint(self, host: str, port: int) -> None:
+        """告知 Web 控制台**实际**绑定的地址，用于避免两个 app 抢同一个端口。"""
+        self._webui_endpoint = (str(host), int(port))
 
     def _authed(self, request: web.Request) -> bool:
         token = (self.settings.token or "").strip()
@@ -64,6 +98,23 @@ class VoiceApiServer:
     async def start(self) -> None:
         if not self.settings.enabled:
             logger.info("voice api disabled")
+            return
+        webui = self._webui_endpoint
+        if webui is not None and _same_bind_target(
+            self.settings.host, self.settings.port, webui[0], webui[1]
+        ):
+            # Windows 上 aiohttp 默认 SO_REUSEADDR，0.0.0.0:3090 与 127.0.0.1:3090 能
+            # 同时绑成功，但更具体的 127.0.0.1 会**抢走**本机回环流量 —— WebUI 自己的
+            # 页面和 /api/* 在 127.0.0.1 上全部 404（2026-09-29 实测踩过）。直接不启动。
+            logger.warning(
+                "VOICE_API 的 %s:%s 与 Web 控制台（%s:%s）是同一监听地址，已跳过启动："
+                "2.0.0 起两者路由完全一致，WebUI 端口本身就是完整语音 API；"
+                "确实需要独立端口，请把 VOICE_API_CONFIG.port 改成别的值",
+                self.settings.host,
+                self.settings.port,
+                webui[0],
+                webui[1],
+            )
             return
         app = web.Application()
         app.add_routes(build_voice_routes(self.runtime, wrap=self._wrap))
