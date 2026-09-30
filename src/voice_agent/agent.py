@@ -122,6 +122,7 @@ class VoiceAgent:
         self._speaking = False
         # Live 模式的抢话闸门：一次「模型出声」最多只打断一次。见 _on_remote_pcm。
         self._barge_in_armed = True
+        self._discard_live_audio = False
         #: uid -> 本回合内该用户**连续说话**的累计毫秒数（说话一断就清零）。
         #: 累计到 settings.barge_in_hold_ms 才认作真的抢话，见 _barge_in_reached。
         self._barge_in_speech_ms: dict[str, float] = {}
@@ -324,8 +325,14 @@ class VoiceAgent:
         start = getattr(self.backend, "start_session", None)
         if start is None:
             return notes
-        await self._wire_live()
         try:
+            # start_session 对活跃会话是空操作，必须先关掉旧连接和旧音频。
+            await self.backend.aclose()
+            self._speaking = False
+            self._rearm_barge_in()
+            if self.duplex is not None:
+                await self.duplex.stop_tts()
+            await self._wire_live()
             await start()
         except Exception as exc:
             logger.warning("按新配置重建语音会话失败：%s", exc)
@@ -378,18 +385,23 @@ class VoiceAgent:
         self._joined = True
         self._speaking = False
         self._rearm_barge_in()
-        await self.duplex.enable_listen(True)
+        try:
+            await self.duplex.enable_listen(True)
 
-        # 级联：拉起单槽信箱的消费端。Live 走服务端 VAD，不需要它。
-        if not self.live_mode:
-            await self._start_round_worker()
+            # 级联：拉起单槽信箱的消费端。Live 走服务端 VAD，不需要它。
+            if not self.live_mode:
+                await self._start_round_worker()
 
-        # Live：建立双向语音会话，并把模型出声接到推流
-        if self.live_mode:
-            await self._wire_live()
-            start = getattr(self.backend, "start_session", None)
-            if start is not None:
-                await start()
+            # Live：建立双向语音会话，并把模型出声接到推流。
+            if self.live_mode:
+                await self._wire_live()
+                start = getattr(self.backend, "start_session", None)
+                if start is not None:
+                    await start()
+        except (Exception, asyncio.CancelledError):
+            # Agora 已进房，后续失败或取消也必须回收房间、模型与 worker。
+            await self.leave()
+            raise
 
         payload = {
             "ok": True,
@@ -405,6 +417,7 @@ class VoiceAgent:
         duplex = self.duplex
         if duplex is None:
             return
+        self._discard_live_audio = False
 
         # 每回合只报一次推流失败：失败通常整回合都失败，逐分片刷屏反而盖住线索
         push_failed = False
@@ -415,6 +428,8 @@ class VoiceAgent:
             # 而 _speaking 置 True 后没有任何地方回落，导致下面 _on_remote_pcm
             # 的抢话分支被每个分片各触发一次。回合边界一律由 on_turn_end 负责。
             nonlocal push_failed
+            if self._discard_live_audio:
+                return
             self._speaking = True
             result = await duplex.push_tts_pcm(pcm, rate, finish=False)
             # 推流失败必须留痕。这里曾经整条链路静默失败（页面已不是当前会话，
@@ -561,6 +576,8 @@ class VoiceAgent:
                 and self._barge_in_reached(uid, pcm, sample_rate)
             ):
                 self._barge_in_armed = False
+                # 服务端 NO_INTERRUPTION 会继续生成旧回合；直到回合边界都丢弃。
+                self._discard_live_audio = True
                 interrupt = getattr(self.backend, "interrupt", None)
                 if interrupt is not None:
                     await interrupt()
@@ -668,6 +685,7 @@ class VoiceAgent:
         残留的 3 秒会立刻满足门限，等于门限形同虚设。
         """
         self._barge_in_armed = True
+        self._discard_live_audio = False
         self._barge_in_speech_ms.clear()
 
     def _barge_in_reached(self, uid: str, pcm: bytes, sample_rate: int) -> bool:

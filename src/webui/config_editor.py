@@ -9,8 +9,10 @@ from __future__ import annotations
 import ast
 import copy
 import importlib
+import io
 import json
 import os
+import tokenize
 from typing import Any
 
 from core.config_file_store import config_file_write_lock, replace_text_files_atomically
@@ -804,10 +806,27 @@ def _patch_field_inplace(
     if end_lineno is None:
         return False
     closing_line = lines[end_lineno - 1]
-    closing_indent = closing_line[: len(closing_line) - len(closing_line.lstrip())]
-    insertions.setdefault(offsets[end_lineno - 1], []).append(
-        f"{closing_indent}    {_python_literal(leaf)}: {literal},\n"
-    )
+    closing_pos = _node_span(lines, offsets, current)[1] - 1
+    closing_col = closing_pos - offsets[end_lineno - 1]
+    prefix = closing_line[:closing_col]
+    inline = bool(prefix.strip())
+    position = closing_pos if inline else offsets[end_lineno - 1]
+    chunks = insertions.setdefault(position, [])
+    if not chunks and current.values:
+        last_end = _node_span(lines, offsets, current.values[-1])[1]
+        tail = "".join(lines)[last_end:closing_pos]
+        # 逗号可能出现在注释里，不能靠字符串包含关系判定分隔符。
+        has_comma = any(
+            token.type == tokenize.OP and token.string == ","
+            for token in tokenize.generate_tokens(io.StringIO(tail).readline)
+        )
+        if not has_comma:
+            if last_end == position:
+                chunks.append(",")
+            else:
+                replacements.append((last_end, last_end, ","))
+    entry = f"{_python_literal(leaf)}: {literal},"
+    chunks.append(f" {entry}" if inline else f"{prefix}    {entry}\n")
     return True
 
 

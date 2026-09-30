@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import re
 import time
 from typing import Any
 
 from core.logger_config import get_logger
-from core.version import __version__
+from core.version import RELEASE_BASE_VERSION, __version__
 
 logger = get_logger("UpdateCheck")
 
@@ -34,6 +35,10 @@ def _version_tuple(value: str) -> tuple[int, ...]:
 
 
 def _is_newer(latest: str, current: str) -> bool:
+    latest = _normalize_version(latest)
+    current = _normalize_version(current)
+    if re.fullmatch(r"\d{6}-beta", current) and not re.fullmatch(r"\d{6}-beta", latest):
+        current = RELEASE_BASE_VERSION
     return _version_tuple(latest) > _version_tuple(current)
 
 

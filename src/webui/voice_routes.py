@@ -498,7 +498,8 @@ def build_voice_routes(
         if not isinstance(persona, str) or not persona.strip():
             return err("persona 不能为空")
         agent.update_persona(persona)
-        return ok({"persona": agent.settings.persona})
+        notes = await agent.refresh(["persona"])
+        return ok({"persona": agent.settings.persona, "notes": notes})
 
     async def memory_get(request: web.Request) -> web.Response:
         agent = current_agent()

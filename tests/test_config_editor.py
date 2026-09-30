@@ -246,3 +246,31 @@ def test_model_vendor_fields_cover_url_key_model_voice():
         assert voice[field]["type"] == "select"
         assert voice[field].get("options")
         assert voice[field].get("allow_custom")
+
+
+@pytest.mark.parametrize("source", [
+    'OOPZ_CONFIG = {"proxy": "direct"}\n',
+    'OOPZ_CONFIG = {"proxy": "direct",}\n',
+    'OOPZ_CONFIG = {}\n',
+    'OOPZ_CONFIG = {\n    "proxy": "direct"\n}\n',
+    'OOPZ_CONFIG = {\n    "proxy": "direct"  # keep this comment\n}\n',
+])
+def test_missing_fields_preserve_valid_dictionary_syntax(source):
+    patched = editor._patched_text(source, {"oopz": {
+        "default_area": "area", "default_channel": "channel",
+    }})
+    namespace = {}
+    exec(compile(patched, "<patched>", "exec"), namespace)
+    assert namespace["OOPZ_CONFIG"]["default_area"] == "area"
+    assert namespace["OOPZ_CONFIG"]["default_channel"] == "channel"
+    if "keep this comment" in source:
+        assert "keep this comment" in patched
+
+
+def test_missing_nested_field_preserves_existing_expression():
+    source = ('DEFAULT = "Puck"\nVOICE_AGENT_CONFIG = {"gemini": {"voice": DEFAULT}}\n')
+    patched = editor._patched_text(source, {"voice": {"gemini.model": "model"}})
+    namespace = {}
+    exec(compile(patched, "<patched>", "exec"), namespace)
+    assert namespace["VOICE_AGENT_CONFIG"]["gemini"] == {"voice": "Puck", "model": "model"}
+    assert '"voice": DEFAULT' in patched

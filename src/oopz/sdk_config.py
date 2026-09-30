@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import runpy
 import time
 from typing import Any
 
@@ -26,9 +27,12 @@ logger = get_logger("OopzSdkConfig")
 
 def _load_private_key() -> Any:
     try:
-        from private_key import get_private_key
+        from oopz.credentials import PRIVATE_KEY_PATH
 
-        return get_private_key()
+        # 登录会原子替换源文件；普通 import/reload 都可能复用同大小、同秒的
+        # 旧模块或 pyc。每次构建从当前源文件执行，保留 get_private_key 接口。
+        namespace = runpy.run_path(PRIVATE_KEY_PATH)
+        return namespace["get_private_key"]()
     except Exception:
         logger.warning("无法读取 private_key.py，将由 SDK 在校验凭据时报告具体错误")
         return None
