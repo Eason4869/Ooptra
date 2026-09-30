@@ -83,6 +83,14 @@ class MemoryStore:
         return out
 
     def clear(self, *, user_key: str = "") -> int:
+        """清空记忆：``user_key`` 为空 = 清掉**所有**行。
+
+        WebUI 的「清空共享记忆」发的就是空 user_key，所以这里必须把空值当
+        「全清」。早期写成 ``if user_key and row.get("user_key") == user_key``，
+        空 key 下这个条件恒假 —— 一行都删不掉，返回 0，前端却照样弹「已清空」，
+        看起来就是「按钮点了没反应」。注意别照抄 ``recent()`` 里那个守卫：
+        那边的空值语义是「不做过滤」，这边是「全部命中」，方向正好相反。
+        """
         if not os.path.exists(self._path):
             return 0
         removed = 0
@@ -96,7 +104,7 @@ class MemoryStore:
                         row = json.loads(line)
                     except json.JSONDecodeError:
                         continue
-                    if user_key and row.get("user_key") == user_key:
+                    if not user_key or row.get("user_key") == user_key:
                         removed += 1
                         continue
                     kept.append(line if line.endswith("\n") else line + "\n")

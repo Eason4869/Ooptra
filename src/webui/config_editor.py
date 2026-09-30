@@ -420,6 +420,19 @@ FIELD_SPECS: dict[str, dict[str, dict[str, Any]]] = {
         },
         "auto_join": {"type": "bool", "label": "启动后自动进房", "tier": "adv", "section": "行为"},
         "barge_in": {"type": "bool", "label": "允许抢话打断", "tier": "adv", "section": "行为"},
+        "barge_in_hold_ms": {
+            "type": "int",
+            "label": "抢话门限(毫秒)",
+            "tier": "adv",
+            "section": "行为",
+            "min": 0,
+            "max": 3000,
+            "hint": (
+                "某人要连续说话满这么久才算抢话；说完就断的咳嗽、笑声、键盘声会被忽略。"
+                "0 = 关掉门限（一出声就打断，房间一热闹 bot 就说不完整句话）。"
+                "房间越吵调越大，600~800 适合人多的时候。"
+            ),
+        },
         "reply_text_to_channel": {
             "type": "bool",
             "label": "字幕发到文字频道",
@@ -433,6 +446,22 @@ FIELD_SPECS: dict[str, dict[str, dict[str, Any]]] = {
             "section": "音频",
             "min": 200,
             "max": 3000,
+        },
+        "min_utterance_ms": {
+            "type": "int",
+            "label": "最短回合(毫秒)",
+            "tier": "adv",
+            "section": "音频",
+            "min": 0,
+            "max": 3000,
+        },
+        "reply_cooldown_ms": {
+            "type": "int",
+            "label": "回复冷却(毫秒)",
+            "tier": "adv",
+            "section": "行为",
+            "min": 0,
+            "max": 10000,
         },
         "sample_rate_in": {"type": "int", "label": "输入采样率", "tier": "adv", "section": "音频", "min": 8000, "max": 48000},
         "sample_rate_out": {"type": "int", "label": "输出采样率", "tier": "adv", "section": "音频", "min": 8000, "max": 48000},

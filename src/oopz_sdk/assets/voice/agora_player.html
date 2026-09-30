@@ -807,6 +807,52 @@ window.agoraGetStatus = () => {
 let listenEnabled = false;
 const remoteCaptures = new Map(); // uid -> {processor, source, ctx}
 
+// —— 主讲人选择：**一次只喂一路** ——
+// 每路采集都按实时速率各自推上来。N 人房于是把 N 路实时音频拼进**同一条**
+// Live 输入流：实测 5 人房 50 秒墙钟推进去 271 秒音频（覆盖率 542%），到达顺序
+// 是 316385955→729452117→553816356→… 的 256ms 轮转。模型听到的不是「几个人
+// 在聊天」，是**一段快进 5 倍、被剪碎再拼起来的人声**，表现就是「听不懂人话」：
+// 转写蹦出韩语/印地语碎片，模型自己都在说「根本听不清」。
+// 所以只把电平最高的那一路喂给模型，其余丢掉。
+//
+// 粘滞是必须的：两个人音量相近时逐帧比大小会来回跳，等于又拼了一次。
+const remoteLevels = new Map(); // uid -> 衰减后的电平
+let speakerUid = null;
+let speakerSince = 0;
+// 第一个建立采集的人：全房间都不说话时由它把静音推上去。时间轴不能断 ——
+// 服务端的 VAD 要靠**收到**静音帧才判定「这句说完了」，一断流模型就不吭声了
+// （实测：灌一段语音后停止推送，模型零响应）。
+let defaultUid = null;
+const SPEAKER_HOLD_MS = 500;   // 换人后至少稳定这么久，别逐帧抖
+const SPEAKER_MARGIN = 1.5;    // 新人要响这么多倍才抢走发言权
+const SPEAKER_MIN_RMS = 0.01;  // 低于这个电平不算在说话
+
+function rmsOf(float32) {
+  let sum = 0;
+  for (let i = 0; i < float32.length; i++) sum += float32[i] * float32[i];
+  return Math.sqrt(sum / Math.max(1, float32.length));
+}
+
+// 这一路现在该不该推？顺带把电平表更新掉（衰减是为了让不说话的人自动让位）。
+function selectSpeaker(uid, rms) {
+  const now = performance.now();
+  remoteLevels.set(uid, Math.max(rms, (remoteLevels.get(uid) || 0) * 0.85));
+  if (speakerUid === uid) return true;
+  const mine = remoteLevels.get(uid) || 0;
+  if (speakerUid === null) {
+    // 空场：说话的优先；都不说话时由 defaultUid 顶上，把静音喂下去保持时间轴连续
+    if (mine < SPEAKER_MIN_RMS && uid !== defaultUid) return false;
+  } else {
+    if (now - speakerSince < SPEAKER_HOLD_MS) return false;
+    const theirs = remoteLevels.get(speakerUid) || 0;
+    if (mine < SPEAKER_MIN_RMS || mine <= theirs * SPEAKER_MARGIN) return false;
+    console.log("[duplex] 主讲人切换", speakerUid, "->", uid);
+  }
+  speakerUid = uid;
+  speakerSince = now;
+  return true;
+}
+
 let ttsCtx = null;
 let ttsDest = null;
 let ttsTrack = null;
@@ -862,6 +908,11 @@ async function emitRemotePcm(uid, int16, sampleRate) {
 }
 
 function stopRemoteCapture(uid) {
+  // 电平表与主讲人身份也要一起清：留着旧 uid 的电平会让它继续「占着发言权」，
+  // 而它已经不推流了 —— 结果是谁都推不上去，房间有声音 agent 却收不到。
+  remoteLevels.delete(uid);
+  if (speakerUid === uid) speakerUid = null;
+  if (defaultUid === uid) defaultUid = null;
   const cap = remoteCaptures.get(uid);
   if (!cap) return;
   try { cap.processor.disconnect(); } catch (_) {}
@@ -872,6 +923,10 @@ function stopRemoteCapture(uid) {
 
 function stopAllRemoteCaptures() {
   for (const uid of Array.from(remoteCaptures.keys())) stopRemoteCapture(uid);
+  // 采集表空了不等于电平表空了（退房路径上两者可能不同步），一并清干净
+  remoteLevels.clear();
+  speakerUid = null;
+  defaultUid = null;
 }
 
 async function startRemoteCapture(user) {
@@ -897,7 +952,21 @@ async function startRemoteCapture(user) {
     processor.onaudioprocess = (ev) => {
       if (!listenEnabled) return;
       const input = ev.inputBuffer.getChannelData(0);
-      const pcm = floatTo16BitPCM(input);
+      const level = rmsOf(input);
+      if (!selectSpeaker(uid, level)) {
+        // 不是当前主讲人。**丢掉而不是攒着** —— 攒着会在轮到它时吐出过期音频，
+        // 那正好又拼出一次时间错位。
+        pending = [];
+        pendingSamples = 0;
+        return;
+      }
+      // 空场（没人过 SPEAKER_MIN_RMS）时由 defaultUid 顶上，只为让时间轴连续。
+      // 顶上时推的必须是**真静音**，不能推那个人的麦克风底噪 —— 底噪一旦高过
+      // agent 侧 EnergyVad 的 energy_threshold，就会被切成一句句「人话」送去
+      // ASR，于是「房间里没人说话，bot 却一直在接话」。
+      const pcm = level >= SPEAKER_MIN_RMS
+        ? floatTo16BitPCM(input)
+        : new Int16Array(input.length);
       pending.push(pcm);
       pendingSamples += pcm.length;
       if (pendingSamples >= flushSamples) {
@@ -919,6 +988,7 @@ async function startRemoteCapture(user) {
     processor.connect(mute);
     mute.connect(ctx.destination);
     remoteCaptures.set(uid, { ctx, src, processor, mute, clientRef: client });
+    if (defaultUid === null) defaultUid = uid;
     console.log("[duplex] capture started", uid);
   } catch (e) {
     console.warn("[duplex] start capture failed", uid, e);

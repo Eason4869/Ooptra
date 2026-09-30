@@ -11,6 +11,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
+import time
 from typing import Any
 
 from voice_agent.backends import create_backend
@@ -27,6 +29,49 @@ def _is_live_backend(backend: Any) -> bool:
                 getattr(backend, "name", "") in {"gemini_live", "openai_realtime"} or
                 hasattr(backend, "push_audio"))
 
+
+#: 抢话门限所用的能量阈值。与 ``EnergyVad`` 的默认值同源：低于这个电平的帧
+#: 不计入「有人在说话」，所以一声咳嗽/键盘声不会开始累计时长。
+_BARGE_IN_ENERGY = VadvConfig.energy_threshold
+
+#: 级联模式下，整段 utterance 的平均 RMS 低于此值就判定为「不是人话」，直接丢弃、
+#: 不送 ASR。取值来自真实录音分布（1305 个 1 秒窗：真说话 0.03~0.22，误触发带
+#: 0.012~0.02），卡在两者之间。见 ``_on_remote_pcm`` 里的详细说明。
+_MIN_UTTERANCE_RMS = 0.02
+
+#: 一条回合在信箱里等到超过「冷却时长 + 这个秒数」就丢弃，不再回。
+#: 单槽信箱已经保证只留最新的一条，所以「过期」只可能是用户说完就安静了 ——
+#: 此时回它反而是自言自语。留 3 秒是因为 ASR/LLM 本身也要一点时间。
+_STALE_ROUND_SEC = 3.0
+
+#: 诊断开关：把浏览器推上来的远端 PCM **原样落盘**，用于回答「Gemini 到底收到了什么」。
+#: 设了 ``OOPTRA_PCM_DUMP=<前缀>`` 才生效，产出 ``<前缀>.pcm``（裸 16bit 单声道）
+#: 与 ``<前缀>.tsv``（每块一行：单调时钟 / uid / 字节数 / 采样率）。
+#: 两者一比就能看出**丢没丢音频**：墙钟走了 60 秒，而 .pcm 只有 20 秒的量 = 丢了 2/3。
+#: 默认不设 —— 落盘在音频热路径上，别在正常运行时开。
+_pcm_dump: dict[str, Any] = {"prefix": None, "fh": None, "ts": None}
+
+
+def _dump_remote_pcm(uid: str, pcm: bytes, sample_rate: int) -> None:
+    prefix = os.environ.get("OOPTRA_PCM_DUMP")
+    if not prefix:
+        return
+    if _pcm_dump["prefix"] != prefix:
+        for key in ("fh", "ts"):
+            if _pcm_dump[key] is not None:
+                _pcm_dump[key].close()
+        parent = os.path.dirname(prefix)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        # 句柄要跨音频帧一直开着（每帧都 open/close 会把热路径拖垮），
+        # 所以这里不用 with；进程退出时由操作系统回收。
+        _pcm_dump["fh"] = open(prefix + ".pcm", "ab")  # noqa: SIM115
+        _pcm_dump["ts"] = open(prefix + ".tsv", "a", encoding="utf-8")  # noqa: SIM115
+        _pcm_dump["prefix"] = prefix
+    _pcm_dump["fh"].write(pcm)
+    _pcm_dump["fh"].flush()
+    _pcm_dump["ts"].write(f"{time.monotonic():.3f}\t{uid}\t{len(pcm)}\t{sample_rate}\n")
+    _pcm_dump["ts"].flush()
 
 # 改了这些字段就必须重建记忆 / VAD / 已建立的模型会话，否则旧值继续生效
 _MEMORY_FIELDS = {"memory_path", "memory_max_turns"}
@@ -67,6 +112,9 @@ class VoiceAgent:
         self.backend = create_backend(settings, self.memory)
         self.live_mode = _is_live_backend(self.backend)
         self.duplex: VoiceDuplex | None = None
+        #: 正在收尾的旧 duplex。bind_bot 是同步上下文，close() 只能交给事件循环；
+        #: 留引用是为了有地方 await，也避免「Task exception was never retrieved」。
+        self._duplex_close_tasks: set[asyncio.Task] = set()
         self._vad = self._make_vad()
         self._user_buffers: dict[str, EnergyVad] = {}
         self._task: asyncio.Task | None = None
@@ -74,12 +122,36 @@ class VoiceAgent:
         self._speaking = False
         # Live 模式的抢话闸门：一次「模型出声」最多只打断一次。见 _on_remote_pcm。
         self._barge_in_armed = True
+        #: uid -> 本回合内该用户**连续说话**的累计毫秒数（说话一断就清零）。
+        #: 累计到 settings.barge_in_hold_ms 才认作真的抢话，见 _barge_in_reached。
+        self._barge_in_speech_ms: dict[str, float] = {}
         self._joined = False
         self._area = settings.area
         self._channel = settings.channel
         self.last_reply = ""
         self.last_user_text = ""
         self.turns = 0
+
+        self._init_throttle()
+
+    def _init_throttle(self) -> None:
+        """级联模式的回合节流状态。
+
+        单独成方法是为了让测试在 ``VoiceAgent.__new__`` 之后补一句就拿到完整
+        状态 —— 否则每个测试 helper 都得把 ``__init__`` 的字段再抄一遍。
+
+        * ``_pending``：**单槽**信箱。以前是一句一个 ``create_task``、在 ``_busy``
+          锁外面无上限排队，用户说得比 bot 回得快时队列只增不减。这里只留
+          **最新**的一条：用户已经说下一句了，再回上一句没有意义。
+          元素 = ``(uid, pcm, sample_rate, 入槽时的 monotonic 时刻)``
+        * ``_cooldown_until``：冷却截止时刻。到点之前不开新一轮。
+        * ``_barged_in``：本回合是否被抢话打断 —— 打断了就不该让抢话的人再等冷却。
+        """
+        self._pending: tuple[str, bytes, int, float] | None = None
+        self._pending_event = asyncio.Event()
+        self._round_task: asyncio.Task | None = None
+        self._cooldown_until = 0.0
+        self._barged_in = False
 
     # ------------------------------------------------------------------
     # 生命周期
@@ -91,7 +163,52 @@ class VoiceAgent:
         return task is not None and not task.done()
 
     def bind_bot(self, bot: Any) -> None:
+        """换绑 Oopz bot —— **连同它的浏览器 transport 一起**。
+
+        「重启桥接」（WebUI 手动重启、凭据变更、重连重建）会整个换掉
+        ``OopzBot``，而每个 bot 都自带新的 ``Voice`` 与新的
+        ``BrowserVoiceTransport``（新的 Playwright 浏览器与页面）。duplex 是
+        **绑定在具体 transport 上**的资源，不换绑就等于：
+
+          * 模型音频被推进一个**已经关掉的页面** —— 那里 ``client`` 为空，
+            ``agoraPushTtsPcm`` 返回 ``{"ok": False, "error": "not joined"}``；
+          * 远端 PCM 的回调注册在旧 transport 上，新页面的
+            ``oopzPushRemotePcm`` 永远不上报，agent 一个字都听不到。
+
+        现象极具迷惑性：**进房成功、日志照常出回合、房间里一句话都没有**，
+        而且只有重启进程才能恢复（重启桥接会再切一次）。
+        """
         self._bot = bot
+        self._drop_stale_duplex()
+
+    def _bot_backend(self) -> Any:
+        """当前 bot 的语音浏览器 transport（没有就返回 None）。"""
+        voice = getattr(self._bot, "voice", None)
+        return getattr(voice, "backend", None) if voice is not None else None
+
+    def _drop_stale_duplex(self) -> None:
+        """duplex 绑的已不是当前 bot 的 backend 时，就地作废它。
+
+        下一次 ``join()`` 会按新的 backend 重建。这里不 await ``close()``
+        （同步上下文），交给事件循环收尾：旧 transport 多半已经随
+        ``bot.stop()`` 关掉了，``close()`` 会直接返回。
+        """
+        duplex = self.duplex
+        if duplex is None:
+            return
+        backend = self._bot_backend()
+        if backend is None or duplex.transport is backend:
+            return
+        self.duplex = None
+        # bot 都没了，房间自然也不在了；不复位会让 speak_text 继续往死页面推
+        self._joined = False
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        task = loop.create_task(duplex.close(), name="voice-duplex-close")
+        self._duplex_close_tasks.add(task)
+        task.add_done_callback(self._duplex_close_tasks.discard)
 
     def bind_duplex(self, duplex: VoiceDuplex) -> None:
         self.duplex = duplex
@@ -188,6 +305,13 @@ class VoiceAgent:
             await self.backend.aclose()
             self.backend = create_backend(self.settings, self.memory)
             self.live_mode = _is_live_backend(self.backend)
+            # 信箱消费端必须跟着模式走：live→cascade 不拉起它，句子进了信箱
+            # 就没人消费，bot 直接变哑巴；cascade→live 不收掉它，它会抱着
+            # 一条永远不会有新内容的信箱空转。
+            if self._joined and not self.live_mode:
+                await self._start_round_worker()
+            else:
+                await self._stop_round_worker()
             notes.append("语音后端已切换")
 
         session_dirty = bool(_SESSION_FIELDS & changed_set) or "backend" in changed_set
@@ -232,11 +356,19 @@ class VoiceAgent:
         area, channel = self._resolve_target(area, channel)
         if not area or not channel:
             raise RuntimeError("缺少 area/channel，请在配置或调用参数中指定")
-        if self.duplex is None:
-            voice = getattr(self._bot, "voice", None)
+        # duplex 按 transport 身份复用：绑的还是当前 bot 的浏览器就接着用，
+        # 否则整套重建（bind_bot 已在换 bot 时置空，这里是兜底复检）。
+        voice = getattr(self._bot, "voice", None)
+        backend = getattr(voice, "backend", None) if voice is not None else None
+        if self.duplex is None or (backend is not None and self.duplex.transport is not backend):
             if voice is None:
                 raise RuntimeError("bot.voice 不存在")
-            self.bind_duplex(VoiceDuplex(voice.backend))
+            old = self.duplex
+            self.duplex = None
+            if old is not None:
+                with contextlib.suppress(Exception):
+                    await old.close()
+            self.bind_duplex(VoiceDuplex(backend))
             await self.duplex.start()
             await self.duplex.enable_listen(True)
 
@@ -245,8 +377,12 @@ class VoiceAgent:
         self._channel = channel
         self._joined = True
         self._speaking = False
-        self._barge_in_armed = True
+        self._rearm_barge_in()
         await self.duplex.enable_listen(True)
+
+        # 级联：拉起单槽信箱的消费端。Live 走服务端 VAD，不需要它。
+        if not self.live_mode:
+            await self._start_round_worker()
 
         # Live：建立双向语音会话，并把模型出声接到推流
         if self.live_mode:
@@ -270,23 +406,42 @@ class VoiceAgent:
         if duplex is None:
             return
 
+        # 每回合只报一次推流失败：失败通常整回合都失败，逐分片刷屏反而盖住线索
+        push_failed = False
+
         async def on_audio(pcm: bytes, rate: int) -> None:
             # 收到分片只说明「这一回合正在出声」，**不代表回合结束**：
             # 以前在这里 turns += 1，一次回复实测 13 个分片就虚增 13 轮；
             # 而 _speaking 置 True 后没有任何地方回落，导致下面 _on_remote_pcm
             # 的抢话分支被每个分片各触发一次。回合边界一律由 on_turn_end 负责。
+            nonlocal push_failed
             self._speaking = True
-            await duplex.push_tts_pcm(pcm, rate, finish=False)
+            result = await duplex.push_tts_pcm(pcm, rate, finish=False)
+            # 推流失败必须留痕。这里曾经整条链路静默失败（页面已不是当前会话，
+            # 返回值 {ok: False, error: "not joined"} 被丢弃），日志里只有
+            # 「模型出了回合」，排查时完全看不出音频根本没进房间。
+            if isinstance(result, dict) and result.get("ok") is False:
+                if not push_failed:
+                    push_failed = True
+                    logger.warning(
+                        "模型音频推流失败，房间听不到：%s",
+                        result.get("error") or result,
+                    )
+            else:
+                push_failed = False
 
         async def on_text(text: str) -> None:
             self.last_reply = text
 
         async def on_turn_end(interrupted: bool) -> None:
             """一个回合结束（说完了，或被抢话打断）。"""
+            nonlocal push_failed
             self._speaking = False
             self.turns += 1
-            # 下一回合允许再打断一次
-            self._barge_in_armed = True
+            # 下一回合允许再打断一次（顺带清掉本回合累计的连续说话时长）
+            self._rearm_barge_in()
+            # 失败计数按回合清零：下一回合若还坏，还能再报一条
+            push_failed = False
             if interrupted and self.duplex is not None:
                 # 服务端自己判定用户抢话：模型已经停口，但本地排期的分片还在播，
                 # 必须就地清掉，否则「模型不说了、喇叭还在说」直到缓冲播完。
@@ -303,7 +458,27 @@ class VoiceAgent:
         if setter_turn:
             setter_turn(on_turn_end)
 
+    async def _start_round_worker(self) -> None:
+        """拉起信箱消费端。重复进房时先收掉旧的，避免两个 worker 抢同一条。"""
+        await self._stop_round_worker()
+        self._pending = None
+        self._cooldown_until = 0.0
+        self._pending_event.clear()
+        self._round_task = asyncio.create_task(self._round_worker())
+
+    async def _stop_round_worker(self) -> None:
+        """退房时收掉 worker 并清空信箱 —— 上次没处理完的句子不能带到下次进房。"""
+        task, self._round_task = self._round_task, None
+        if task is not None and not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+        self._pending = None
+        self._cooldown_until = 0.0
+        self._pending_event.clear()
+
     async def leave(self) -> dict[str, Any]:
+        await self._stop_round_worker()
         if self._bot is not None and self._joined:
             try:
                 await self._bot.voice.leave()
@@ -319,7 +494,7 @@ class VoiceAgent:
                 logger.debug("backend close on leave failed", exc_info=True)
         self._joined = False
         self._speaking = False
-        self._barge_in_armed = True
+        self._rearm_barge_in()
         self._user_buffers.clear()
         self._vad.reset()
         return {"ok": True}
@@ -360,17 +535,31 @@ class VoiceAgent:
         if not self.settings.enabled or not pcm:
             return
         uid = str(uid or "unknown")
+        _dump_remote_pcm(uid, pcm, sample_rate)
         if self.settings.listen_only_uids and uid not in self.settings.listen_only_uids:
             return
 
         if self.live_mode:
-            # Live：持续灌入，模型自己做打断/回合。
-            # 抢话必须**边沿触发**：这是每个远端音频帧（20ms 一帧、房间里每个人）
-            # 都会走的路径。若按电平判定，模型每吐一个分片就会把 _speaking 顶回
-            # True，紧接着下一帧就把刚排好的播放队列整个清掉 —— 一次 4.4 秒的回复
-            # 被剁成 13 段碎片并夹 13 次 30ms 静音，听感就是「能听见但听不清」。
-            # 闸门保证一次出声只打断一次，直到该回合结束才重新武装。
-            if self.settings.barge_in and self._speaking and self._barge_in_armed:
+            # Live：持续灌入，模型自己做回合。
+            #
+            # 本会话**关掉了服务端的自动抢话**（见 gemini_live._realtime_input_config）：
+            # 灌进去的是整个房间的混流，服务端只要认出「有人在说话」就取消生成，
+            # 实测从 0.02 的远处背景人声到 0.15 的贴麦**任何音量都会打断 bot**，
+            # 热闹的房间里 bot 一句完整的话都说不完。所以抢话只能在这里判。
+            #
+            # 判据是「某人**连续说话**够久」而不是「有人出声」：一声咳嗽、一次键盘、
+            # 一个「嗯」累计不到 barge_in_hold_ms 就清零，bot 继续说。
+            #
+            # 仍然**每回合最多打断一次**（_barge_in_armed）：这是每个远端音频帧
+            # （20ms 一帧、房间里每个人）都会走的路径，不设闸门的话模型每吐一个
+            # 分片就被下一帧掐掉，一次 4.4 秒的回复被剁成 13 段碎片并夹 13 次
+            # 30ms 静音，听感是「能听见但听不清」（2.0.3 修的就是这个）。
+            if (
+                self.settings.barge_in
+                and self._speaking
+                and self._barge_in_armed
+                and self._barge_in_reached(uid, pcm, sample_rate)
+            ):
                 self._barge_in_armed = False
                 interrupt = getattr(self.backend, "interrupt", None)
                 if interrupt is not None:
@@ -390,13 +579,123 @@ class VoiceAgent:
         vad = self._vad_for(uid)
         utterance = vad.feed(pcm)
         if utterance:
-            self._utterance_tasks = getattr(self, "_utterance_tasks", set())
-            task = asyncio.create_task(self._handle_utterance(uid, utterance, sample_rate))
-            self._utterance_tasks.add(task)
-            task.add_done_callback(self._utterance_tasks.discard)
+            # 底噪闸门。EnergyVad 只按 30ms 帧的 RMS 过不过 energy_threshold
+            # (0.012) 判「有人在说话」，没人开口时若某人麦克风底噪高过它就够
+            # 触发 —— 于是噪声被切成一句句「人话」送去 ASR，而 MiMo 这类对话式
+            # ASR 对非人声不会返回空，会**编**一句像样的转写（实测最常见的是
+            # 「嗯。」），结果就是「房间里没人说话，bot 却一直在接话」。
+            #
+            # 阈值取自真实录音的实测分布（C:\APP\pcm_dump\agent.pcm，1305 个
+            # 1 秒窗）：真说话 RMS 0.03~0.22，会误触发 VAD 的带在 0.012~0.02。
+            # 取 0.02 正好卡在两者之间。若哪天发现真说话被丢掉，日志里会打出
+            # 每次丢弃的 RMS，按它调这个常量即可。
+            energy = EnergyVad._rms(utterance)
+            if energy < _MIN_UTTERANCE_RMS:
+                logger.info(
+                    "丢弃疑似噪声回合：RMS=%.4f（%.1fs 音频，阈值 %.3f）",
+                    energy,
+                    len(utterance) / 2 / max(1, sample_rate),
+                    _MIN_UTTERANCE_RMS,
+                )
+                return
+            # 时长闸门。和上面那道**能量**闸门互补：一声音量够大但只有 0.1 秒的
+            # 「对。」「哦。」能量完全达标，会一路走到 ASR/LLM/TTS，回一句
+            # 「嗯嗯，知道了。」—— 用户听到的就是「它每句都接」。
+            # 实测（2026-10-01 的 58 个回合）这类占相当一部分，且全是噪音。
+            min_ms = max(0, int(getattr(self.settings, "min_utterance_ms", 0) or 0))
+            audio_ms = len(utterance) / 2 / max(1, sample_rate) * 1000.0
+            if audio_ms < min_ms:
+                logger.info(
+                    "丢弃过短回合：%.2fs（阈值 %.2fs，一个字的气声）",
+                    audio_ms / 1000.0,
+                    min_ms / 1000.0,
+                )
+                return
+            self._offer_utterance(uid, utterance, sample_rate)
+
+    def _offer_utterance(self, uid: str, pcm: bytes, sample_rate: int) -> None:
+        """把切出来的一句放进**单槽**信箱，由 ``_round_worker`` 串行消费。
+
+        槽里已经有东西时**丢掉旧的那条**而不是排队：用户既然已经说了下一句，
+        再回上一句只会驴唇不对马嘴，而且会把延迟越堆越高。
+        """
+        if self._pending is not None:
+            logger.info(
+                "丢弃积压回合：用户已经说下一句了（丢掉已等 %.1fs 的那条）",
+                time.monotonic() - self._pending[3],
+            )
+        self._pending = (uid, pcm, sample_rate, time.monotonic())
+        self._pending_event.set()
+
+    async def _round_worker(self) -> None:
+        """单槽信箱的消费端：并行度恒为 1，且每回合之间夹一段冷却。"""
+        while True:
+            await self._pending_event.wait()
+            self._pending_event.clear()
+            item, self._pending = self._pending, None
+            if item is None:
+                continue
+            await self._throttled_round(item)
+
+    async def _throttled_round(self, item: tuple[str, bytes, int, float]) -> None:
+        """一个回合的节流外壳：等冷却 → 换成最新的一条 → 过陈旧闸门 → 处理。"""
+        cooldown = max(0, int(getattr(self.settings, "reply_cooldown_ms", 0) or 0)) / 1000.0
+        remaining = self._cooldown_until - time.monotonic()
+        if remaining > 0:
+            await asyncio.sleep(remaining)
+            # 冷却这段时间里用户很可能又说了 —— 只回最新的那句
+            if self._pending is not None:
+                logger.info("冷却期内用户又说了，改回最新的一条")
+                item, self._pending = self._pending, None
+                self._pending_event.clear()
+
+        uid, pcm, sample_rate, offered_at = item
+        waited = time.monotonic() - offered_at
+        if waited > cooldown + _STALE_ROUND_SEC:
+            # 等到现在还没轮到，说明用户早说别的去了
+            logger.info("丢弃过期回合：已等待 %.1fs，用户早说别的了", waited)
+            return
+
+        self._barged_in = False
+        await self._handle_utterance(uid, pcm, sample_rate)
+        # 被抢话 = bot 没把话说完，此时再让抢话的人等冷却就本末倒置了。
+        self._cooldown_until = 0.0 if self._barged_in else time.monotonic() + cooldown
+
+    def _rearm_barge_in(self) -> None:
+        """允许下一回合再抢话一次，并清掉上一回合累计的连续说话时长。
+
+        累计值必须跟着闸门一起复位：否则某人上回合说了 3 秒，这回合 bot 一开口，
+        残留的 3 秒会立刻满足门限，等于门限形同虚设。
+        """
+        self._barge_in_armed = True
+        self._barge_in_speech_ms.clear()
+
+    def _barge_in_reached(self, uid: str, pcm: bytes, sample_rate: int) -> bool:
+        """某人是否已经**连续说话**够久，久到该把发言权让给他。
+
+        只在 ``_speaking``（模型正在出声）时被调用 —— 累计的是「盖过 bot 说话的
+        时长」。不这么限定的话，房间里持续的背景聊天会在 bot 一开口时立刻满足
+        门限，那正是要避免的。
+
+        ``barge_in_hold_ms`` 为 0 时退化成旧行为（第一帧就打断），
+        留这个取值是为了出问题时能在 WebUI 里一键回到原状。
+        """
+        hold_ms = int(getattr(self.settings, "barge_in_hold_ms", 0) or 0)
+        if hold_ms <= 0:
+            return True
+        rate = int(sample_rate or self.settings.sample_rate_in) or 16000
+        frame_ms = len(pcm) / 2 / rate * 1000.0
+        if EnergyVad._rms(pcm) >= _BARGE_IN_ENERGY:
+            self._barge_in_speech_ms[uid] = self._barge_in_speech_ms.get(uid, 0.0) + frame_ms
+        else:
+            # 说话一断就清零：门限衡量的是**连续**说多久，不是累计说了多少
+            self._barge_in_speech_ms[uid] = 0.0
+        return self._barge_in_speech_ms[uid] >= hold_ms
 
     async def _interrupt_speaking(self) -> None:
         self._speaking = False
+        # 记下来：本回合是被抢话打断的，结束时不计冷却（见 _throttled_round）。
+        self._barged_in = True
         if self.duplex is not None:
             try:
                 await self.duplex.stop_tts()
@@ -419,6 +718,17 @@ class VoiceAgent:
                 self.last_reply = f"[error] {exc}"
                 return
 
+            # 级联这条链路以前**一句话都不记**（mimo_cascade 整份文件只有一条
+            # debug），出问题只能靠 WebUI 的 last_user_text/last_reply 两个字段猜，
+            # 看不到识别历史、也看不出 VAD 是不是把句子切碎了。音频时长放在这里
+            # 就是为了这个：识别结果正常但时长只有 0.3 秒，那是 VAD 在切句，不是
+            # 模型听不懂。
+            logger.info(
+                "ASR 回合：用户=%r（%.1fs 音频）回复=%r",
+                reply.user_text or "",
+                len(pcm) / 2 / max(1, sample_rate),
+                reply.text or "",
+            )
             self.last_user_text = reply.user_text or self.last_user_text
             if reply.text:
                 self.last_reply = reply.text
@@ -426,17 +736,31 @@ class VoiceAgent:
             if reply.pcm16 and self.duplex is not None:
                 self._speaking = True
                 self.turns += 1
+                push_failed = False
                 try:
                     chunk = int(self.settings.sample_rate_out * 0.04) * 2
                     data = reply.pcm16
                     for i in range(0, len(data), chunk):
                         if not self._speaking:
                             break
-                        await self.duplex.push_tts_pcm(
+                        result = await self.duplex.push_tts_pcm(
                             data[i : i + chunk],
                             reply.sample_rate,
                             finish=False,
                         )
+                        # 与 Live 那条路（_wire_live.on_audio）同款：失败必须留痕，
+                        # 且整回合只报一次。这里以前**直接丢弃返回值** —— 正是 B5
+                        # 那个「页面已经不是当前会话、音频根本没进房间，日志却一切
+                        # 正常」的坑，级联模式下一直没补上。
+                        if isinstance(result, dict) and result.get("ok") is False:
+                            if not push_failed:
+                                push_failed = True
+                                logger.warning(
+                                    "模型音频推流失败，房间听不到：%s",
+                                    result.get("error") or result,
+                                )
+                        else:
+                            push_failed = False
                         await asyncio.sleep(0.02)
                     if self._speaking:
                         await self.duplex.push_tts_pcm(b"", reply.sample_rate, finish=True)

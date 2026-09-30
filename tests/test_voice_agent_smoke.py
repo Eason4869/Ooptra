@@ -59,6 +59,32 @@ def test_memory() -> None:
     print("memory ok")
 
 
+def test_memory_clear_all_is_not_a_noop() -> None:
+    """WebUI 的「清空共享记忆」发的就是空 user_key —— 必须真的全清。
+
+    回归锁：早期 ``clear()`` 的守卫是 ``if user_key and row.get("user_key") == user_key``，
+    空 key 下这个条件恒假，一行都不删还返回 0，前端却照样弹「已清空」。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        store = MemoryStore(os.path.join(td, "m.jsonl"), max_turns=5)
+        store.append("user", "甲", user_key="oopz:1")
+        store.append("assistant", "乙", user_key="oopz:1")
+        store.append("user", "丙", user_key="oopz:2")
+        assert store.clear() == 3, "传空 user_key 没有全清"
+        assert store.recent(user_key="", limit=99) == []
+
+
+def test_memory_clear_one_user_keeps_the_others() -> None:
+    """带 user_key 时仍然只删那一个用户的，别把全清语义做过头。"""
+    with tempfile.TemporaryDirectory() as td:
+        store = MemoryStore(os.path.join(td, "m.jsonl"), max_turns=5)
+        store.append("user", "甲", user_key="oopz:1")
+        store.append("user", "丙", user_key="oopz:2")
+        assert store.clear(user_key="oopz:1") == 1
+        left = store.recent(user_key="", limit=99)
+        assert [r["content"] for r in left] == ["丙"]
+
+
 def test_vad_silence_and_speech() -> None:
     vad = EnergyVad(VadvConfig(sample_rate=16000, silence_ms=120, energy_threshold=0.02))
     # 500ms 静音

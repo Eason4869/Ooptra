@@ -122,14 +122,26 @@ VOICE_AGENT_CONFIG = {
     "backend": "gemini_live",
     "persona": "你是 Oopz 语音频道助手，说话简洁友好，像在语音房里自然聊天。",
     "barge_in": True,
+    # 某人要**连续**说话满这么多毫秒才算抢话（房间越吵调越大，600~800 适合人多时）。
+    # 0 = 关掉门限：一出声就打断，房间一热闹 bot 就说不完整句话。
+    "barge_in_hold_ms": 300,
     "vad_mode": "local",
     "listen_only_uids": [],
     "reply_text_to_channel": False,
 
     "sample_rate_in": 16000,
     "sample_rate_out": 24000,
-    "silence_ms": 700,
+    # 说完多久算一句。700ms 对中文太短 —— 想词、换气的自然停顿就会被当成
+    # 「说完了」，一句话被切成好几段，bot 于是逐段回（表现为「我每句话必回」）。
+    "silence_ms": 1200,
     "max_utterance_ms": 15000,
+    # 短于这么多毫秒的音频不送 ASR：「对。」0.1s、「哦。」0.4s 这类一个字的气声，
+    # 回了也只是噪音。0 = 不过滤。
+    "min_utterance_ms": 500,
+    # 回合节流：bot 完整说完一条后，至少隔这么多毫秒才开下一轮。
+    # 不设的话它一直在出声，你说下一句时它还没说完，越说越迟。
+    # 被抢话打断的回合不计冷却。0 = 不冷却。
+    "reply_cooldown_ms": 2500,
 
     # 模型 API 网络代理（选填）：""=不启用；"clash"=http://127.0.0.1:7890；
     # "direct"=强制直连；也可填显式地址 "http://主机:端口"

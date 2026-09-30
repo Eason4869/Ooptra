@@ -53,6 +53,47 @@ LANGUAGE_GUARD = (
 )
 
 
+#: 自动 VAD 的端点静音判定窗口。默认值偏短，语音房里自然停顿多，
+#: 调大一点模型不会在人换气的间隙抢话。
+LIVE_SILENCE_MS = 800
+#: 语音起点前保留的音频长度，避免把词头切掉。
+LIVE_PREFIX_PADDING_MS = 300
+
+
+def _realtime_input_config() -> dict[str, Any]:
+    """Live 的输入侧配置：**禁止服务端自动抢话**。
+
+    为什么必须关掉（2026-09-30 实测）：灌给服务端的是**整个语音房间的混流**，而
+    服务端的自动 VAD 只要认出「有人在说话」就取消正在生成的回复。热闹的房间里
+    「有人在说话」是常态 —— 实测投喂一段真语音，**从 0.02（远处背景人声）到
+    0.15（贴麦）的任何音量都会打断 bot**，于是 bot 一句完整的话都说不完。
+
+    调灵敏度救不了：`start_of_speech_sensitivity` 降到 LOW 后六个音量档位的打断
+    次数**一模一样**。灵敏度的含义是「VAD 要多确信才算语音」，而背景人声本来就是
+    真语音，再低的灵敏度也拦不住。
+
+    关掉之后，抢话改由**客户端**判定（``VoiceAgent._on_remote_pcm`` 的
+    ``barge_in_hold_ms`` 门限）—— 只有某人连着说了足够久才让路。注意
+    ``NO_INTERRUPTION`` 只是「不打断生成」，**不是「听不见」**：实测同一配置下
+    输入照常转写、模型照常回应用户。
+
+    载荷拼写是实测钉死的（**写错会让整个连接以 close_code=1007 断开**，
+    不是「配置没生效」）：
+      * ``realtime_input_config`` / ``automatic_activity_detection`` 用 **snake_case**
+        —— 这套接口**只认 snake_case**，``realtimeInputConfig`` 之类的 camelCase
+        一律 1007（同一个 setup 里 ``generation_config`` 也是 snake，一致）；
+      * ``activity_handling`` 取值 ``NO_INTERRUPTION``（伪造值会被 1007 拒，说明
+        枚举真的在校验，不是被静默忽略）。
+    """
+    return {
+        "automatic_activity_detection": {
+            "prefix_padding_ms": LIVE_PREFIX_PADDING_MS,
+            "silence_duration_ms": LIVE_SILENCE_MS,
+        },
+        "activity_handling": "NO_INTERRUPTION",
+    }
+
+
 def live_url_has_key(url: str) -> bool:
     """URL 的查询串里有没有非空的 ``key``。"""
     return bool((parse_qs(urlsplit(url).query).get("key") or [""])[0].strip())
@@ -276,6 +317,7 @@ class GeminiLiveBackend(VoiceBackend):
                 },
                 "input_audio_transcription": {},
                 "output_audio_transcription": {},
+                "realtime_input_config": _realtime_input_config(),
             }
         }
         await self._send(setup)
@@ -315,16 +357,15 @@ class GeminiLiveBackend(VoiceBackend):
         等于逼模型把当时缓冲区里的音频碎片当成一个完整回合去回答 —— 一段没有内容
         的输入，模型只能瞎猜，语言就是这里开始飘的（实测同一会话里中英文乱切）。
 
-        正确做法：本会话用的是**服务端自动 VAD**（setup 里没有关闭
-        ``automaticActivityDetection``）。文档明确「检测到打断时模型会取消正在进行的
-        生成，并通过 serverContent.interrupted 通知客户端」—— 而我们的远端音频本来
-        就在持续灌入，服务端听得到，抢话由它判定。客户端只要立刻停掉本地已排期的
-        播放（``duplex.stop_tts()``，在 agent 侧做）就够了；服务端的 ``interrupted``
-        到达后会再清一次并把回合收尾。
+        当前做法：setup 里设了 ``activity_handling: NO_INTERRUPTION``（见
+        ``_realtime_input_config``），**服务端不再因为听到人声就取消模型的回合**。
+        抢话完全由 agent 侧判定 —— 某人连续说话满 ``barge_in_hold_ms`` 才算数
+        （房间越吵门限越大），命中后 ``duplex.stop_tts()`` 清掉本地已排期的播放，
+        就是全部动作。所以这里不需要、也不应该再往服务端发任何东西。
 
         保留这个方法是为了接口稳定（agent 无条件调用），它现在是**有意的空操作**。
         """
-        logger.debug("live interrupt: 客户端侧无操作（抢话由服务端自动 VAD 判定）")
+        logger.debug("live interrupt: 客户端侧无操作（抢话由 agent 侧门限判定 + 清本地队列）")
 
     async def _session_loop(self) -> None:
         ws = self._ws
@@ -345,6 +386,10 @@ class GeminiLiveBackend(VoiceBackend):
             raise
         except Exception:
             logger.exception("Gemini Live session error")
+        else:
+            # 读循环**自然结束**（迭代到头、没抛异常、也没收到 CLOSE 帧）——
+            # 这是「会话静悄悄消失」的可疑路径，单独标记出来才好定位。
+            logger.info("Live 读循环结束：ws 迭代到头，未抛异常")
         finally:
             # 唤醒可能还在等 ready 的 start_session，别让它挂到超时
             self._ready.set()
@@ -367,7 +412,24 @@ class GeminiLiveBackend(VoiceBackend):
 
         server = msg.get("serverContent") or {}
         if not server:
-            # toolCall 等以后再接
+            # toolCall 等以后再接。**但必须留痕**：服务端的会话生命周期消息
+            # （goAway / sessionResumptionUpdate 之类）正是走这条路，静默 return
+            # 会让「会话每 20~25 秒断一次」变成无头案 —— 2026-10-01 实测踩到：
+            # 断开时既没有 ws 关闭日志、也没有异常，只留一句 session ended。
+            #
+            # 但**只记有信息量的**：空包（``{}``）、空的 ``serverContent``、
+            # ``voiceActivity`` 都是心跳级噪音 —— 光 voiceActivity 一项实测就刷掉
+            # ~100 行/分钟，把真正的断线线索埋了。过滤掉这三类之后，剩下的
+            # （goAway / sessionResumptionUpdate / toolCall）才是要看的。
+            interesting = {
+                k: v for k, v in msg.items() if k not in ("voiceActivity", "serverContent")
+            }
+            if not interesting:
+                return
+            logger.info(
+                "Live 服务端消息（当前未处理）：%s",
+                {k: str(v)[:160] for k, v in interesting.items()},
+            )
             return
 
         # 转写（可选进记忆）

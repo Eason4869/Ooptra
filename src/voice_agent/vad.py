@@ -10,7 +10,8 @@ from dataclasses import dataclass
 class VadvConfig:
     sample_rate: int = 16000
     frame_ms: int = 30
-    silence_ms: int = 700
+    # 与 VoiceAgentSettings.silence_ms 保持一致：700ms 对中文偏短，会把一句话切碎。
+    silence_ms: int = 1200
     max_utterance_ms: int = 15000
     energy_threshold: float = 0.012  # 归一化 RMS 阈值，可按环境调
 
@@ -19,12 +20,16 @@ class EnergyVad:
     def __init__(self, config: VadvConfig | None = None) -> None:
         self.config = config or VadvConfig()
         self._buffer = bytearray()
+        self._utterance = bytearray()
+        self._voiced_end = 0
         self._speaking = False
         self._silence_ms = 0
         self._utterance_ms = 0
 
     def reset(self) -> None:
         self._buffer.clear()
+        self._utterance.clear()
+        self._voiced_end = 0
         self._speaking = False
         self._silence_ms = 0
         self._utterance_ms = 0
@@ -44,7 +49,18 @@ class EnergyVad:
         return (acc / count) ** 0.5
 
     def feed(self, pcm16: bytes) -> bytes | None:
-        """喂入 PCM16 小段；若一句结束则返回完整 utterance 的 PCM，否则 None。"""
+        """喂入 PCM16 小段；若一句结束则返回这一句的 PCM，否则 None。
+
+        切句时返回的是**从第一个有声帧到最后一个有声帧**的音频，末尾那段用来
+        判定「说完了」的静音会被裁掉。
+
+        注意 ``_utterance`` 与 ``_buffer`` 是两回事，别用 ``_buffer`` 当结果：
+        ``_buffer`` 只是还没凑够一帧的输入暂存区，边读边 ``del``，说话过程中
+        一直是接近空的。早期版本直接返回 ``bytes(self._buffer)``，于是每一句
+        都只剩最后一帧的静音尾巴 —— 真正的语音被逐帧丢掉，ASR 收到的永远
+        是 ~30ms 的静音（对话式 ASR 不会返回空，会照着编一句，表现为「识别
+        不准」和「没人说话也接话」）。见 tests/test_vad.py。
+        """
         if not pcm16:
             return None
         self._buffer.extend(pcm16)
@@ -58,27 +74,26 @@ class EnergyVad:
             rms = self._rms(frame)
             active = rms >= self.config.energy_threshold
 
-            if active:
-                if not self._speaking:
-                    self._speaking = True
-                    self._silence_ms = 0
-                    self._utterance_ms = 0
-                    self._buffer.extend(frame)  # 保留起始帧
-                    continue
+            if not self._speaking:
+                if not active:
+                    continue  # 开口之前的静音：丢掉，不进 utterance
+                self._speaking = True
                 self._silence_ms = 0
+                self._utterance_ms = 0
+
+            self._utterance.extend(frame)
+            self._utterance_ms += self.config.frame_ms
+            if active:
+                self._silence_ms = 0
+                self._voiced_end = len(self._utterance)
             else:
-                if not self._speaking:
-                    continue
                 self._silence_ms += self.config.frame_ms
 
-            if self._speaking:
-                self._utterance_ms += self.config.frame_ms
-                if self._silence_ms >= self.config.silence_ms:
-                    utt = bytes(self._buffer)
-                    self.reset()
-                    return utt or None
-                if self._utterance_ms >= self.config.max_utterance_ms:
-                    utt = bytes(self._buffer)
-                    self.reset()
-                    return utt or None
+            if (
+                self._silence_ms >= self.config.silence_ms
+                or self._utterance_ms >= self.config.max_utterance_ms
+            ):
+                utt = bytes(self._utterance[: self._voiced_end])
+                self.reset()
+                return utt or None
         return None
