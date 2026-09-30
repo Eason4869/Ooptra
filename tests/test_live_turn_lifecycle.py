@@ -130,11 +130,17 @@ def _make_agent(*, live: bool = True) -> tuple[VoiceAgent, FakeDuplex, FakeBacke
     agent.settings.enabled = True
     agent.settings.backend = "gemini_live" if live else "mimo_cascade"
     agent.settings.barge_in = True
+    # 本文件测的是**每回合最多打断一次**这个边沿语义，不是抢话门限，所以显式把
+    # 门限关掉（0 = 旧行为：第一帧就打断）。开着门限的话，这里用的 FRAME 是
+    # 静音帧（RMS≈0.008，低于 _BARGE_IN_ENERGY），一帧都攒不够 —— 用例会假通过。
+    # 门限本身的用例在 tests/test_barge_in_gate.py。
+    agent.settings.barge_in_hold_ms = 0
     agent.settings.listen_only_uids = []
     agent._bot = None
     agent._joined = True
     agent._speaking = False
     agent._barge_in_armed = True
+    agent._barge_in_speech_ms = {}
     agent._user_buffers = {"u1": _StubVad()}
     agent._vad = None
     agent._task = None
@@ -449,6 +455,34 @@ def test_language_guard_survives_an_empty_persona(opened: list[FakeLiveWs]) -> N
     asyncio.run(run())
 
 
+def test_setup_disables_server_side_barge_in(opened: list[FakeLiveWs]) -> None:
+    """setup 必须关掉服务端的自动抢话，否则房间一热闹 bot 就说不完整句话。
+
+    实测（2026-09-30）：灌进去的是整个房间的混流，服务端只要认出「有人在说话」
+    就取消生成 —— 投喂真语音从 0.02（远处背景人声）到 0.15（贴麦）**任何音量都会
+    打断**。降灵敏度救不了：``start_of_speech_sensitivity`` 调到 LOW 后六个音量档
+    的打断次数一模一样，因为背景人声本来就是真语音。
+
+    这条用例同时锁死**拼写**：服务端**只认 snake_case**，写成
+    ``realtimeInputConfig`` 之类的 camelCase 会让整个连接以 close_code=1007 断开
+    —— 不是「配置没生效」，是 bot 根本连不上。同理 ``START_OF_SPEECH_SENSITIVITY_LOW``
+    这种想当然的枚举名也是 1007（正确的是 ``START_SENSITIVITY_LOW``）。
+    """
+
+    async def run() -> None:
+        backend = _backend()
+        await backend.start_session()
+        ric = opened[0].sent[0]["setup"]["realtime_input_config"]
+
+        assert ric["activity_handling"] == "NO_INTERRUPTION", "服务端仍会自动抢话"
+        assert "automatic_activity_detection" in ric, "snake_case，别改成 camelCase"
+        assert "prefix_padding_ms" in ric["automatic_activity_detection"]
+        assert "silence_duration_ms" in ric["automatic_activity_detection"]
+        await backend.aclose()
+
+    asyncio.run(run())
+
+
 # ----------------------------------------------------------------------
 # 8：断线原因不再被吞掉
 # ----------------------------------------------------------------------
@@ -498,5 +532,52 @@ def test_aiohttp_close_logs_reason(caplog: pytest.LogCaptureFixture) -> None:
         assert got == ["hello"], "关闭前收到的数据不能丢"
         assert "close_code=1000" in caplog.text, "断线日志里没有 close_code"
         assert "connection reset by peer" in caplog.text, "断线日志里没有底层异常"
+
+    asyncio.run(run())
+
+
+# ----------------------------------------------------------------------
+# 服务端消息日志：留痕要留对的，别把断线线索埋进心跳里
+# ----------------------------------------------------------------------
+
+
+def test_session_lifecycle_messages_are_logged(caplog: pytest.LogCaptureFixture) -> None:
+    """goAway / sessionResumptionUpdate 必须留痕。
+
+    2026-10-01 实测：会话每 22~40 秒静默断一次，断开时**既没有 ws 关闭日志、
+    也没有异常**，只留一句 session ended —— 唯一的证据就是这两类消息，它们走的
+    正是 ``serverContent`` 为空的那条分支。静默 return 会让它变成无头案。
+    """
+
+    async def run() -> None:
+        backend = _backend()
+        with caplog.at_level("INFO", logger="voice_agent.backends.gemini_live"):
+            await backend._handle_server_msg(
+                {"sessionResumptionUpdate": {"newHandle": "h1", "resumable": True}}
+            )
+            await backend._handle_server_msg({"goAway": {"timeLeft": "10s"}})
+        assert "sessionResumptionUpdate" in caplog.text, "续接句柄没留痕"
+        assert "goAway" in caplog.text, "服务端主动断开没留痕"
+        await backend.aclose()
+
+    asyncio.run(run())
+
+
+def test_heartbeat_messages_do_not_flood_the_log(caplog: pytest.LogCaptureFixture) -> None:
+    """空包 / 空 serverContent / voiceActivity 都是心跳，一条都不该记。
+
+    实测 ``voiceActivity`` 一项就刷掉约 100 行/分钟（每句话 START + END），
+    把上面那两类真正要看的消息埋掉了。
+    """
+
+    async def run() -> None:
+        backend = _backend()
+        with caplog.at_level("INFO", logger="voice_agent.backends.gemini_live"):
+            await backend._handle_server_msg({})
+            await backend._handle_server_msg({"serverContent": {}})
+            await backend._handle_server_msg({"voiceActivity": {"type": "ACTIVITY_START"}})
+            await backend._handle_server_msg({"voiceActivity": {"type": "ACTIVITY_END"}})
+        assert "未处理" not in caplog.text, f"心跳消息进了日志：{caplog.text}"
+        await backend.aclose()
 
     asyncio.run(run())

@@ -27,13 +27,26 @@ class VoiceAgentSettings:
     channel: str = ""
     auto_join: bool = False
     barge_in: bool = True
+    #: 抢话门限：房间里某人要**连续说话**满这么多毫秒，才认作「真的要打断 bot」。
+    #: 0 = 关闭门限（退回旧行为：第一帧就打断，热闹房间里 bot 说不完一句话）。
+    barge_in_hold_ms: int = 300
     vad_mode: str = "local"
     listen_only_uids: list[str] = field(default_factory=list)
     reply_text_to_channel: bool = False
     sample_rate_in: int = 16000
     sample_rate_out: int = 24000
-    silence_ms: int = 700
+    #: 说完多久算一句。700ms 对中文太短 —— 想词、换气的自然停顿就会被当成
+    #: 「说完了」，一句话被切成几段，bot 逐段回（表现为「我每句话必回」）。
+    silence_ms: int = 1200
     max_utterance_ms: int = 15000
+    #: 短于这么多毫秒的音频不送 ASR。实测「对。」0.1s、「哦。」0.4s 这类一个字
+    #: 的气声，回了也只是噪音。``_MIN_UTTERANCE_RMS`` 按**能量**过滤，管不到它们。
+    min_utterance_ms: int = 500
+    #: 回合节流：一条回合**完整说完**之后，至少隔这么多毫秒才允许开始下一回合。
+    #: 不节流的话 bot 一直在出声，用户说下一句时它还没说完 —— 队列只增不减，
+    #: 体感就是「延迟越来越高」。被人抢话打断的回合不计冷却（人家要的是立刻回应）。
+    #: 0 = 不冷却。
+    reply_cooldown_ms: int = 2500
 
     # 模型 API 网络出口：""=直连/系统，"clash"=127.0.0.1:7890，或显式 URL
     proxy: str = ""
@@ -95,13 +108,16 @@ def load_voice_agent_settings() -> tuple[VoiceAgentSettings, VoiceApiSettings]:
         channel=str(_get(agent_raw, "channel", "") or ""),
         auto_join=bool(_get(agent_raw, "auto_join", False)),
         barge_in=bool(_get(agent_raw, "barge_in", True)),
+        barge_in_hold_ms=int(_get(agent_raw, "barge_in_hold_ms", 300)),
         vad_mode=str(_get(agent_raw, "vad_mode", "local") or "local"),
         listen_only_uids=[str(x) for x in (_get(agent_raw, "listen_only_uids", []) or [])],
         reply_text_to_channel=bool(_get(agent_raw, "reply_text_to_channel", False)),
         sample_rate_in=int(_get(agent_raw, "sample_rate_in", 16000)),
         sample_rate_out=int(_get(agent_raw, "sample_rate_out", 24000)),
-        silence_ms=int(_get(agent_raw, "silence_ms", 700)),
+        silence_ms=int(_get(agent_raw, "silence_ms", 1200)),
         max_utterance_ms=int(_get(agent_raw, "max_utterance_ms", 15000)),
+        min_utterance_ms=int(_get(agent_raw, "min_utterance_ms", 500)),
+        reply_cooldown_ms=int(_get(agent_raw, "reply_cooldown_ms", 2500)),
         proxy=str(_get(agent_raw, "proxy", "") or ""),
         mimo_api_key=_env("MIMO_API_KEY", str(mimo.get("api_key", "") or "")),
         mimo_base_url=str(mimo.get("base_url", VoiceAgentSettings.mimo_base_url) or VoiceAgentSettings.mimo_base_url),
