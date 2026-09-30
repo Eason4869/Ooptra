@@ -254,6 +254,8 @@ def test_model_vendor_fields_cover_url_key_model_voice():
     'OOPZ_CONFIG = {}\n',
     'OOPZ_CONFIG = {\n    "proxy": "direct"\n}\n',
     'OOPZ_CONFIG = {\n    "proxy": "direct"  # keep this comment\n}\n',
+    'OOPZ_CONFIG = {"proxy": ("direct")}\n',
+    'OOPZ_CONFIG = {\n    "proxy": ((\n        "direct"\n    ))  # keep this comment\n}\n',
 ])
 def test_missing_fields_preserve_valid_dictionary_syntax(source):
     patched = editor._patched_text(source, {"oopz": {
@@ -263,6 +265,8 @@ def test_missing_fields_preserve_valid_dictionary_syntax(source):
     exec(compile(patched, "<patched>", "exec"), namespace)
     assert namespace["OOPZ_CONFIG"]["default_area"] == "area"
     assert namespace["OOPZ_CONFIG"]["default_channel"] == "channel"
+    if "proxy" in source:
+        assert namespace["OOPZ_CONFIG"]["proxy"] == "direct"
     if "keep this comment" in source:
         assert "keep this comment" in patched
 
@@ -274,3 +278,24 @@ def test_missing_nested_field_preserves_existing_expression():
     exec(compile(patched, "<patched>", "exec"), namespace)
     assert namespace["VOICE_AGENT_CONFIG"]["gemini"] == {"voice": "Puck", "model": "model"}
     assert '"voice": DEFAULT' in patched
+
+
+def test_missing_nested_dict_preserves_expressions_and_comments():
+    source = ('DEFAULT = "personality"\nVOICE_AGENT_CONFIG = {\n'
+              '    "persona": DEFAULT,  # keep persona\n}\n')
+    patched = editor._patched_text(source, {"voice": {
+        "gemini.voice": "Kore", "gemini.model": "model", "proxy": "direct",
+    }})
+    namespace = {}
+    exec(compile(patched, "<patched>", "exec"), namespace)
+    assert namespace["VOICE_AGENT_CONFIG"] == {
+        "persona": "personality", "proxy": "direct",
+        "gemini": {"voice": "Kore", "model": "model"},
+    }
+    assert '"persona": DEFAULT,  # keep persona' in patched
+
+
+def test_nested_expression_is_rejected_without_rewriting_unrelated_values():
+    source = 'DEFAULT = {"voice": "Puck"}\nVOICE_AGENT_CONFIG = {"gemini": DEFAULT}\n'
+    with pytest.raises(RuntimeError, match="gemini"):
+        editor._patched_text(source, {"voice": {"gemini.voice": "Kore"}})

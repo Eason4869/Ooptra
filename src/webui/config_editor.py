@@ -748,25 +748,6 @@ def _dict_entries(dict_node: ast.Dict) -> dict[str, ast.expr]:
     return entries
 
 
-def _pretty_dict(value: dict[str, Any], indent: int = 0) -> str:
-    """把字典格式化成带缩进的 Python 字面量，便于写回 config.py 时保持可读。"""
-    if not value:
-        return "{}"
-    pad = "    " * (indent + 1)
-    closing = "    " * indent
-    lines = ["{"]
-    for key, item in value.items():
-        lines.append(f"{pad}{_python_literal(str(key))}: {_pretty_value(item, indent + 1)},")
-    lines.append(f"{closing}}}")
-    return "\n".join(lines)
-
-
-def _pretty_value(value: Any, indent: int) -> str:
-    if isinstance(value, dict):
-        return _pretty_dict(value, indent)
-    return _python_literal(value)
-
-
 def _merge_nested(base: dict[str, Any], field: str, value: Any) -> None:
     path = _split_field_path(field)
     node = base
@@ -816,11 +797,18 @@ def _patch_field_inplace(
         last_end = _node_span(lines, offsets, current.values[-1])[1]
         tail = "".join(lines)[last_end:closing_pos]
         # 逗号可能出现在注释里，不能靠字符串包含关系判定分隔符。
+        tokens = list(tokenize.generate_tokens(io.StringIO(tail).readline))
         has_comma = any(
             token.type == tokenize.OP and token.string == ","
-            for token in tokenize.generate_tokens(io.StringIO(tail).readline)
+            for token in tokens
         )
         if not has_comma:
+            # AST 的值节点不含外围括号，分隔逗号必须放在括号外。
+            tail_offsets = _line_offsets(tail.splitlines(keepends=True))
+            for token in reversed(tokens):
+                if token.type == tokenize.OP and token.string == ")":
+                    last_end += tail_offsets[token.end[0] - 1] + token.end[1]
+                    break
             if last_end == position:
                 chunks.append(",")
             else:
@@ -857,35 +845,33 @@ def _patched_text(text: str, updates: dict[str, dict[str, Any]]) -> str:
             if dict_node is None:
                 raise RuntimeError(f"config.py 找不到 {source_name}，无法写入")
 
-        pending: dict[str, Any] = {}
+        pending: dict[str, dict[str, Any]] = {}
         for field, value in values.items():
             literal = _python_literal(value)
             if _patch_field_inplace(
                 dict_node, field, literal, lines, offsets, replacements, insertions
             ):
                 continue
-            pending[field] = value
+            # 合并同一缺失子树的字段，只插入一次，不重写其它配置表达式。
+            path = _split_field_path(field)
+            current = dict_node
+            for index, part in enumerate(path[:-1]):
+                child = _dict_entries(current).get(part)
+                if isinstance(child, ast.Dict):
+                    current = child
+                    continue
+                prefix = ".".join(path[: index + 1])
+                if child is not None:
+                    raise RuntimeError(f"配置项 {prefix} 不是字典字面量，无法安全修改其子项")
+                subtree = pending.setdefault(prefix, {})
+                _merge_nested(subtree, ".".join(path[index + 1 :]), value)
+                break
 
-        if pending:
-            # 中间层字典缺失等场景：整组合并后重写该分组，保证最终值正确
-            base: dict[str, Any] = {}
-            for key, node in _dict_entries(dict_node).items():
-                try:
-                    base[key] = ast.literal_eval(node)
-                except Exception:
-                    base[key] = None
-            for field, value in values.items():
-                _merge_nested(base, field, value)
-            start, end = _node_span(lines, offsets, dict_node)
-            replacements = [
-                (s, e, rep) for s, e, rep in replacements if not (start <= s and e <= end)
-            ]
-            insertions = {
-                pos: chunks
-                for pos, chunks in insertions.items()
-                if not (start <= pos <= end)
-            }
-            replacements.append((start, end, _pretty_dict(base)))
+        for field, value in pending.items():
+            _patch_field_inplace(
+                dict_node, field, _python_literal(value), lines, offsets,
+                replacements, insertions,
+            )
 
     edits: list[tuple[int, int, str]] = list(replacements)
     for position, chunks in insertions.items():

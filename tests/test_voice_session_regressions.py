@@ -174,6 +174,41 @@ def test_cascade_silence_keeps_intentional_forced_interruption(tmp_path):
     asyncio.run(run())
 
 
+def test_live_barge_in_clears_audio_whose_push_is_still_pending(monkeypatch, tmp_path):
+    async def run():
+        agent = make_agent(tmp_path, barge_in_hold_ms=20)
+        await agent._wire_live()
+        entered, release, interrupted = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+        async def blocked_push(pcm, rate, *, finish=False):
+            entered.set()
+            await release.wait()
+            agent.duplex.audio.append(pcm)
+            return {"ok": True}
+
+        async def interrupt():
+            interrupted.set()
+
+        async def discard_input(*args):
+            pass
+
+        monkeypatch.setattr(agent.duplex, "push_tts_pcm", blocked_push)
+        monkeypatch.setattr(agent.backend, "interrupt", interrupt)
+        monkeypatch.setattr(agent.backend, "push_audio", discard_input)
+        push = asyncio.create_task(agent.backend._audio_out(b"old", 24000))
+        await asyncio.wait_for(entered.wait(), 1)
+        barge = asyncio.create_task(agent._on_remote_pcm("user", b"\x00\x40" * 320, 16000))
+        try:
+            await asyncio.wait_for(interrupted.wait(), 1)
+        finally:
+            release.set()
+            await asyncio.wait_for(asyncio.gather(push, barge), 1)
+        assert agent.duplex.audio == [], "清空队列后，在途分片仍然入队"
+        assert not agent.status()["speaking"]
+
+    asyncio.run(run())
+
+
 def test_persona_endpoint_updates_the_active_live_session(opened, tmp_path):
     async def run():
         agent = make_agent(tmp_path)

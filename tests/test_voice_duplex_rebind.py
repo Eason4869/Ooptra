@@ -139,6 +139,7 @@ def _make_agent() -> VoiceAgent:
     agent._joined = False
     agent._speaking = False
     agent._barge_in_armed = True
+    agent._live_output_lock = asyncio.Lock()
     agent._barge_in_speech_ms = {}
     agent._user_buffers = {}
     agent._vad = None

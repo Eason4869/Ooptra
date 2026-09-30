@@ -112,6 +112,7 @@ def _make_agent(*, hold_ms: int = HOLD_MS) -> tuple[VoiceAgent, FakeDuplex, Fake
     agent._joined = True
     agent._speaking = False
     agent._barge_in_armed = True
+    agent._live_output_lock = asyncio.Lock()
     agent._barge_in_speech_ms = {}
     agent._user_buffers = {}
     agent._vad = None
