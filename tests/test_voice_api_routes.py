@@ -101,6 +101,9 @@ class FakeAgent:
     def update_persona(self, persona: str) -> None:
         self.settings.persona = persona
 
+    async def refresh(self, changed: list[str]) -> list[str]:
+        return []
+
 
 class FakeRuntime:
     def __init__(self, agent: FakeAgent) -> None:

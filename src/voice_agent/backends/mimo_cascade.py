@@ -423,8 +423,9 @@ class MimoCascadeBackend(VoiceBackend):
         text = await self.asr(pcm16, sample_rate)
         if not text.strip():
             return VoiceReply(user_text=text)
-        self.memory.append("user", text, user_key=user_key, channel_key=channel_key)
         reply_text = await self.chat(text, user_key=user_key)
+        # chat 会追加当前问题；先读取旧历史，完成请求后再落盘当前回合。
+        self.memory.append("user", text, user_key=user_key, channel_key=channel_key)
         if not reply_text.strip():
             return VoiceReply(user_text=text, text="", user_key=user_key)
         self.memory.append(

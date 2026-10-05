@@ -104,6 +104,8 @@ class BridgeController:
 
     async def _supervise(self) -> None:
         while not self._closing:
+            # 消费这一轮的通知；后续 await 期间到达的新通知留给下一轮。
+            self._wake.clear()
             if self._restart_requested:
                 self._restart_requested = False
                 self.state.restarts += 1
@@ -117,7 +119,6 @@ class BridgeController:
             await self._wait_run()
 
     async def _wait_wake(self, timeout: float | None) -> None:
-        self._wake.clear()
         with contextlib.suppress(asyncio.TimeoutError):
             await asyncio.wait_for(self._wake.wait(), timeout=timeout)
 

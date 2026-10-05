@@ -55,7 +55,11 @@ def _write_unique_sibling(
     )
     temp_path = Path(raw_path)
     try:
-        os.fchmod(fd, mode)
+        # Windows 没有 fchmod；在写入内容前设置同目录临时文件的权限。
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, mode)
+        else:
+            os.chmod(temp_path, mode)
         with os.fdopen(fd, "wb") as file:
             file.write(data)
             file.flush()

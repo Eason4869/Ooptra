@@ -31,3 +31,15 @@ def test_payload_base_includes_repo_links():
     assert payload["branch_url"].startswith(update_check.GITHUB_REPO_URL)
     assert "releases" in payload["releases_url"]
     assert payload["current_version"]
+
+
+def test_date_beta_does_not_hide_later_stable_updates():
+    assert update_check._is_newer("2.2.1", "261001-beta") is True
+    assert update_check._is_newer("2.2.0", "261001-beta") is False
+    assert update_check._is_newer("2.1.0", "261001-beta") is False
+
+
+def test_date_betas_compare_by_date():
+    assert update_check._is_newer("261002-beta", "261001-beta") is True
+    assert update_check._is_newer("261001-beta", "261001-beta") is False
+    assert update_check._is_newer("260930-beta", "261001-beta") is False
