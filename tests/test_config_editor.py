@@ -256,6 +256,9 @@ def test_model_vendor_fields_cover_url_key_model_voice():
     'OOPZ_CONFIG = {\n    "proxy": "direct"  # keep this comment\n}\n',
     'OOPZ_CONFIG = {"proxy": ("direct")}\n',
     'OOPZ_CONFIG = {\n    "proxy": ((\n        "direct"\n    ))  # keep this comment\n}\n',
+    'OOPZ_CONFIG = {"proxy": (("direct")),}\n',
+    'OOPZ_CONFIG = {\n    "proxy": ("direct")  # keep this comment, )\n}\n',
+    'OOPZ_CONFIG = {"备注": "测试", "proxy": ("direct")}\n',
 ])
 def test_missing_fields_preserve_valid_dictionary_syntax(source):
     patched = editor._patched_text(source, {"oopz": {
@@ -278,6 +281,25 @@ def test_missing_nested_field_preserves_existing_expression():
     exec(compile(patched, "<patched>", "exec"), namespace)
     assert namespace["VOICE_AGENT_CONFIG"]["gemini"] == {"voice": "Puck", "model": "model"}
     assert '"voice": DEFAULT' in patched
+
+
+def test_missing_nested_field_preserves_parenthesized_value_and_outer_fields():
+    source = (
+        'VOICE_AGENT_CONFIG = {\n'
+        '    "gemini": {\n'
+        '        "voice": (("Puck"))  # keep this comment, )\n'
+        '    },\n'
+        '    "proxy": "direct",\n'
+        '}\n'
+    )
+    patched = editor._patched_text(source, {"voice": {"gemini.model": "model"}})
+    namespace = {}
+    exec(compile(patched, "<patched>", "exec"), namespace)
+    assert namespace["VOICE_AGENT_CONFIG"] == {
+        "gemini": {"voice": "Puck", "model": "model"}, "proxy": "direct",
+    }
+    assert '(("Puck"))' in patched
+    assert "# keep this comment, )" in patched
 
 
 def test_missing_nested_dict_preserves_expressions_and_comments():

@@ -795,19 +795,26 @@ def _patch_field_inplace(
     chunks = insertions.setdefault(position, [])
     if not chunks and current.values:
         last_end = _node_span(lines, offsets, current.values[-1])[1]
-        tail = "".join(lines)[last_end:closing_pos]
-        # 逗号可能出现在注释里，不能靠字符串包含关系判定分隔符。
-        tokens = list(tokenize.generate_tokens(io.StringIO(tail).readline))
+        dict_start = _node_span(lines, offsets, current)[0]
+        dict_text = "".join(lines)[dict_start:closing_pos + 1]
+        token_offsets = _line_offsets(dict_text.splitlines(keepends=True))
+        # 完整字典保留匹配的左括号，避免 Python 3.10 对尾部片段报 TokenError。
+        # 只检查值之后的运算符；注释里的逗号不能作为分隔符。
+        tokens = [
+            token
+            for token in tokenize.generate_tokens(io.StringIO(dict_text).readline)
+            if token.type == tokenize.OP
+            and dict_start + token_offsets[token.start[0] - 1] + token.start[1] >= last_end
+        ]
         has_comma = any(
             token.type == tokenize.OP and token.string == ","
             for token in tokens
         )
         if not has_comma:
             # AST 的值节点不含外围括号，分隔逗号必须放在括号外。
-            tail_offsets = _line_offsets(tail.splitlines(keepends=True))
             for token in reversed(tokens):
                 if token.type == tokenize.OP and token.string == ")":
-                    last_end += tail_offsets[token.end[0] - 1] + token.end[1]
+                    last_end = dict_start + token_offsets[token.end[0] - 1] + token.end[1]
                     break
             if last_end == position:
                 chunks.append(",")
