@@ -2,6 +2,9 @@
   <img src="./src/webui/assets/logo.svg" width="80" alt="Ooptra 双对话桥 Logo" />
 </p>
 
+![:name](https://count.getloli.com/@Ooptra?name=Ooptra&theme=minecraft&padding=6&offset=0&align=top&scale=1&pixelated=1&darkmode=auto)
+
+
 <p align="center">
   <img src="./assets/readme/hero.svg" width="100%" alt="Ooptra 3.0.1：消息桥接、语音对话、自动串门与支持暗色模式的 WebUI" />
 </p>
