@@ -79,3 +79,6 @@ class VoiceDuplex:
 
     async def stop_tts(self) -> dict[str, Any]:
         return await self._transport.stop_tts()
+
+    async def wait_tts_complete(self, timeout: float = 30.0) -> dict[str, Any]:
+        return await self._transport.wait_tts_complete(timeout)

@@ -140,22 +140,21 @@ class Voice(BaseService):
 
     async def leave(self) -> None:
         await self._stop_identity_heartbeat()
-        try:
-            await self.backend.leave()
-        finally:
-            if self._current_area and self._current_channel:
-                try:
-                    await self._bot.channels.leave_voice_channel(
-                        channel=self._current_channel,
-                        area=self._current_area,
-                        target=self._config.person_uid,
-                    )
-                except Exception:
-                    logger.debug("leave_voice_channel failed", exc_info=True)
-            self._current_sign = None
-            self._current_area = None
-            self._current_channel = None
-            self._current_uid = None
+        await self.backend.leave()
+        if self._current_area and self._current_channel:
+            result = await self._bot.channels.leave_voice_channel(
+                channel=self._current_channel,
+                area=self._current_area,
+                target=self._config.person_uid,
+            )
+            if result is not None and not getattr(result, "ok", True):
+                raise RuntimeError(getattr(result, "message", "") or "voice membership leave rejected")
+        # Only clear ownership once both the RTC and membership leave succeed.
+        # A partial failure retains enough information for a bounded retry.
+        self._current_sign = None
+        self._current_area = None
+        self._current_channel = None
+        self._current_uid = None
 
     async def play_url(self, url: str) -> dict[str, Any]:
         if not url.strip():

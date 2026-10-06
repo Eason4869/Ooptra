@@ -141,6 +141,9 @@ class GeminiLiveBackend(VoiceBackend):
         self._audio_out: AudioOutHandler | None = None
         self._text_out: Callable[[str], Awaitable[None] | None] | None = None
         self._turn_out: TurnOutHandler | None = None
+        self._reply_out = None
+        self.reply_active = False
+        self._announcement = False
         # start_session 可能被并发调用（push_audio 在音频热路径上也会调它），
         # 而它开头就 _reset_session() —— 没有这把锁，任何一次非活跃窗口都会
         # 让每个音频帧各建一次会话，互相把对方的 socket 拆掉。
@@ -162,6 +165,14 @@ class GeminiLiveBackend(VoiceBackend):
 
     def set_text_out(self, handler) -> None:
         self._text_out = handler
+
+    def set_reply_out(self, handler) -> None:
+        self._reply_out = handler
+
+    def _set_reply_active(self, active: bool) -> None:
+        self.reply_active = active
+        if self._reply_out is not None:
+            self._reply_out(active)
 
     def set_turn_out(self, handler: TurnOutHandler | None) -> None:
         """注册「一个回合结束了」的回调（``interrupted=True`` 表示被抢话打断）。
@@ -238,6 +249,10 @@ class GeminiLiveBackend(VoiceBackend):
         self._session_task = None
         self._ws = None
         self._ready.clear()
+        self._set_reply_active(False)
+        self._announcement = False
+        self._last_user_text = ""
+        self._last_reply = ""
         if task is not None and not task.done():
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
@@ -262,6 +277,11 @@ class GeminiLiveBackend(VoiceBackend):
 
     async def aclose(self) -> None:
         await self.close()
+
+    async def reset_reply_session(self) -> None:
+        """Discard an uncancellable turn; lazily rebuild on the next input."""
+        await self.close()
+        self._closed = False
 
     def _schedule_reconnect(self) -> None:
         """音频热路径不能阻塞，断线后交给后台任务重连。"""
@@ -436,11 +456,14 @@ class GeminiLiveBackend(VoiceBackend):
         input_tr = server.get("inputTranscription") or {}
         output_tr = server.get("outputTranscription") or {}
         if input_tr.get("text"):
+            self._set_reply_active(True)
             self._last_user_text = (self._last_user_text + input_tr["text"]).strip()
         if output_tr.get("text"):
             self._last_reply = (self._last_reply + output_tr["text"]).strip()
 
         turn = server.get("modelTurn") or {}
+        if turn or output_tr.get("text"):
+            self._set_reply_active(True)
         for part in turn.get("parts") or []:
             inline = part.get("inlineData") or part.get("inline_data") or {}
             data = inline.get("data")
@@ -462,6 +485,7 @@ class GeminiLiveBackend(VoiceBackend):
                     await result
 
         if server.get("turnComplete") or server.get("interrupted"):
+            self._set_reply_active(False)
             self._turns += 1
             # 转写落日志：语言乱切换这类问题**只能**从这里看出来（模型到底听到了
             # 什么、又用什么语言回答）。记忆里本来就存了这两段文本，日志不增加暴露。
@@ -484,7 +508,7 @@ class GeminiLiveBackend(VoiceBackend):
                     logger.debug("turn out handler failed", exc_info=True)
             if self._last_user_text or self._last_reply:
                 try:
-                    if self._last_user_text:
+                    if self._last_user_text and not self._announcement:
                         self.memory.append("user", self._last_user_text, user_key="live")
                     if self._last_reply:
                         self.memory.append("assistant", self._last_reply, user_key="live")
@@ -497,6 +521,7 @@ class GeminiLiveBackend(VoiceBackend):
                     await result
             self._last_user_text = ""
             self._last_reply = ""
+            self._announcement = False
 
     # ------------------------------------------------------------------
     # VoiceBackend 兼容接口（Live 走流式，handle_utterance 仅兜底）
@@ -526,6 +551,7 @@ class GeminiLiveBackend(VoiceBackend):
         if not self.session_active:
             await self.start_session()
         payload = {"realtimeInput": {"text": text}}
+        self._set_reply_active(True)
         try:
             await self._send(payload)
         except Exception as exc:
@@ -533,6 +559,17 @@ class GeminiLiveBackend(VoiceBackend):
             await self._reset_session()
             await self.start_session()
             await self._send(payload)
+
+    async def speak_announcement(self, kind: str, template: str) -> None:
+        from voice_agent.announcements import announcement_instruction
+
+        if not self.session_active:
+            await self.start_session()
+        self._last_user_text = ""
+        self._last_reply = ""
+        self._announcement = True
+        self._set_reply_active(True)
+        await self._send({"realtimeInput": {"text": announcement_instruction(kind, template)}})
 
 
 class OpenAiRealtimeBackend(GeminiLiveBackend):

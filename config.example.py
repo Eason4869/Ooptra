@@ -111,7 +111,6 @@ WEBUI_CONFIG = {
 # 语音实时对话（Voice Agent）—— Web 控制台「配置」页可改
 VOICE_AGENT_CONFIG = {
     "enabled": False,                 # 总开关；不影响纯 OneBot 桥接
-    "auto_join": False,
     "area": "",                       # 留空用 OOPZ_CONFIG["default_area"]
     "channel": "",                    # 留空用 OOPZ_CONFIG["default_channel"]
 
@@ -170,6 +169,23 @@ VOICE_AGENT_CONFIG = {
 
     "memory_path": "data/voice_memory.jsonl",
     "memory_max_turns": 30,
+}
+
+# 分域自动语音串门：所有域默认关闭，通过语音台逐域启用。
+# 分域覆盖仅支持 defaults 字段；删除覆盖恢复继承，空台词列表表示静默。
+# daily_limit=0 表示不限；分域上限和全局上限同时约束成功自动进房次数。
+VOICE_AUTO_VISIT_CONFIG = {
+    "check_interval_minutes": [10, 20],  # 仅实例级，不支持分域覆盖
+    "daily_limit": 3,                   # 北京时间自然日，重启保留计数
+    "defaults": {
+        "join_probability": 0.2,
+        "stay_minutes": [10, 20],
+        "auto_cooldown_minutes": [30, 60],
+        "manual_cooldown_minutes": [120, 240],
+        "enter_prompts": ["在玩什么游戏？"],
+        "leave_prompts": ["拜拜，我下了"],
+    },
+    "areas": {},
 }
 
 # 语音 HTTP API —— 已合并到 WebUI（http://127.0.0.1:3090/voice/* 与 /api/voice/*）。

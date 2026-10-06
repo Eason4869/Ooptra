@@ -192,14 +192,18 @@ class WebUIConsole:
         return web.FileResponse(os.path.join(ASSETS_DIR, "index.html"), headers={"Cache-Control": "no-cache"})
 
     async def _handle_favicon(self, _request: web.Request) -> web.StreamResponse:
-        return web.Response(status=204)
+        return web.FileResponse(os.path.join(ASSETS_DIR, "favicon.svg"),
+                                headers={"Content-Type": "image/svg+xml", "Cache-Control": "no-cache"})
 
     async def _handle_asset(self, request: web.Request) -> web.StreamResponse:
         name = os.path.basename(str(request.match_info.get("name") or ""))
         path = os.path.join(ASSETS_DIR, name)
         if not name or not os.path.isfile(path):
             raise web.HTTPNotFound()
-        return web.FileResponse(path, headers={"Cache-Control": "no-cache"})
+        headers = {"Cache-Control": "no-cache"}
+        if name.endswith(".svg"):
+            headers["Content-Type"] = "image/svg+xml"
+        return web.FileResponse(path, headers=headers)
 
     # ------------------------------------------------------------------
     # 状态 / 凭据
@@ -392,7 +396,7 @@ class WebUIConsole:
     async def _hot_reload_voice(self, result: dict) -> None:
         """把刚保存的语音配置应用到运行中的 VoiceRuntime。"""
         changed = result.get("changed") or {}
-        if not ({"voice", "voice_api"} & set(changed)):
+        if not ({"voice", "voice_api", "auto_visit"} & set(changed)):
             return
         try:
             from voice_agent.runtime import get_voice_runtime

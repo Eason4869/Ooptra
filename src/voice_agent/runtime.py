@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
+import config as runtime_config
+from core.paths import project_path
 from voice_agent.agent import VoiceAgent
 from voice_agent.api import VoiceApiServer
+from voice_agent.auto_visit import AutoVisitController
+from voice_agent.auto_visit_settings import parse_auto_visit_config
+from voice_agent.auto_visit_state import AutoVisitStateStore
 from voice_agent.settings import apply_settings, load_voice_agent_settings
 
 logger = logging.getLogger(__name__)
@@ -16,10 +22,15 @@ _API_RESTART_KEYS = ("host", "port")
 
 
 class VoiceRuntime:
-    def __init__(self) -> None:
+    def __init__(self, *, state_path: str | Path | None = None) -> None:
         self.agent_settings, self.api_settings = load_voice_agent_settings()
         self.agent = VoiceAgent(self.agent_settings, self.api_settings)
         self.api = VoiceApiServer(self, self.api_settings)
+        self.auto_visit = AutoVisitController(
+            self.agent, parse_auto_visit_config(getattr(runtime_config, "VOICE_AUTO_VISIT_CONFIG", None)),
+            AutoVisitStateStore(state_path or project_path("data", "voice_auto_visit.json")))
+        self.agent.set_operation_callback(self.auto_visit.on_operation)
+        self._bound_bot: Any = None
         self._started = False
         self._api_started = False
 
@@ -29,6 +40,35 @@ class VoiceRuntime:
 
     def bind_bot(self, bot: Any) -> None:
         self.agent.bind_bot(bot)
+        if bot is not self._bound_bot:
+            self._bound_bot = bot
+            self.auto_visit.set_bot_ready(False)
+            registry = getattr(bot, "registry", None)
+            if registry is not None:
+                async def presence(_ctx: Any, event: Any) -> None:
+                    if bot is self._bound_bot:
+                        self.auto_visit.notify_presence(event.area, event.channel)
+                        self.auto_visit.notify_presence(event.from_area, event.from_channel)
+                registry.on("voice.enter", presence)
+                registry.on("voice.leave", presence)
+
+    async def set_bot_ready(self, ready: bool) -> None:
+        self.agent.set_connection_ready(ready)
+        self.auto_visit.set_bot_ready(ready)
+        if not ready:
+            try:
+                result = await self.agent.leave(source="system")
+                if isinstance(result, dict) and not result.get("ok", True):
+                    raise RuntimeError(result.get("error") or "无法确认语音房间已退出")
+            except Exception:
+                logger.exception("voice cleanup after Oopz disconnect failed")
+                await self.auto_visit.pause()
+
+    async def unbind_bot(self, bot: Any) -> None:
+        if bot is self._bound_bot:
+            await self.set_bot_ready(False)
+            self._bound_bot = None
+            self.agent.bind_bot(None)
 
     async def start(self) -> None:
         if self._started:
@@ -45,8 +85,10 @@ class VoiceRuntime:
             await self.agent.start()
         except Exception:
             logger.exception("voice agent start failed")
+        await self.auto_visit.start()
 
     async def stop(self) -> None:
+        await self.auto_visit.stop()
         if not self._started:
             return
         self._started = False
@@ -74,6 +116,9 @@ class VoiceRuntime:
         返回 ``{"changed", "api_changed", "notes", "restart_keys"}``。
         """
         fresh_agent, fresh_api = load_voice_agent_settings()
+        fresh_visit = parse_auto_visit_config(getattr(runtime_config, "VOICE_AUTO_VISIT_CONFIG", None))
+        visit_changed = fresh_visit != self.auto_visit.config
+        await self.auto_visit.reload(fresh_visit)
 
         # 就地写回：runtime.agent_settings / agent.settings / backend.settings 同一对象
         changed = apply_settings(self.agent_settings, fresh_agent)
@@ -97,11 +142,16 @@ class VoiceRuntime:
             logger.exception("voice agent refresh failed")
             notes.append(f"语音配置应用失败：{exc}")
 
+        # WebUI can enable voice even if the process booted with both switches off.
+        if self.enabled and not self._started:
+            await self.start()
+
         # 语音总开关的热切换
         if "enabled" in changed:
             try:
-                if self.agent_settings.enabled and not self.agent.running:
-                    await self.agent.start()
+                if self.agent_settings.enabled:
+                    if not self.agent.running:
+                        await self.agent.start()
                     notes.append("语音对话已启用")
                 elif not self.agent_settings.enabled and self.agent.running:
                     await self.agent.stop()
@@ -129,7 +179,7 @@ class VoiceRuntime:
             notes.append("独立语音端口的监听地址/端口需重启才能生效")
 
         return {
-            "changed": changed,
+            "changed": [*changed, *(["auto_visit"] if visit_changed else [])],
             "api_changed": api_changed,
             "notes": notes,
             "restart_keys": restart_keys,

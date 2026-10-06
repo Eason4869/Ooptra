@@ -3,9 +3,11 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta name="color-scheme" content="dark" />
+<meta name="color-scheme" content="light" />
+<meta name="theme-color" content="#F5F8FC" />
 <title>Ooptra · Oopz ⇄ OneBot v11 桥接控制台</title>
 <link rel="stylesheet" href="/assets/style.css" />
+<link rel="icon" type="image/svg+xml" href="/assets/favicon.svg" />
 </head>
 <body>
 
@@ -13,7 +15,7 @@
 <div class="screen-login" id="screen-login" hidden>
   <div class="login-art">
     <div class="art-head">
-      <span class="mark">⇄</span>
+      <img class="brand-symbol" src="/assets/logo.svg" width="64" height="64" alt="Ooptra 双对话环" />
       <div>
         <h1>Ooptra</h1>
         <p>Oopz ⇄ OneBot v11 反向 WebSocket 桥接控制台</p>
@@ -81,8 +83,8 @@
 <div class="screen-app" id="screen-app" hidden>
   <aside class="rail">
     <div class="rail-brand">
-      <span class="mark sm">⇄</span>
-      <div><b>Ooptra</b><i>桥接控制台</i></div>
+      <img class="brand-symbol sm" src="/assets/logo.svg" width="38" height="38" alt="" />
+      <div><b>Ooptra</b><i>语音桥接工作台</i></div>
     </div>
     <nav class="rail-nav">
       <div class="nav-group">
@@ -112,6 +114,8 @@
         </button>
       </div>
     </nav>
+    <details class="rail-utilities">
+    <summary>维护与账号</summary>
     <div class="rail-foot">
       <button class="nav-item small" id="btn-restart">
         <svg viewBox="0 0 24 24"><path d="M12 5V2L7 6l5 4V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7Z"/></svg>重新连接
@@ -128,6 +132,7 @@
       <p class="rail-meta" id="rail-meta"></p>
       <p class="rail-ver" id="rail-ver"></p>
     </div>
+    </details>
   </aside>
   <main class="workspace">
     <header class="page-head">
@@ -228,6 +233,7 @@
     <section class="page" id="page-voice">
       <div class="subtabs" id="voice-tabs">
         <button class="subtab is-active" data-tab="session">会话控制</button>
+        <button class="subtab" data-tab="auto-visit">自动串门</button>
         <button class="subtab" data-tab="members">房间成员</button>
         <button class="subtab" data-tab="persona">人格与记忆</button>
       </div>
@@ -325,6 +331,56 @@
             <ul class="feed" id="voice-transcript"></ul>
           </section>
         </div>
+      </div>
+
+      <!-- 自动串门：全局默认与域覆盖独立保存 -->
+      <div class="vpane" id="vpane-auto-visit">
+        <section class="visit-runtime" aria-label="自动串门运行状态">
+          <div class="visit-runtime-heading">
+            <div><h3 id="visit-phase">正在读取状态</h3><p class="hint" id="visit-reason">先开启一个域，再让 Ooptra 低频进入有人的语音房。</p></div>
+            <div class="btn-row"><button class="btn ghost sm" id="visit-refresh" type="button">刷新</button><button class="btn primary sm" id="visit-pause" type="button" disabled>暂停串门</button></div>
+          </div>
+          <dl class="visit-metrics">
+            <div><dt>今日自动进房</dt><dd id="visit-count">—</dd></div>
+            <div><dt>下次检查</dt><dd id="visit-next">—</dd></div>
+            <div><dt>预计退出</dt><dd id="visit-leave">—</dd></div>
+            <div><dt>全局自动冷却</dt><dd id="visit-cooldown">—</dd></div>
+          </dl>
+          <p class="hint" id="visit-action"></p>
+          <p class="hint" id="visit-current-target">当前语音会话：正在读取</p>
+          <p class="hint err" id="visit-error" role="status"></p>
+        </section>
+        <div class="visit-layout">
+          <section class="card visit-global">
+            <header class="card-head"><h3>全局规则</h3><span class="chip">各域共用</span></header>
+            <p class="hint">每轮只尝试一个有人的房间。手动进房不受次数和冷却限制，也不会被自动退出。</p>
+            <form id="visit-global-form">
+              <div class="visit-field-grid">
+                <fieldset class="visit-field"><legend>检查间隔 / 分钟</legend><div class="range-input"><input class="control" id="visit-check-min" type="number" min="1" max="10080" step="any" required aria-label="检查间隔最小分钟" /><span>至</span><input class="control" id="visit-check-max" type="number" min="1" max="10080" step="any" required aria-label="检查间隔最大分钟" /></div></fieldset>
+                <label class="visit-field"><span>每天自动进房总上限</span><input class="control" id="visit-global-limit" type="number" min="0" step="1" required /><small>北京时间自然日；0 表示不限</small></label>
+              </div>
+              <h4 class="visit-section-label">各域默认设置</h4>
+              <p class="hint">未单独覆盖的域会沿用这里的设置。</p>
+              <div id="visit-default-fields" class="visit-field-grid"></div>
+              <div class="visit-save-row"><p class="hint" id="visit-global-feedback" role="status"></p><button class="btn primary" id="visit-global-save" type="submit" disabled>保存全局规则</button></div>
+            </form>
+          </section>
+          <section class="card visit-area">
+            <header class="card-head"><h3>按域设置</h3><span class="chip" id="visit-enabled-count">—</span></header>
+            <label class="field"><span>选择已加入的域</span><select id="visit-area-select" class="control" disabled><option value="">读取域列表…</option></select></label>
+            <div id="visit-area-empty" class="empty">加载完成后可为每个域开启串门。新域默认关闭。</div>
+            <form id="visit-area-form" hidden>
+              <label class="visit-enable"><input id="visit-area-enabled" type="checkbox" /><span><b>允许在这个域自动串门</b><small>关闭会结束当前域的自动停留；手动会话继续保留。</small></span></label>
+              <div class="visit-area-status" id="visit-area-status"></div>
+              <label class="visit-field"><span>这个域的每日上限</span><input class="control" id="visit-area-limit" type="number" min="0" step="1" required /><small>0 表示域内不限；仍受全局总上限约束</small></label>
+              <h4 class="visit-section-label">覆盖默认设置</h4>
+              <p class="hint">勾选后单独设置；取消勾选会恢复继承。</p>
+              <div id="visit-area-fields" class="visit-field-grid"></div>
+              <div class="visit-save-row"><p class="hint" id="visit-area-feedback" role="status"></p><button class="btn primary" id="visit-area-save" type="submit">保存这个域</button></div>
+            </form>
+          </section>
+        </div>
+        <p class="visit-footnote hint">自动退房后所有域短暂休息；手动退房后仅该域长时间休息。停留到期会等待当前回复结束后告别，持续空房则静默退出。关闭页面不影响后台运行。</p>
       </div>
 
       <!-- 成员 -->

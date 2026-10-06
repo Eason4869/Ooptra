@@ -533,6 +533,7 @@ window.agoraJoin = async (appId, token, channelName, uid) => {
 };
 
 window.agoraLeave = async () => {
+  ttsGeneration += 1;
   await stopCurrentPlayback({ bumpGen: true, nextState: "joined" });
 
   // 必须在 client 还在的时候拆：unpublish 要走 client。
@@ -542,7 +543,9 @@ window.agoraLeave = async () => {
   if (client) {
     try {
       await client.leave();
-    } catch (_) {}
+    } catch (e) {
+      return { ok: false, error: e?.message || String(e) };
+    }
     client = null;
   }
 
@@ -861,6 +864,7 @@ let ttsPublished = false;
 // 旧 track 就再也推不出声音。记下它发布在哪个 client 上，发现换了就整套重建。
 let ttsPublishedFor = null;
 let ttsPlaying = false;
+let ttsGeneration = 0;
 // 推流播放队列：Live 的分片常常快于实时到达（实测 5.76s 音频在 1.29s 内到齐），
 // 必须按时间轴排队播放，否则每片都「立即开始」会叠成一团噪音。
 let ttsNextTime = 0;        // 下一片应当开始播放的 AudioContext 时刻
@@ -1088,6 +1092,7 @@ async function ensureTtsTrack(sampleRate) {
 }
 
 window.agoraStopTts = async () => {
+  ttsGeneration += 1;
   // 本来就没什么在播（没有分片在队列里、也不在播），直接返回：省掉下面那次
   // 30ms 静音窗口。服务端判定抢话后本地还会再 stop 一次，那一次通常就落在
   // 这个分支里 —— 而 stop_tts 在远端音频热路径上，白等的 30ms 没必要。
@@ -1116,10 +1121,15 @@ window.agoraStopTts = async () => {
 window.agoraPushTtsPcm = async (b64, sampleRate, finish) => {
   try {
     if (!client) return { ok: false, error: "not joined" };
+    const clientRef = client;
+    const generation = ttsGeneration;
     if (b64 && b64.length) {
       const pcm = base64ToInt16(b64);
       if (pcm.length) {
         await ensureTtsTrack(sampleRate || 24000);
+        if (client !== clientRef || generation !== ttsGeneration || !ttsCtx) {
+          return { ok: false, error: "stale playback" };
+        }
         const buf = ttsCtx.createBuffer(1, pcm.length, sampleRate || 24000);
         const ch = buf.getChannelData(0);
         for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 32768;
@@ -1138,17 +1148,29 @@ window.agoraPushTtsPcm = async (b64, sampleRate, finish) => {
         ttsSources.add(src);
         src.onended = () => {
           ttsSources.delete(src);
+          if (!ttsSources.size) ttsPlaying = false;
         };
         ttsPlaying = true;
       }
     }
     if (finish) {
-      ttsPlaying = false;
+      ttsPlaying = ttsSources.size > 0;
     }
     return { ok: true, playing: ttsPlaying, finish: !!finish };
   } catch (e) {
     return { ok: false, error: e && e.message ? e.message : String(e) };
   }
+};
+
+window.agoraTtsStatus = () => {
+  if (!client) return { ok: false, error: "not joined" };
+  const remaining = ttsCtx ? Math.max(0, ttsNextTime - ttsCtx.currentTime) : 0;
+  return {
+    ok: true,
+    pending_sources: ttsSources.size,
+    remaining_seconds: remaining,
+    context_state: ttsCtx ? ttsCtx.state : "closed",
+  };
 };
 
 // join 成功后挂上 duplex 钩子

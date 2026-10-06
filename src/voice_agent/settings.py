@@ -25,7 +25,6 @@ class VoiceAgentSettings:
     persona: str = "你是 Oopz 语音频道助手，说话简洁友好，像在语音房里自然聊天。"
     area: str = ""
     channel: str = ""
-    auto_join: bool = False
     barge_in: bool = True
     #: 抢话门限：房间里某人要**连续说话**满这么多毫秒，才认作「真的要打断 bot」。
     #: 0 = 关闭门限（退回旧行为：第一帧就打断，热闹房间里 bot 说不完一句话）。
@@ -106,7 +105,6 @@ def load_voice_agent_settings() -> tuple[VoiceAgentSettings, VoiceApiSettings]:
         persona=str(_get(agent_raw, "persona", VoiceAgentSettings.persona)),
         area=str(_get(agent_raw, "area", "") or ""),
         channel=str(_get(agent_raw, "channel", "") or ""),
-        auto_join=bool(_get(agent_raw, "auto_join", False)),
         barge_in=bool(_get(agent_raw, "barge_in", True)),
         barge_in_hold_ms=int(_get(agent_raw, "barge_in_hold_ms", 300)),
         vad_mode=str(_get(agent_raw, "vad_mode", "local") or "local"),
