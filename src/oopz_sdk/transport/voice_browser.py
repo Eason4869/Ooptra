@@ -438,20 +438,19 @@ class BrowserVoiceTransport:
         if not self._started:
             return
 
-        try:
-            if self._oopz_uid and self._agora_uid:
-                try:
-                    await self.set_voice_state(mic_muted=True, speaker_muted=False)
-                except Exception:
-                    logger.debug("set voice state before leave failed", exc_info=True)
+        if self._oopz_uid and self._agora_uid:
+            try:
+                await self.set_voice_state(mic_muted=True, speaker_muted=False)
+            except Exception:
+                logger.debug("set voice state before leave failed", exc_info=True)
 
-            await self._run_on_browser("agoraLeave")
-        finally:
-            self._agora_uid = None
-            self._joined_room = None
-            self._joined_uid = None
-            # 上一个房间的状态留在表里会被当成本房成员状态显示
-            self._voice_states.clear()
+        result = await self._run_on_browser("agoraLeave")
+        if not isinstance(result, dict) or not result.get("ok"):
+            raise RuntimeError((result or {}).get("error") or "browser voice leave failed")
+        self._agora_uid = None
+        self._joined_room = None
+        self._joined_uid = None
+        self._voice_states.clear()
 
     async def stop_audio(self) -> None:
         if not self._started:
@@ -613,6 +612,24 @@ class BrowserVoiceTransport:
     async def stop_tts(self) -> dict[str, Any]:
         result = await self._run_on_browser("agoraStopTts")
         return result if isinstance(result, dict) else {"ok": bool(result)}
+
+    async def wait_tts_complete(self, timeout: float = 30.0) -> dict[str, Any]:
+        """Wait for actual AudioContext playback, including scheduled tail sources."""
+        async def wait() -> dict[str, Any]:
+            while True:
+                status = await self._run_on_browser("agoraTtsStatus")
+                if not isinstance(status, dict) or not status.get("ok"):
+                    return {"ok": False, "error": (status or {}).get("error", "TTS status unavailable")}
+                if status.get("pending_sources", 0) == 0 and status.get("remaining_seconds", 0) <= 0:
+                    return {"ok": True}
+                await asyncio.sleep(0.02)
+
+        try:
+            return await asyncio.wait_for(wait(), max(0.0, timeout))
+        except asyncio.TimeoutError:
+            return {"ok": False, "error": "TTS playback timed out"}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
 
     async def set_volume(self, volume: int) -> bool:
         result = await self._run_on_browser("agoraSetVolume", int(volume))

@@ -37,6 +37,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
+from dataclasses import asdict
 from typing import Any
 
 from aiohttp import web
@@ -264,6 +265,7 @@ def build_voice_routes(
             "default_channel": default_channel or agent._channel or "",
             # WebUI 兼容
             "status": st,
+            "join_source": st.get("join_source", ""),
         }
 
     async def health(_request: web.Request) -> web.Response:
@@ -277,7 +279,55 @@ def build_voice_routes(
         )
 
     async def voice_status(_request: web.Request) -> web.Response:
-        return ok(status_payload(current_agent()))
+        payload = status_payload(current_agent())
+        controller = getattr(voice_runtime, "auto_visit", None)
+        if controller is not None:
+            payload["auto_visit"] = controller.status()
+        return ok(payload)
+
+    def visit_payload() -> dict[str, Any]:
+        controller = getattr(voice_runtime, "auto_visit", None)
+        if controller is None:
+            raise web.HTTPServiceUnavailable(reason="自动串门控制器尚未就绪")
+        return {"config": asdict(controller.config), "status": controller.status()}
+
+    async def auto_visit_get(_request: web.Request) -> web.Response:
+        return ok(visit_payload())
+
+    async def auto_visit_config(request: web.Request) -> web.Response:
+        body = await read_json(request)
+        if not isinstance(body.get("updates"), dict):
+            return err("updates 必须是对象")
+        # Check availability before touching config.py.
+        visit_payload()
+        from webui.config_editor import apply_auto_visit_updates
+
+        try:
+            result = await asyncio.to_thread(apply_auto_visit_updates, body["updates"])
+        except ValueError as exc:
+            return err(str(exc))
+        except Exception as exc:
+            logger.exception("auto visit config save failed")
+            return err(str(exc), 500)
+        try:
+            applied = await voice_runtime.reload_settings()
+        except Exception as exc:
+            await voice_runtime.auto_visit.pause()
+            return err(f"配置已保存，但应用失败，自动加入已暂停：{exc}", 503)
+        return ok({**visit_payload(), **result, "notes": applied.get("notes", [])})
+
+    async def auto_visit_pause(_request: web.Request) -> web.Response:
+        visit_payload()
+        await voice_runtime.auto_visit.pause()
+        return ok({"status": voice_runtime.auto_visit.status()})
+
+    async def auto_visit_resume(_request: web.Request) -> web.Response:
+        visit_payload()
+        try:
+            await voice_runtime.auto_visit.resume()
+        except Exception as exc:
+            return err(str(exc), 409)
+        return ok({"status": voice_runtime.auto_visit.status()})
 
     async def voice_join(request: web.Request) -> web.Response:
         agent = current_agent()
@@ -540,6 +590,10 @@ def build_voice_routes(
     pairs = [
         ("GET", "/health", health),
         ("GET", "/voice/status", voice_status),
+        ("GET", "/voice/auto-visit", auto_visit_get),
+        ("POST", "/voice/auto-visit/config", auto_visit_config),
+        ("POST", "/voice/auto-visit/pause", auto_visit_pause),
+        ("POST", "/voice/auto-visit/resume", auto_visit_resume),
         ("GET", "/voice/members", voice_members),
         ("GET", "/voice/channels", voice_channels),
         ("POST", "/voice/join", voice_join),

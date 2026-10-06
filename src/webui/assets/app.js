@@ -9,7 +9,7 @@ const POLL_MS = 3000;
 const PAGE_META = {
   overview: ['总览', '一眼看清链路、语音会话、流量与最近动态'],
   logs: ['日志', '实时跟随日志文件，可过滤、换行、下载'],
-  voice: ['语音台', '进房对话、房间成员、人格与共享记忆'],
+  voice: ['语音台', '手动对话、自动串门、房间成员与共享记忆'],
   config: ['配置', '连接 / 语音模型 / 系统；常用项直接改'],
   account: ['账号', '查看凭据状态，或重新登录 Oopz'],
 };
@@ -313,6 +313,11 @@ function switchPage(name, tab) {
   text('page-title', meta[0]);
   text('page-sub', meta[1]);
   renderPageTools(name);
+  document.querySelectorAll('.nav-item[data-page]').forEach((item) => {
+    const active = item.dataset.page === name;
+    item.classList.toggle('is-active', active);
+    if (active) item.setAttribute('aria-current', 'page'); else item.removeAttribute('aria-current');
+  });
   if (name === 'logs') startLogStream();
   else stopLogStream();
   if (name === 'config') loadConfig();
@@ -469,6 +474,10 @@ async function refreshStatus() {
     const healthy = rt.running && (b.oopz || {}).connected && (b.onebot || {}).connected;
     renderRailMeta(healthy ? 'ok' : (rt.running ? 'warn' : 'err'), healthy ? '链路正常' : (rt.running ? '部分异常' : '桥接未运行'));
     syncConfigChips();
+  }
+  if (isPage('voice')) {
+    await _origRefreshVoiceStatus();
+    if ($('vpane-auto-visit').classList.contains('is-active')) await refreshAutoVisit(false);
   }
 }
 
@@ -1296,6 +1305,7 @@ function switchVoiceTab(tab) {
     el.classList.toggle('is-active', el.id === 'vpane-' + name);
   });
   if (name === 'members') refreshMembers();
+  if (name === 'auto-visit') refreshAutoVisit(true);
   if (name === 'persona') {
     loadPersona();
     loadMemory();
@@ -1326,6 +1336,7 @@ function setupVoice() {
   const setDefault = $('voice-set-default');
   if (setDefault) setDefault.onclick = setDefaultTarget;
   wireBindBar();
+  setupAutoVisit();
   const areaTabs = $('area-tabs');
   if (areaTabs) {
     areaTabs.addEventListener('click', (event) => {
@@ -1410,7 +1421,12 @@ async function refreshVoiceStatus() {
     const joined = !!st.joined;
     text('v-backend', st.backend || '—');
     text('v-backend-sub', (st.enabled ? '已启用' : '未启用') + ' · 对话后端');
-    text('v-joined', joined ? '在房' : '不在房');
+    const source = st.join_source || st.source || st.session_source || '';
+    const automatic = source === 'auto' || source === 'auto_visit';
+    text('v-joined', joined ? (automatic ? '自动停留' : (source ? '手动会话' : '在房')) : '不在房');
+    text('visit-current-target', joined
+      ? '当前' + (automatic ? '自动停留' : (source ? '手动会话' : '语音会话')) + '：' + (voiceAreaNames[st.area] || st.area || '当前域') + ' / ' + (voiceChannelNames[st.channel] || st.channel || '当前房间')
+      : '当前语音会话：未在房间');
     text('v-target', joined ? ((st.area || '') + ' / ' + (st.channel || '')) : '未绑定频道');
     text('v-turns', String(st.turns || 0));
     text('v-speaking', st.speaking ? '正在说话' : '空闲');
@@ -1710,4 +1726,250 @@ refreshVoiceStatus = async function () {
   if (_origRefreshVoiceStatus) await _origRefreshVoiceStatus();
   await loadVoiceTargets(false);
 };
+
+/* ───────── 自动串门：读取状态与字段级配置合并 ───────── */
+const VISIT_FIELDS = [
+  { key: 'join_probability', label: '进房概率 / %', kind: 'probability', help: '每轮只抽签一次；未命中就等下一轮' },
+  { key: 'stay_minutes', label: '自动停留 / 分钟', kind: 'range', help: '已开始的停留不会因修改范围而重置' },
+  { key: 'auto_cooldown_minutes', label: '自动退房后的全局冷却 / 分钟', kind: 'range', help: '这段时间内所有域暂停自动进房' },
+  { key: 'manual_cooldown_minutes', label: '手动退房后的域内冷却 / 分钟', kind: 'range', help: '仅休息刚退出的域，其他域仍可串门' },
+  { key: 'enter_prompts', label: '进房表达意图', kind: 'prompts', help: '每行一条，随机选取并由当前 AI 改写；留空表示静默' },
+  { key: 'leave_prompts', label: '告别表达意图', kind: 'prompts', help: '每行一条，随机选取并由当前 AI 改写；留空表示静默' },
+];
+const VISIT_PHASES = { waiting: '等待下一轮检查', checking: '正在寻找有人的房间', joining: '正在进入房间', greeting: '正在打招呼', active: '自动停留中', waiting_reply: '等待当前回复结束', farewell: '正在告别', leaving: '正在退出房间', cooldown: '全局冷却中', paused: '自动串门已暂停', stopped: '自动串门未运行', idle: '等待就绪' };
+let visitConfig = null;
+let visitStatus = null;
+let visitAreas = [];
+let visitSelectedArea = '';
+let visitFetchPending = false;
+let visitGlobalDirty = new Set();
+let visitAreaDirty = new Set();
+
+function visitFieldMarkup(scope, field) {
+  const id = 'visit-' + scope + '-' + field.key;
+  const inherit = scope === 'area' ? '<label class="visit-override"><input type="checkbox" data-override="' + field.key + '" />单独设置 <span class="visit-inherit-state">继承全局默认</span></label>' : '';
+  let control;
+  if (field.kind === 'range') {
+    control = '<div class="range-input"><input class="control" id="' + id + '-min" aria-label="' + field.label + '最小值" type="number" min="1" max="10080" step="any" required /><span>至</span><input class="control" id="' + id + '-max" aria-label="' + field.label + '最大值" type="number" min="1" max="10080" step="any" required /></div>';
+  } else if (field.kind === 'probability') {
+    control = '<input class="control" id="' + id + '" aria-label="' + field.label + '" type="number" min="0" max="100" step="any" required />';
+  } else {
+    control = '<textarea class="control" id="' + id + '" aria-label="' + field.label + '" rows="3" placeholder="留空表示不说话"></textarea>';
+  }
+  return '<div class="visit-field' + (field.kind === 'prompts' ? ' visit-wide' : '') + '" data-visit-field="' + field.key + '"><span>' + field.label + '</span>' + inherit + control + '<small>' + field.help + '</small></div>';
+}
+
+function setVisitField(scope, field, value, inherited) {
+  const id = 'visit-' + scope + '-' + field.key;
+  if (field.kind === 'range') {
+    $(id + '-min').value = value?.[0] ?? '';
+    $(id + '-max').value = value?.[1] ?? '';
+  } else $(id).value = field.kind === 'prompts' ? (value || []).join('\n') : Number(value || 0) * 100;
+  if (scope === 'area') {
+    const row = $('visit-area-fields').querySelector('[data-visit-field="' + field.key + '"]');
+    row.querySelector('[data-override]').checked = !inherited;
+    row.querySelectorAll('.control').forEach((input) => { input.disabled = inherited; });
+    row.querySelector('.visit-inherit-state').textContent = inherited ? '继承全局默认' : '覆盖全局默认';
+    row.classList.toggle('is-inherited', inherited);
+  }
+}
+
+function readVisitField(scope, field) {
+  const id = 'visit-' + scope + '-' + field.key;
+  if (field.kind === 'range') {
+    const range = [Number($(id + '-min').value), Number($(id + '-max').value)];
+    if (range[0] > range[1]) throw new Error(field.label + '：最小值不能大于最大值');
+    return range;
+  }
+  if (field.kind === 'probability') return Number($(id).value) / 100;
+  const prompts = $(id).value.split('\n').map((line) => line.trim()).filter(Boolean);
+  if (prompts.length > 50 || prompts.some((line) => line.length > 500)) throw new Error(field.label + '：最多 50 条，每条最多 500 字');
+  return prompts;
+}
+
+function setupAutoVisit() {
+  $('visit-default-fields').innerHTML = VISIT_FIELDS.map((field) => visitFieldMarkup('default', field)).join('');
+  $('visit-area-fields').innerHTML = VISIT_FIELDS.map((field) => visitFieldMarkup('area', field)).join('');
+  $('visit-global-form').addEventListener('input', (event) => {
+    const field = event.target.closest('[data-visit-field]');
+    visitGlobalDirty.add(field ? 'defaults.' + field.dataset.visitField : (event.target.id === 'visit-global-limit' ? 'daily_limit' : 'check_interval_minutes'));
+    text('visit-global-feedback', '有未保存的改动');
+  });
+  $('visit-area-form').addEventListener('input', (event) => {
+    const field = event.target.closest('[data-visit-field]');
+    visitAreaDirty.add(field ? field.dataset.visitField : (event.target.id === 'visit-area-enabled' ? 'enabled' : 'daily_limit'));
+    text('visit-area-feedback', '有未保存的改动');
+  });
+  $('visit-area-fields').addEventListener('change', (event) => {
+    const key = event.target.dataset.override;
+    if (!key) return;
+    const row = event.target.closest('[data-visit-field]');
+    const inherited = !event.target.checked;
+    row.querySelectorAll('.control').forEach((input) => { input.disabled = inherited; });
+    row.querySelector('.visit-inherit-state').textContent = inherited ? '继承全局默认' : '覆盖全局默认';
+    row.classList.toggle('is-inherited', inherited);
+    if (inherited) setVisitField('area', VISIT_FIELDS.find((field) => field.key === key), visitConfig.defaults[key], true);
+  });
+  $('visit-area-select').addEventListener('change', async (event) => {
+    const next = event.target.value;
+    if (visitAreaDirty.size && !await confirmDialog('切换域', '这个域有未保存的修改。放弃修改并切换域？', '放弃并切换')) {
+      event.target.value = visitSelectedArea;
+      return;
+    }
+    visitSelectedArea = next;
+    visitAreaDirty.clear();
+    renderVisitArea();
+  });
+  $('visit-refresh').onclick = () => refreshAutoVisit(true);
+  $('visit-pause').onclick = async () => {
+    const button = $('visit-pause');
+    button.disabled = true;
+    try {
+      const data = await api('/api/voice/auto-visit/' + (visitStatus?.paused ? 'resume' : 'pause'), { method: 'POST' });
+      visitStatus = data.status;
+      renderVisitStatus();
+      toast(visitStatus.paused ? '已暂停串门' : '已恢复串门', '今日次数与冷却保持有效', 'ok');
+    } catch (err) { toast('操作失败', err.message, 'err'); }
+    finally { button.disabled = !visitStatus; }
+  };
+  $('visit-global-form').onsubmit = (event) => { event.preventDefault(); saveVisitConfig('global'); };
+  $('visit-area-form').onsubmit = (event) => { event.preventDefault(); saveVisitConfig('area'); };
+}
+
+async function refreshAutoVisit(loadAreas) {
+  if (visitFetchPending) return;
+  visitFetchPending = true;
+  try {
+    const data = await api('/api/voice/auto-visit');
+    visitConfig = data.config;
+    visitStatus = data.status;
+    if (!visitConfig || !visitStatus) throw new Error('自动串门接口未返回配置或状态');
+    if (loadAreas || !visitAreas.length) {
+      try { visitAreas = (await api('/api/oopz/areas')).areas || []; }
+      catch (err) { text('visit-area-empty', '域列表读取失败：' + err.message + '。请检查桥接连接后点刷新。'); }
+    }
+    renderVisitStatus();
+    if (!visitGlobalDirty.size) renderVisitGlobal();
+    renderVisitAreaSelector();
+    if (!visitAreaDirty.size) renderVisitArea();
+    else renderVisitAreaStatus();
+  } catch (err) {
+    text('visit-phase', '自动串门状态读取失败');
+    text('visit-error', err.message + '。请检查语音服务后点刷新。');
+  } finally { visitFetchPending = false; }
+}
+
+function visitTime(value) {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return '—';
+  const seconds = Math.ceil((date.getTime() - Date.now()) / 1000);
+  return seconds > 0 ? fmtDuration(seconds) + ' 后' : '已到时间';
+}
+
+function renderVisitStatus() {
+  if (!visitStatus) return;
+  const st = visitStatus;
+  const phase = String(st.phase || 'waiting').toLowerCase();
+  text('visit-phase', st.paused ? '自动串门已暂停' : (VISIT_PHASES[phase] || st.phase));
+  text('visit-reason', st.pause_reason || '只进入已开启的域，先选有人的域，再随机选择房间。');
+  text('visit-count', (st.daily_count || 0) + ' / ' + (st.daily_limit ? st.daily_limit + ' 次' : '不限'));
+  $('visit-count').title = '北京时间 ' + (st.day || '今日');
+  text('visit-next', visitTime(st.next_check_at));
+  text('visit-leave', visitTime(st.leave_at));
+  text('visit-cooldown', visitTime(st.global_cooldown_until));
+  const action = st.last_action;
+  $('visit-action').textContent = typeof action === 'string' ? action : (action?.reason || action?.message || action?.kind || '');
+  $('visit-error').textContent = typeof st.last_error === 'string' ? st.last_error : (st.last_error?.message || '');
+  $('visit-pause').textContent = st.paused ? '恢复串门' : '暂停串门';
+  $('visit-pause').disabled = false;
+  text('visit-enabled-count', Object.values(visitConfig.areas || {}).filter((area) => area.enabled).length + ' 个域已开启');
+  renderVisitAreaStatus();
+}
+
+function renderVisitGlobal() {
+  $('visit-check-min').value = visitConfig.check_interval_minutes[0];
+  $('visit-check-max').value = visitConfig.check_interval_minutes[1];
+  $('visit-global-limit').value = visitConfig.daily_limit;
+  VISIT_FIELDS.forEach((field) => setVisitField('default', field, visitConfig.defaults[field.key]));
+  $('visit-global-save').disabled = false;
+}
+
+function renderVisitAreaSelector() {
+  const select = $('visit-area-select');
+  const ids = new Set(visitAreas.map((row) => row.id).filter(Boolean));
+  Object.keys(visitConfig.areas || {}).forEach((id) => ids.add(id));
+  const options = [...ids].map((id) => [id, visitAreas.find((row) => row.id === id)?.name || id]);
+  if (!ids.has(visitSelectedArea)) visitSelectedArea = options[0]?.[0] || '';
+  select.innerHTML = options.length ? options.map(([id, name]) => '<option value="' + escapeHtml(id) + '">' + escapeHtml(name) + '</option>').join('') : '<option value="">暂无可用域</option>';
+  select.value = visitSelectedArea;
+  select.disabled = !options.length;
+  show($('visit-area-form'), !!options.length);
+  show($('visit-area-empty'), !options.length);
+  if (!options.length) text('visit-area-empty', '尚未读取到已加入的域。请先连接 Oopz 并加入一个域，然后点刷新。');
+}
+
+function renderVisitArea() {
+  if (!visitSelectedArea) return;
+  const area = visitConfig.areas?.[visitSelectedArea] || {};
+  $('visit-area-enabled').checked = !!area.enabled;
+  $('visit-area-limit').value = area.daily_limit || 0;
+  VISIT_FIELDS.forEach((field) => {
+    const overridden = Object.prototype.hasOwnProperty.call(area.overrides || {}, field.key);
+    setVisitField('area', field, overridden ? area.overrides[field.key] : visitConfig.defaults[field.key], !overridden);
+  });
+  $('visit-area-feedback').textContent = '';
+  renderVisitAreaStatus();
+}
+
+function renderVisitAreaStatus() {
+  if (!visitSelectedArea || !visitStatus) return;
+  const st = visitStatus.areas?.[visitSelectedArea] || {};
+  text('visit-area-status', '今日 ' + (st.daily_count || 0) + ' 次自动进房 · 域内手动冷却：' + (st.manual_cooldown_until ? visitTime(st.manual_cooldown_until) : '无'));
+}
+
+async function saveVisitConfig(scope) {
+  const form = $('visit-' + scope + '-form');
+  const feedback = $('visit-' + scope + '-feedback');
+  const changed = scope === 'global' ? visitGlobalDirty : visitAreaDirty;
+  if (!changed.size) { feedback.textContent = '设置没有变化'; return; }
+  try {
+    const updates = {};
+    if (scope === 'global') {
+      if (changed.has('check_interval_minutes')) {
+        const range = [Number($('visit-check-min').value), Number($('visit-check-max').value)];
+        if (range[0] > range[1]) throw new Error('检查间隔：最小值不能大于最大值');
+        updates.check_interval_minutes = range;
+      }
+      if (changed.has('daily_limit')) updates.daily_limit = Number($('visit-global-limit').value);
+      VISIT_FIELDS.forEach((field) => {
+        if (changed.has('defaults.' + field.key)) {
+          updates.defaults = updates.defaults || {};
+          updates.defaults[field.key] = readVisitField('default', field);
+        }
+      });
+    } else {
+      const area = {};
+      if (changed.has('enabled')) area.enabled = $('visit-area-enabled').checked;
+      if (changed.has('daily_limit')) area.daily_limit = Number($('visit-area-limit').value);
+      VISIT_FIELDS.forEach((field) => {
+        if (!changed.has(field.key)) return;
+        area.overrides = area.overrides || {};
+        const override = $('visit-area-fields').querySelector('[data-override="' + field.key + '"]');
+        area.overrides[field.key] = override.checked ? readVisitField('area', field) : null;
+      });
+      updates.areas = { [visitSelectedArea]: area };
+    }
+    form.inert = true;
+    feedback.textContent = '正在保存…';
+    const data = await api('/api/voice/auto-visit/config', { method: 'POST', body: { updates } });
+    changed.clear();
+    if (data.config) visitConfig = data.config;
+    if (data.status) visitStatus = data.status;
+    await refreshAutoVisit(false);
+    feedback.textContent = '已保存并生效';
+    toast(scope === 'global' ? '全局规则已保存' : '这个域已保存', '后台已应用新设置', 'ok');
+  } catch (err) { feedback.textContent = '保存失败：' + err.message; toast('保存失败', err.message, 'err'); }
+  finally { form.inert = false; }
+}
 

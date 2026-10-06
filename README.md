@@ -1,4 +1,8 @@
 <p align="center">
+  <img src="./src/webui/assets/logo.svg" width="80" alt="Ooptra 双对话桥 Logo" />
+</p>
+
+<p align="center">
   <img src="./assets/readme/hero.svg" width="100%" alt="Ooptra 把 Oopz 频道会话桥接到 OneBot v11" />
 </p>
 
@@ -27,7 +31,7 @@ Ooptra 把 Oopz 的频道会话转换为 [OneBot v11](https://github.com/botuniv
 两端只约定 OneBot v11 协议，不绑定任何具体框架。项目自带本地 Web 控制台，用来查看状态、跟踪日志、编辑配置和登录 Oopz；
 另有一个可选的语音模块，让 bot 进入 Oopz 语音频道与人实时对话。
 
-当前版本：**2.3.0**。完整变更见[更新日志](CHANGELOG.md)。
+当前版本：**3.0**。完整变更见[更新日志](CHANGELOG.md)。
 
 > [!CAUTION]
 > Ooptra 是独立的第三方项目，与 Oopz 官方没有隶属或授权关系。请仅用于你自己的账号与你负责管理的社群，
@@ -45,6 +49,7 @@ Ooptra 把 Oopz 的频道会话转换为 [OneBot v11](https://github.com/botuniv
 | Web 控制台 | 状态总览、实时日志、配置编辑、账号与凭据管理；前端单文件无外部依赖 |
 | 语音对话 | 可选模块：进 Oopz 语音房做 **Live 端到端语音**（类似 Gemini Live，语音进语音出），支持抢话打断 |
 | 语音 API | 与控制台同端口的 `/api/voice/*`、`/api/persona`、`/api/memory`，供外部插件调用 |
+| 自动串门 | 分域独立启用，低频概率进房、限时告别退出、每日上限与持久化冷却；MiMo / Gemini 每次改写进退房语音 |
 | 项目边界 | 单进程运行，不含内置命令、插件系统与消息存储，只做桥接与运维 |
 
 ## 运行链路
@@ -115,7 +120,7 @@ Windows 下可以双击 `start_silent.vbs` 静默后台启动；把它放进「�
 | 日志 | 实时跟随日志文件（SSE），支持关键字与级别过滤、清屏、下载、回到底部 |
 | 配置 | 常用项直接改，其余默认值收在「高级选项」；保存即写回 `config.py` 并就地生效 |
 | 账号 | 凭据状态与有效期、账号密码登录、网页版登录（可手动过验证） |
-| 语音 | 语音台：会话控制、房间成员、人格与记忆三个子页；另有「语音模型」配置页 |
+| 语音 | 语音台：会话控制、自动串门、房间成员、人格与记忆；另有「语音模型」配置页 |
 
 侧栏的「检查更新」会查询 GitHub 最新版本并与本地版本比较，可直接打开仓库。
 
@@ -155,6 +160,37 @@ Live 的原生音频模型**不支持指定输出语言**（官方文档：*Expl
 「与 AI 对话」卡片用于**用文字发起一次对话**：AI 会在当前语音房用语音回答，和房间里说话属于同一场对话（需已进房）；
 级联模式下不经过模型，直接朗读这段文字。
 
+### 自动串门
+
+先配置可用的语音后端并开启语音总开关，再打开「语音台 → 自动串门」，选择已加入的域，
+勾选「允许在这个域自动串门」并保存。域开关默认全部关闭；旧版 `auto_join` 已移除，残留字段忽略且不会开启任何域。
+
+| 默认规则 | 行为 |
+| --- | --- |
+| 检查间隔 | 全实例共用，每 10～20 分钟随机检查一次，不会看到有人立即进房 |
+| 选择与概率 | 先在符合条件且有真人的域中等概率选域，再随机选房间，按该域概率决定是否加入；默认 20% |
+| 停留 | 10～20 分钟；到期最多等 bot 当前回复 30 秒，告别语音生成及播放最多 20 秒，之后退出 |
+| 自动退房冷却 | 全实例休息 30～60 分钟，期间仍可手动进房 |
+| 手动退房冷却 | 刚退出的域休息 2～4 小时，其他开启域仍可串门 |
+| 每日上限 | 北京时间自然日全实例默认 3 次；可另设域上限，0 为不限；手动进房及已确认失败不计数 |
+| 空房 | 真人全部离开且连续确认 2 分钟后复查并静默退房；查询失败按未知处理 |
+
+检查间隔只支持全局设置，其余策略可按域覆盖；取消覆盖恢复继承。每行一条进房／告别表达意图，随机选取后由当前 AI
+每次改写：MiMo 使用文字生成与 TTS，Gemini 使用当前 Live 会话生成语音，无需额外 MiMo 密钥。
+清空列表即静默，合成失败也会按正常停留／退出规则继续。台词不写作用户记忆，不会携带其他房间的聊天历史。
+
+暂停只停止新的自动加入；已开始的自动停留仍会按规则退出。恢复不清空次数和冷却；关闭域开关会告别退出该域的自动房间。
+手动房间始终由用户控制，不受自动换房、限时退出或域开关影响。退出失败会保留实际房间状态并暂停后续自动加入。
+
+运行状态损坏、磁盘写入失败或中断进房留下未确认记录时，自动加入会暂停，文字桥接与手动操作仍可使用。
+先检查控制台与日志，确认账号实际所在房间并手动退出，停止程序并备份 `data/voice_auto_visit.json`；
+对未确认记录，应保守核对并补记当天成功次数及对应域次数，保持 `confirmed` 与计数一致，再清理对应 `pending`。
+恢复文件后重启或点击恢复。不要直接删除状态文件绕过当日额度；尚未核清的记录应保持暂停。
+
+详细设计与实施验收见 [需求说明](docs/superpowers/specs/2026-10-06-voice-auto-visit-design.md) 和
+[实施计划](docs/superpowers/plans/2026-10-06-voice-auto-visit-brand-release.md)。本次自动化与匿名界面验证的范围见更新日志；
+真实联调时分别检查 MiMo/Gemini 进房问候、到期尾音播完再退出、手动接管、空房退出及重启后额度仍在。
+
 ### HTTP API
 
 Web 控制台同时挂载 JSON API（与控制台同端口，默认 `3090`，复用 `WEBUI_CONFIG.token`）。**外部插件一律用这个入口**——它路由完整、契约是扁平的：
@@ -167,6 +203,10 @@ GET  /voice/channels?area=
 POST /voice/join     {"area":"","channel":""}
 POST /voice/leave
 POST /voice/speak    {"text":"..."}
+GET  /voice/auto-visit
+POST /voice/auto-visit/config  {"updates":{...}}
+POST /voice/auto-visit/pause
+POST /voice/auto-visit/resume
 GET  /oopz/areas
 GET  /oopz/channels?area=
 GET  /persona        PUT /persona
@@ -197,7 +237,8 @@ python -m playwright install chromium
 ## 关键配置
 
 配置文件是 `config.py`：`OOPZ_CONFIG`、`ONEBOT_V11_CONFIG`、`WEBUI_CONFIG` 是桥接与控制台的主体，
-`VOICE_AGENT_CONFIG`、`VOICE_API_CONFIG` 对应语音模块（默认关闭）。控制台只改写白名单字段，其余内容与注释保持原样。
+`VOICE_AGENT_CONFIG`、`VOICE_API_CONFIG` 对应语音模块（默认关闭），`VOICE_AUTO_VISIT_CONFIG` 管理自动串门。
+控制台只改写白名单字段，其余内容与注释保持原样。
 
 | 字段 | 说明 |
 | --- | --- |
@@ -213,7 +254,7 @@ python -m playwright install chromium
 | `VOICE_AGENT_CONFIG.proxy` | 模型 API 代理（选填）：`clash` = `127.0.0.1:7890`，`direct` 直连，或显式 `http://主机:端口` |
 | `VOICE_AGENT_CONFIG.barge_in` | 是否允许抢话打断，默认 `True` |
 | `VOICE_AGENT_CONFIG.listen_only_uids` | 只监听这些成员的音频；留空表示整个房间 |
-| `VOICE_AGENT_CONFIG.auto_join` | 启动后自动进入 `area` / `channel` |
+| `VOICE_AUTO_VISIT_CONFIG` | 自动串门全局规则、默认策略与分域覆盖；使用「语音台 → 自动串门」管理 |
 | `VOICE_AGENT_CONFIG.gemini.voice` | Gemini Live 音色（Puck / Charon / Kore…，可自定义） |
 | `VOICE_AGENT_CONFIG.mimo.tts_voice` | MiMo TTS 音色（冰糖 / 茉莉 / 苏打 / 白桦…，可自定义） |
 
@@ -238,6 +279,7 @@ python -m playwright install chromium
 | `data/onebot_v11.sqlite3` | `group_id` / `user_id` 映射，删除会导致对端群号全部变化 |
 | `data/names.json` | 成员与频道昵称缓存，可安全删除（会重新拉取） |
 | `data/voice_memory.jsonl` | 语音共享记忆，删除即清空上下文 |
+| `data/voice_auto_visit.json` | 北京时间每日自动加入次数、两种冷却与未确认记录；重启保留，不应删除以重置上限 |
 | `logs/oopz_bot.log` | 运行日志，控制台「日志」页读取的就是它；保留 7 天 |
 
 ## 目录结构

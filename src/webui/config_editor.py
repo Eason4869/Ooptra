@@ -18,6 +18,7 @@ from typing import Any
 from core.config_file_store import config_file_write_lock, replace_text_files_atomically
 from core.logger_config import get_logger
 from core.paths import PROJECT_ROOT
+from voice_agent.auto_visit_settings import merge_auto_visit_patch
 
 logger = get_logger("WebUIConfig")
 
@@ -30,6 +31,7 @@ GROUP_SOURCES: dict[str, str] = {
     "webui": "WEBUI_CONFIG",
     "voice": "VOICE_AGENT_CONFIG",
     "voice_api": "VOICE_API_CONFIG",
+    "auto_visit": "VOICE_AUTO_VISIT_CONFIG",
 }
 
 # 分组 -> 展示信息：控制台标题与一句话引导（前端渲染用）。
@@ -420,7 +422,6 @@ FIELD_SPECS: dict[str, dict[str, dict[str, Any]]] = {
             "allow_custom": True,
             "hint": "下拉预设音色，或选「自定义」填入任意音色名",
         },
-        "auto_join": {"type": "bool", "label": "启动后自动进房", "tier": "adv", "section": "行为"},
         "barge_in": {"type": "bool", "label": "允许抢话打断", "tier": "adv", "section": "行为"},
         "barge_in_hold_ms": {
             "type": "int",
@@ -516,10 +517,10 @@ FIELD_SPECS: dict[str, dict[str, dict[str, Any]]] = {
 
 _RESTART_FREE_FIELDS = {("webui", "log_lines")}
 
-# 这两组保存后由 server._hot_reload_voice 在事件循环上真正应用到 VoiceRuntime，
+# 这些组保存后由 server._hot_reload_voice 在事件循环上真正应用到 VoiceRuntime，
 # 故不再标记 restart_required（voice_api 的 host/port 例外，socket 已绑定，
 # 由 VoiceRuntime.reload_settings 通过 restart_keys 单独报回来）。
-_HOT_RELOAD_GROUPS = {"voice", "voice_api"}
+_HOT_RELOAD_GROUPS = {"voice", "voice_api", "auto_visit"}
 
 
 # ---------------------------------------------------------------------------
@@ -657,6 +658,15 @@ def _normalize_updates(updates: Any) -> dict[str, dict[str, Any]]:
         raise ValueError("updates 必须是对象")
     normalized: dict[str, dict[str, Any]] = {}
     for group, values in updates.items():
+        if group == "auto_visit":
+            if not isinstance(values, dict):
+                raise ValueError("auto_visit 的值必须是对象")
+            # Validate the sparse patch separately. Its null removals must survive
+            # normalization until it is merged with the current file under lock.
+            merge_auto_visit_patch({}, values)
+            if values:
+                normalized[group] = copy.deepcopy(values)
+            continue
         if group not in FIELD_SPECS:
             raise ValueError(f"未知配置分组: {group}")
         if not isinstance(values, dict):
@@ -916,14 +926,22 @@ def apply_updates(updates: Any) -> dict[str, Any]:
     with config_file_write_lock():
         with open(CONFIG_PATH, encoding="utf-8", newline="") as handle:
             text = handle.read()
-        patched = _patched_text(text, normalized)
+        to_write = copy.deepcopy(normalized)
+        if "auto_visit" in normalized:
+            current: dict[str, Any] = {}
+            exec(compile(text, CONFIG_PATH, "exec"), current)
+            raw = current.get("VOICE_AUTO_VISIT_CONFIG", {})
+            merged = merge_auto_visit_patch({} if raw is None else raw, normalized["auto_visit"])
+            to_write["auto_visit"] = {
+                field: merged[field] for field in normalized["auto_visit"]
+            }
+        patched = _patched_text(text, to_write)
         _validate_text(patched)
 
         namespace: dict[str, Any] = {}
         exec(compile(patched, CONFIG_PATH, "exec"), namespace)
         replace_text_files_atomically(((CONFIG_PATH, patched),))
-
-    _sync_runtime(namespace)
+        _sync_runtime(namespace)
     changed = {group: sorted(values) for group, values in normalized.items()}
     restart_required = any(
         (group, field) not in _RESTART_FREE_FIELDS and group not in _HOT_RELOAD_GROUPS
@@ -934,4 +952,12 @@ def apply_updates(updates: Any) -> dict[str, Any]:
     return {"changed": changed, "restart_required": restart_required}
 
 
-__all__ = ["CONFIG_PATH", "FIELD_SPECS", "GROUP_SOURCES", "apply_updates", "schema_payload"]
+def apply_auto_visit_updates(patch: Any) -> dict[str, Any]:
+    """Save a validated sparse auto-visit patch and synchronize live config."""
+    return apply_updates({"auto_visit": patch})
+
+
+__all__ = [
+    "CONFIG_PATH", "FIELD_SPECS", "GROUP_SOURCES", "apply_auto_visit_updates",
+    "apply_updates", "schema_payload",
+]

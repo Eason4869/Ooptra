@@ -410,6 +410,32 @@ class MimoCascadeBackend(VoiceBackend):
         # MiMo TTS pcm 默认 24k；若长度异常则按配置输出率处理
         return pcm, self.settings.sample_rate_out
 
+    async def rewrite_announcement(self, kind: str, template: str) -> str:
+        from voice_agent.announcements import announcement_instruction, clean_announcement
+
+        # Deliberately independent of memory.as_messages(): a visit must not
+        # introduce either another room's history or fake human utterances.
+        body = {
+            "model": self.settings.mimo_llm_model,
+            "messages": [
+                {"role": "system", "content": self.settings.persona + VOICE_ROOM_RULES},
+                {"role": "user", "content": announcement_instruction(kind, template)},
+            ],
+            "stream": False,
+            "thinking": {"type": "disabled"},
+            "max_tokens": 128,
+        }
+        session = await self._http()
+        url = self.settings.mimo_base_url.rstrip("/") + "/chat/completions"
+        async with session.post(url, headers=self._headers(), json=body, proxy=self._proxy_url()) as resp:
+            data = await resp.json(content_type=None)
+            if resp.status >= 400:
+                raise RuntimeError(f"announcement LLM failed HTTP {resp.status}")
+        choices = data.get("choices") or []
+        raw = str(((choices[0] or {}).get("message") or {}).get("content") or "") if choices else ""
+        clean = clean_announcement(raw)
+        return "" if looks_like_reasoning_leak(clean) else clean
+
     async def handle_utterance(
         self,
         pcm16: bytes,

@@ -72,9 +72,12 @@ async def run() -> None:
     await controller.start()
 
     try:
-        if voice_runtime is not None and voice_runtime.enabled:
+        if voice_runtime is not None:
             await voice_runtime.start()
-            logger.info("语音 Agent 已启动（API 走 WebUI /api/voice/*）")
+            if voice_runtime.enabled:
+                logger.info("语音 Agent 已启动（API 走 WebUI /api/voice/*）")
+            else:
+                logger.info("语音对话未启用；可在 WebUI 开启，调度器已就绪")
         else:
             logger.info("语音 Agent 未启用（VOICE_AGENT_CONFIG.enabled=False）")
     except Exception:

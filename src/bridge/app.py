@@ -262,6 +262,10 @@ class BridgeController:
 
         if bot is not None:
             with contextlib.suppress(Exception):
+                from voice_agent.runtime import get_voice_runtime
+
+                await get_voice_runtime().unbind_bot(bot)
+            with contextlib.suppress(Exception):
                 await asyncio.wait_for(bot.stop(), timeout=STOP_TIMEOUT)
 
         with contextlib.suppress(Exception):
@@ -279,6 +283,9 @@ class BridgeController:
 
     async def _on_oopz_ready(self, _ctx: Any) -> None:
         self.state.oopz.mark_connected()
+        from voice_agent.runtime import get_voice_runtime
+
+        await get_voice_runtime().set_bot_ready(True)
         logger.info("已连接 Oopz 事件 WebSocket")
         if self._identity_task is None or self._identity_task.done():
             self._identity_task = asyncio.create_task(
@@ -288,9 +295,15 @@ class BridgeController:
 
     async def _on_oopz_reconnect(self, _ctx: Any) -> None:
         self.state.oopz.mark_attempt()
+        from voice_agent.runtime import get_voice_runtime
+
+        await get_voice_runtime().set_bot_ready(False)
         logger.warning("正在重连 Oopz 事件 WebSocket")
 
     async def _on_oopz_close(self, _ctx: Any, payload: Any) -> None:
+        from voice_agent.runtime import get_voice_runtime
+
+        await get_voice_runtime().set_bot_ready(False)
         data = payload if isinstance(payload, dict) else {}
         reason = str(data.get("reason") or data.get("error") or "连接已关闭")
         if data.get("reconnecting"):

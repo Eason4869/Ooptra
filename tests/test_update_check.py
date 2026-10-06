@@ -33,10 +33,18 @@ def test_payload_base_includes_repo_links():
     assert payload["current_version"]
 
 
-def test_date_beta_does_not_hide_later_stable_updates():
+def test_date_beta_does_not_hide_later_stable_updates(monkeypatch):
+    monkeypatch.setattr(update_check, "RELEASE_BASE_VERSION", "2.2.0")
     assert update_check._is_newer("2.2.1", "261001-beta") is True
     assert update_check._is_newer("2.2.0", "261001-beta") is False
     assert update_check._is_newer("2.1.0", "261001-beta") is False
+
+
+def test_previous_beta_compares_with_its_release_base(monkeypatch):
+    monkeypatch.setattr(update_check, "RELEASE_BASE_VERSION", "2.3.0")
+    assert update_check._is_newer("2.3.1", "261006-beta") is True
+    assert update_check._is_newer("2.3.0", "261006-beta") is False
+    assert update_check._is_newer("2.2.1", "261006-beta") is False
 
 
 def test_date_betas_compare_by_date():
