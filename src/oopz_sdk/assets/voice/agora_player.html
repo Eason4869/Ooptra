@@ -564,6 +564,7 @@ window.agoraLeave = async () => {
   ttsSources.clear();
   ttsPlaying = false;
   setState("idle");
+  return { ok: true };
 };
 
 /* -------------------- Playback core -------------------- */

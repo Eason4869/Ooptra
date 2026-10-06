@@ -10,11 +10,11 @@
 </div>
 
 <p align="center">
-  <img src="./assets/readme/hero.svg" width="100%" alt="Ooptra 3.0.1：消息桥接、语音对话、自动串门与支持暗色模式的 WebUI" />
+  <img src="./assets/readme/hero.svg" width="100%" alt="Ooptra 3.0.2：消息桥接、语音对话、自动串门与支持暗色模式的 WebUI" />
 </p>
 
 <p align="center">
-  <a href="CHANGELOG.md"><img alt="当前版本 3.0.1" src="https://img.shields.io/badge/version-3.0.1-315DDC?style=flat-square"></a>
+  <a href="CHANGELOG.md"><img alt="当前版本 3.0.2" src="https://img.shields.io/badge/version-3.0.2-315DDC?style=flat-square"></a>
   <a href="https://github.com/Eason4869/Ooptra/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/Eason4869/Ooptra?style=flat-square"></a>
   <a href="https://hits.sh/github.com/Eason4869/Ooptra/"><img alt="README 累计访问次数" src="https://hits.sh/github.com/Eason4869/Ooptra.svg?style=flat-square&amp;label=README%20views&amp;color=315ddc"></a>
   <a href="https://github.com/Eason4869/Ooptra/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Eason4869/Ooptra/ci.yml?style=flat-square&label=CI"></a>
@@ -39,7 +39,7 @@ Ooptra 把 Oopz 的频道会话转换为 [OneBot v11](https://github.com/botuniv
 两端只约定 OneBot v11 协议，不绑定任何具体框架。项目自带本地 Web 控制台，用来查看状态、跟踪日志、编辑配置和登录 Oopz；
 另有一个可选的语音模块，让 bot 进入 Oopz 语音频道与人实时对话。
 
-当前版本：**3.0.1**。WebUI 支持亮色／暗色切换，主题选择在当前浏览器保存。完整变更见[更新日志](CHANGELOG.md)。
+当前版本：**3.0.2**。WebUI 支持亮色／暗色切换，主题选择在当前浏览器保存。完整变更见[更新日志](CHANGELOG.md)。
 
 顶部访问徽章由 [Hits](https://github.com/silentsoft/hits) 提供，接入后累计访问次数仅作曝光参考，不代表独立访客人数。
 项目维护者可在 [Insights → Traffic](https://github.com/Eason4869/Ooptra/graphs/traffic) 查看 GitHub 官方的近 14 天访问、独立访客及克隆统计。
@@ -66,7 +66,7 @@ Ooptra 把 Oopz 的频道会话转换为 [OneBot v11](https://github.com/botuniv
 ## 运行链路
 
 <p align="center">
-  <img src="./assets/readme/runtime-map.svg" width="100%" alt="Ooptra 3.0.1 消息与语音链路：桥接内核、WebUI 和可选语音 Agent 共用同一进程" />
+  <img src="./assets/readme/runtime-map.svg" width="100%" alt="Ooptra 3.0.2 消息与语音链路：桥接内核、WebUI 和可选语音 Agent 共用同一进程" />
 </p>
 
 事件标准化、身份映射、凭据维护与网络适配彼此独立；桥接内核与 Web 控制台在同一个进程内运行。

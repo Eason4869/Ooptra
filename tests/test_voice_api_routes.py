@@ -294,6 +294,27 @@ def test_join_failure_is_json_not_bare_500() -> None:
     assert "尚未就绪" in payload["error"]
 
 
+@pytest.mark.parametrize("prefix", ["", "/api"])
+@pytest.mark.parametrize("operation", ["join", "leave"])
+def test_room_operation_rejection_is_not_reported_as_success(prefix, operation):
+    class RejectedAgent(FakeAgent):
+        async def join(self, area="", channel=""):
+            return {"ok": False, "error": "old room leave failed"}
+
+        async def leave(self):
+            return {"ok": False, "error": "old room leave failed"}
+
+    agent = RejectedAgent()
+    app, _ = _build_apps(agent)
+    [(status, payload)] = _run(app, [
+        ("POST", f"{prefix}/voice/{operation}", {"json": {"area": "new", "channel": "new"}}),
+    ])
+    assert status == 503, payload
+    assert payload["ok"] is False
+    assert payload["error"] == "old room leave failed"
+    assert "joined" not in payload
+
+
 def test_route_handlers_follow_runtime_agent_swap() -> None:
     """热重载会替换 runtime.agent：handler 必须每次请求重新读取。"""
     agent = FakeAgent()

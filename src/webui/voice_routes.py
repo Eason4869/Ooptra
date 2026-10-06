@@ -336,6 +336,10 @@ def build_voice_routes(
         channel = str(body.get("channel") or request.query.get("channel") or "")
         try:
             result = await agent.join(area, channel)
+            if result.get("ok") is False:
+                message = str(result.get("error") or "进语音失败")
+                logger.warning("voice join failed: %s", message)
+                return err(message, 503)
         except Exception as exc:
             logger.warning("voice join failed: %s", exc)
             return err(str(exc) or "进语音失败", 503)
@@ -351,7 +355,11 @@ def build_voice_routes(
     async def voice_leave(_request: web.Request) -> web.Response:
         agent = current_agent()
         try:
-            await agent.leave()
+            result = await agent.leave()
+            if result.get("ok") is False:
+                message = str(result.get("error") or "退语音失败")
+                logger.warning("voice leave failed: %s", message)
+                return err(message, 503)
         except Exception as exc:
             logger.warning("voice leave failed: %s", exc)
             return err(str(exc) or "退语音失败", 503)
