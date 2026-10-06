@@ -33,7 +33,9 @@ def test_current_question_is_not_duplicated_in_chat_request(monkeypatch, tmp_pat
         memory = MemoryStore(str(tmp_path / "memory.jsonl"))
         memory.append("user", "previous", user_key="oopz:u")
         memory.append("assistant", "previous reply", user_key="oopz:u")
-        backend = MimoCascadeBackend(VoiceAgentSettings(mimo_api_key="test"), memory)
+        backend = MimoCascadeBackend(VoiceAgentSettings(
+            mimo_api_key="test", reply_probability_percent=100, voice_leave_enabled=False,
+        ), memory)
 
         async def asr(*args):
             return "current question"

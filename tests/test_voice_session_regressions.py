@@ -50,6 +50,8 @@ def opened(monkeypatch):
 
 
 def make_agent(tmp_path, **kwargs):
+    kwargs.setdefault("reply_probability_percent", 100)
+    kwargs.setdefault("voice_leave_enabled", False)
     settings = VoiceAgentSettings(
         enabled=True, gemini_api_key="test", memory_path=str(tmp_path / "memory.jsonl"),
         **kwargs,
@@ -61,6 +63,7 @@ def make_agent(tmp_path, **kwargs):
 
 @pytest.mark.parametrize("field,value", [
     ("gemini_voice", "Kore"), ("gemini_model", "new-model"), ("persona", "new persona"),
+    ("voice_leave_enabled", True),
 ])
 def test_active_live_configuration_sends_fresh_setup(opened, tmp_path, field, value):
     async def run():
@@ -80,8 +83,10 @@ def test_active_live_configuration_sends_fresh_setup(opened, tmp_path, field, va
                 ]["voice_name"] == "Kore"
             elif field == "gemini_model":
                 assert setup["model"] == "models/new-model"
-            else:
+            elif field == "persona":
                 assert setup["system_instruction"]["parts"][0]["text"].startswith("new persona")
+            else:
+                assert setup["tools"][0]["function_declarations"][0]["name"] == "leave_voice_room"
         finally:
             await agent.backend.close()
 

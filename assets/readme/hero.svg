@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="520" viewBox="0 0 1200 520" role="img" aria-labelledby="hero-title hero-desc">
-  <title id="hero-title">Ooptra 3.0.2 · Oopz 消息与语音工作台</title>
+  <title id="hero-title">Ooptra 3.1.0 · Oopz 消息与语音工作台</title>
   <desc id="hero-desc">新版双对话环 Logo，OneBot v11 消息桥接、Gemini Live 与 MiMo 语音对话、按域自动串门，以及支持亮暗主题的 Web 控制台。右侧为暗色语音台的简化界面示意。</desc>
   <defs>
     <g id="hero-logo" fill="none" stroke-width="7" stroke-linejoin="round">
@@ -12,7 +12,7 @@
     <rect width="1200" height="520" rx="20" fill="#F5F8FC"/>
     <use href="#hero-logo" transform="translate(55 49) scale(.8)"/>
     <rect x="448" y="64" width="100" height="32" rx="7" fill="#E7EEF7"/>
-    <text x="498" y="85" text-anchor="middle" font-size="15" font-weight="600" fill="#315DDC">v3.0.2</text>
+    <text x="498" y="85" text-anchor="middle" font-size="15" font-weight="600" fill="#315DDC">v3.1.0</text>
     <text x="60" y="190" font-size="72" font-weight="700" letter-spacing="-2" fill="#173451">Ooptra</text>
     <text x="60" y="242" font-size="30" font-weight="600" fill="#173451">Oopz 消息与语音工作台</text>
     <text x="60" y="280" font-size="18" fill="#506881">把频道会话交给机器人，让语音对话留在房间。</text>

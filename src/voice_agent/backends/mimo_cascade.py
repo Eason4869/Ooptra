@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -11,6 +12,7 @@ import wave
 from io import BytesIO
 
 from voice_agent.backends.base import VoiceBackend, VoiceReply
+from voice_agent.reply_policy import allow_reply, matches_force_keyword
 
 logger = logging.getLogger(__name__)
 
@@ -362,6 +364,34 @@ class MimoCascadeBackend(VoiceBackend):
             )
         return clean
 
+    async def detect_leave_intent(self, user_text: str) -> bool:
+        from voice_agent.voice_control import LEAVE_INTENT_DESCRIPTION
+
+        body = {
+            "model": self.settings.mimo_llm_model,
+            "messages": [
+                {"role": "system", "content": LEAVE_INTENT_DESCRIPTION
+                 + '只输出 JSON 对象 {"leave": true} 或 {"leave": false}，不要输出其他内容。'},
+                {"role": "user", "content": user_text},
+            ],
+            "stream": False, "thinking": {"type": "disabled"}, "max_tokens": 64,
+        }
+        session = await self._http()
+        url = self.settings.mimo_base_url.rstrip("/") + "/chat/completions"
+        async with session.post(
+            url, headers=self._headers(), json=body, proxy=self._proxy_url()
+        ) as resp:
+            data = await resp.json(content_type=None)
+            if resp.status >= 400:
+                raise RuntimeError(f"voice intent failed HTTP {resp.status}")
+        raw = str((((data.get("choices") or [{}])[0] or {}).get("message") or {}).get("content") or "")
+        try:
+            decision = json.loads(raw)
+        except (ValueError, TypeError):
+            logger.warning("语音退房意图返回非 JSON，本轮不执行退房")
+            return False
+        return isinstance(decision, dict) and decision.get("leave") is True
+
     async def tts(self, text: str) -> tuple[bytes, int]:
         # 兜底：无论谁调用，进 TTS 的文本一律再清一遍
         text = sanitize_for_tts(text)
@@ -446,9 +476,33 @@ class MimoCascadeBackend(VoiceBackend):
     ) -> VoiceReply:
         if not pcm16:
             return VoiceReply()
+        keywords = list(self.settings.force_reply_keywords)
+        percent = self.settings.reply_probability_percent
+        control_enabled = self.settings.voice_leave_enabled
+        if not control_enabled and not keywords and not allow_reply(percent):
+            logger.debug("自动语音回复按概率跳过（MiMo，未调用 ASR）")
+            return VoiceReply()
         text = await self.asr(pcm16, sample_rate)
         if not text.strip():
             return VoiceReply(user_text=text)
+        if control_enabled:
+            try:
+                leave_requested = await asyncio.wait_for(self.detect_leave_intent(text), 5.0)
+            except Exception:
+                logger.warning("语音退房意图识别失败，本轮不执行退房", exc_info=True)
+                leave_requested = False
+            if leave_requested:
+                self.memory.append("user", text, user_key=user_key, channel_key=channel_key)
+                return VoiceReply(user_text=text, user_key=user_key, raw={"voice_control": "leave"})
+            audio_ms = len(pcm16) / 2 / max(1, sample_rate) * 1000.0
+            if audio_ms < max(0, self.settings.min_utterance_ms):
+                logger.debug("短句仅检查退房意图，不作为普通对话回复")
+                return VoiceReply(user_text=text, user_key=user_key)
+        if ((keywords or control_enabled) and not matches_force_keyword(text, keywords)
+                and not allow_reply(percent)):
+            self.memory.append("user", text, user_key=user_key, channel_key=channel_key)
+            logger.debug("自动语音回复按概率跳过（MiMo，已完成 ASR）")
+            return VoiceReply(user_text=text, user_key=user_key)
         reply_text = await self.chat(text, user_key=user_key)
         # chat 会追加当前问题；先读取旧历史，完成请求后再落盘当前回合。
         self.memory.append("user", text, user_key=user_key, channel_key=channel_key)

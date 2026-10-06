@@ -12,6 +12,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import random
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -22,6 +23,7 @@ from voice_agent.memory import MemoryStore
 from voice_agent.operations import VoiceOperation
 from voice_agent.settings import VoiceAgentSettings, VoiceApiSettings
 from voice_agent.vad import EnergyVad, VadvConfig
+from voice_agent.voice_control import VOICE_CONTROL_MIN_MS
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +81,7 @@ def _dump_remote_pcm(uid: str, pcm: bytes, sample_rate: int) -> None:
 _MEMORY_FIELDS = {"memory_path", "memory_max_turns"}
 _VAD_FIELDS = {"sample_rate_in", "silence_ms", "max_utterance_ms"}
 _SESSION_FIELDS = {
+    "voice_leave_enabled",
     "persona",
     "proxy",
     "gemini_api_key",
@@ -158,6 +161,7 @@ class VoiceAgent:
         self._announcement_audio = 0
         self._announcement_text = ""
         self._announcement_error = ""
+        self._voice_control_task: asyncio.Task | None = None
 
     def _ensure_operations(self) -> None:
         # Existing test helpers and integrations construct an agent with __new__.
@@ -189,6 +193,84 @@ class VoiceAgent:
     def set_connection_ready(self, ready: bool) -> None:
         self._ensure_operations()
         self._connection_ready = bool(ready)
+
+    def request_voice_leave(self) -> bool:
+        """Schedule separately from the reader/round worker that must be closed on exit."""
+        self._ensure_operations()
+        if (not self.settings.voice_leave_enabled or not self.settings.enabled
+                or not self._joined or not self._connection_ready or self._voice_suspended
+                or self._announcement_active or self._retiring_visit_id):
+            return False
+        if self._voice_control_task is not None and not self._voice_control_task.done():
+            return True
+        bot = self._bot
+        logger.info("收到语音退房意图，先播放离场语：%s/%s", self._area, self._channel)
+
+        async def depart() -> None:
+            try:
+                try:
+                    await self.stop_current_reply()
+                    if not self._joined or self._bot is not bot:
+                        return
+                    import config as runtime_config
+                    from voice_agent.auto_visit_settings import (
+                        effective_area,
+                        parse_auto_visit_config,
+                    )
+
+                    policy = effective_area(parse_auto_visit_config(
+                        getattr(runtime_config, "VOICE_AUTO_VISIT_CONFIG", None)
+                    ), self._area)
+                    templates = policy["leave_prompts"] or ["拜拜，我下了"]
+                    result = await self.speak_announcement("leave", random.choice(templates))
+                    if not result["ok"]:
+                        logger.warning("语音退房离场语未完成：%s", result.get("error"))
+                except Exception:
+                    logger.warning("语音退房离场语失败，仍尝试退房", exc_info=True)
+                if self._joined and self._bot is bot:
+                    result = await self.leave(source="manual")
+                    if not result["ok"]:
+                        self.last_reply = "[error] 语音指令退房失败：" + str(result.get("error"))
+                        logger.error("语音指令退房失败：%s", result.get("error"))
+                        await self._recover_voice_control_failure(bot)
+                    else:
+                        logger.info("语音指令退房成功")
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self.last_reply = f"[error] 语音指令退房失败：{exc}"
+                logger.exception("语音指令退房失败")
+            finally:
+                if self._voice_control_task is asyncio.current_task():
+                    self._voice_control_task = None
+
+        self._voice_control_task = asyncio.create_task(depart(), name="voice-control-leave")
+        return True
+
+    async def _recover_voice_control_failure(self, bot: Any) -> None:
+        try:
+            async with self._operation_lock:
+                if (not self._joined or self._bot is not bot or not self._connection_ready
+                        or self._voice_suspended):
+                    return
+                self._rearm_barge_in()
+                if self.duplex is not None:
+                    await asyncio.wait_for(self.duplex.enable_listen(True), 1.0)
+                if self.live_mode:
+                    await self._wire_live()
+                    await asyncio.wait_for(self.backend.start_session(), 5.0)
+                else:
+                    await self._start_round_worker()
+        except Exception as exc:
+            self.last_reply += f"；接听恢复失败：{exc}"
+            logger.exception("语音退房失败后的接听恢复失败")
+
+    async def _cancel_voice_control(self) -> None:
+        task = self._voice_control_task
+        if task is not None and task is not asyncio.current_task() and not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
 
     def begin_auto_retirement(self, expected_visit_id: str) -> bool:
         if not self.is_auto_visit_current(expected_visit_id):
@@ -367,6 +449,7 @@ class VoiceAgent:
 
     async def refresh(self, changed: list[str]) -> list[str]:
         self._ensure_operations()
+        await self._cancel_voice_control()
         await self._cancel_announcement()
         async with self._operation_lock:
             return await self._refresh_locked(changed)
@@ -455,6 +538,7 @@ class VoiceAgent:
     async def join(self, area: str = "", channel: str = "", *, source: str = "manual", visit_id: str = "",
                    expected_operation_epoch: int | None = None) -> dict[str, Any]:
         self._ensure_operations()
+        await self._cancel_voice_control()
         if source != "auto":
             await self._cancel_announcement()
         events = []
@@ -557,6 +641,8 @@ class VoiceAgent:
         async def on_audio(pcm: bytes, rate: int) -> None:
             if not current():
                 return
+            if self._voice_control_task is not None and not self._announcement_collecting:
+                return
             # 收到分片只说明「这一回合正在出声」，**不代表回合结束**：
             # 以前在这里 turns += 1，一次回复实测 13 个分片就虚增 13 轮；
             # 而 _speaking 置 True 后没有任何地方回落，导致下面 _on_remote_pcm
@@ -632,6 +718,9 @@ class VoiceAgent:
         setter_reply = getattr(self.backend, "set_reply_out", None)
         if setter_reply:
             setter_reply(on_reply)
+        setter_control = getattr(self.backend, "set_voice_leave_out", None)
+        if setter_control is not None:
+            setter_control(lambda: current() and self.request_voice_leave())
 
     async def _start_round_worker(self) -> None:
         """拉起信箱消费端。重复进房时先收掉旧的，避免两个 worker 抢同一条。"""
@@ -657,6 +746,7 @@ class VoiceAgent:
         # A stale controller must not cancel an announcement in the new room.
         if expected_visit_id is not None and not self.is_auto_visit_current(expected_visit_id):
             return {"ok": False, "error": "stale visit"}
+        await self._cancel_voice_control()
         await self._cancel_announcement()
         async with self._operation_lock:
             if expected_visit_id is not None and not self.is_auto_visit_current(expected_visit_id):
@@ -782,7 +872,7 @@ class VoiceAgent:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def speak_announcement(self, kind: str, template: str, *, expected_visit_id: str,
+    async def speak_announcement(self, kind: str, template: str, *, expected_visit_id: str | None = None,
                                  timeout: float = 20.0) -> dict[str, Any]:
         from voice_agent.announcements import announcement_instruction, run_announcement
 
@@ -792,7 +882,8 @@ class VoiceAgent:
         except ValueError as exc:
             return {"ok": False, "text": "", "error": str(exc)}
         async with self._operation_lock:
-            if not self.is_auto_visit_current(expected_visit_id):
+            if (not self._joined or (expected_visit_id is not None
+                    and not self.is_auto_visit_current(expected_visit_id))):
                 return {"ok": False, "text": "", "error": "stale visit"}
             if self._announcement_task is not None and not self._announcement_task.done():
                 return {"ok": False, "text": "", "error": "announcement already active"}
@@ -839,7 +930,8 @@ class VoiceAgent:
         return vad
 
     async def _on_remote_pcm(self, uid: str, pcm: bytes, sample_rate: int) -> None:
-        if (getattr(self, "_announcement_active", False) or getattr(self, "_retiring_visit_id", "")
+        if (getattr(self, "_voice_control_task", None) is not None
+                or getattr(self, "_announcement_active", False) or getattr(self, "_retiring_visit_id", "")
                 or not getattr(self, "_connection_ready", True) or getattr(self, "_voice_suspended", False)):
             return
         if not self.settings.enabled or not pcm:
@@ -917,6 +1009,10 @@ class VoiceAgent:
             # 「嗯嗯，知道了。」—— 用户听到的就是「它每句都接」。
             # 实测（2026-10-01 的 58 个回合）这类占相当一部分，且全是噪音。
             min_ms = max(0, int(getattr(self.settings, "min_utterance_ms", 0) or 0))
+            if self.settings.voice_leave_enabled:
+                # Short commands still reach intent detection. The cascade keeps
+                # the original threshold for non-command chat replies after ASR.
+                min_ms = min(min_ms, VOICE_CONTROL_MIN_MS)
             audio_ms = len(utterance) / 2 / max(1, sample_rate) * 1000.0
             if audio_ms < min_ms:
                 logger.info(
@@ -1056,6 +1152,9 @@ class VoiceAgent:
                 reply.text or "",
             )
             self.last_user_text = reply.user_text or self.last_user_text
+            if reply.raw.get("voice_control") == "leave":
+                self.request_voice_leave()
+                return
             if reply.text:
                 self.last_reply = reply.text
 

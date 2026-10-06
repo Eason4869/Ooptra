@@ -32,6 +32,10 @@ class VoiceAgentSettings:
     vad_mode: str = "local"
     listen_only_uids: list[str] = field(default_factory=list)
     reply_text_to_channel: bool = False
+    # 自动接话概率；快捷开口与进退房台词始终可用。
+    reply_probability_percent: int = 30
+    force_reply_keywords: list[str] = field(default_factory=list)
+    voice_leave_enabled: bool = True
     sample_rate_in: int = 16000
     sample_rate_out: int = 24000
     #: 说完多久算一句。700ms 对中文太短 —— 想词、换气的自然停顿就会被当成
@@ -98,6 +102,9 @@ def load_voice_agent_settings() -> tuple[VoiceAgentSettings, VoiceApiSettings]:
     mimo = dict(_get(agent_raw, "mimo", {}) or {})
     gemini = dict(_get(agent_raw, "gemini", {}) or {})
     openai = dict(_get(agent_raw, "openai", {}) or {})
+    keywords = _get(agent_raw, "force_reply_keywords", []) or []
+    if isinstance(keywords, str):
+        keywords = keywords.split(",")
 
     agent = VoiceAgentSettings(
         enabled=bool(_get(agent_raw, "enabled", False)),
@@ -110,6 +117,9 @@ def load_voice_agent_settings() -> tuple[VoiceAgentSettings, VoiceApiSettings]:
         vad_mode=str(_get(agent_raw, "vad_mode", "local") or "local"),
         listen_only_uids=[str(x) for x in (_get(agent_raw, "listen_only_uids", []) or [])],
         reply_text_to_channel=bool(_get(agent_raw, "reply_text_to_channel", False)),
+        reply_probability_percent=max(0, min(100, int(_get(agent_raw, "reply_probability_percent", 30)))),
+        force_reply_keywords=[str(word).strip() for word in keywords if str(word).strip()],
+        voice_leave_enabled=bool(_get(agent_raw, "voice_leave_enabled", True)),
         sample_rate_in=int(_get(agent_raw, "sample_rate_in", 16000)),
         sample_rate_out=int(_get(agent_raw, "sample_rate_out", 24000)),
         silence_ms=int(_get(agent_raw, "silence_ms", 1200)),

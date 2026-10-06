@@ -22,7 +22,7 @@ def clean_announcement(text: str) -> str:
     return clamp_reply(sanitize_for_tts(text), limit=35)
 
 
-async def run_announcement(agent: Any, kind: str, template: str, visit_id: str, epoch: int,
+async def run_announcement(agent: Any, kind: str, template: str, visit_id: str | None, epoch: int,
                             timeout: float) -> dict[str, Any]:
     agent._announcement_active = True
     agent._announcement_collecting = False
@@ -33,7 +33,8 @@ async def run_announcement(agent: Any, kind: str, template: str, visit_id: str, 
     agent._pending = None
 
     def check_current() -> None:
-        if epoch != agent._operation_epoch or not agent.is_auto_visit_current(visit_id):
+        if (epoch != agent._operation_epoch or not agent._joined
+                or (visit_id is not None and not agent.is_auto_visit_current(visit_id))):
             raise RuntimeError("stale visit")
 
     async def generate_and_play() -> dict[str, Any]:

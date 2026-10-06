@@ -422,6 +422,44 @@ FIELD_SPECS: dict[str, dict[str, dict[str, Any]]] = {
             "allow_custom": True,
             "hint": "下拉预设音色，或选「自定义」填入任意音色名",
         },
+        "reply_probability_percent": {
+            "type": "int",
+            "label": "语音回复频率（概率 %）",
+            "tier": "basic",
+            "min": 0,
+            "max": 100,
+            "default": 30,
+            "hint": (
+                "默认 30，随机回应约三成发言；0 仅在命中强制关键词时接话，100 每次均允许回复。"
+                "保存后对后续回合生效，快捷开口和进退房台词不受限制。"
+                "Gemini Live 继续听取对话，按模型回复回合决定是否出声，不保证减少模型用量。"
+            ),
+        },
+        "force_reply_keywords": {
+            "type": "list",
+            "label": "强制回复关键词列表",
+            "tier": "basic",
+            "default": [],
+            "placeholder": "例如：Ooptra, 机器人, 小欧",
+            "hint": (
+                "多个词用英文逗号分隔；发言包含任一关键词时绕过回复概率（包括 0%）。"
+                "忽略大小写、全半角、空格和标点；以语音转写为准，同音别名可加入列表。"
+                "默认留空，保存后对后续回合生效；MiMo 启用关键词时需要先做语音识别。"
+                "Gemini 延迟转写最多等待 2 秒；跨回合无法确认归属时仅按概率回复。"
+            ),
+        },
+        "voice_leave_enabled": {
+            "type": "bool",
+            "label": "语音控制退语音",
+            "tier": "basic",
+            "default": True,
+            "hint": (
+                "默认开启，由 AI 判断真人是否要求 bot 退房；所有当前监听的成员均可触发。"
+                "不受回复概率限制，先播放离场语再退出，按手动退房冷却。"
+                "台词复用自动串门的分域退房预设（空列表时采用默认告别）。"
+                "MiMo 开启后每句需 ASR 和额外意图判断，会增加模型用量。"
+            ),
+        },
         "barge_in": {"type": "bool", "label": "允许抢话打断", "tier": "adv", "section": "行为"},
         "barge_in_hold_ms": {
             "type": "int",
@@ -577,6 +615,8 @@ def schema_payload() -> dict[str, Any]:
                 if extra in meta:
                     entry[extra] = meta[extra]
             value = _nested_get(current, _split_field_path(field))
+            if value is None:
+                value = meta.get("default")
             if meta.get("readonly"):
                 entry["value"] = value
             elif meta.get("sensitive"):

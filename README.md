@@ -10,11 +10,11 @@
 </div>
 
 <p align="center">
-  <img src="./assets/readme/hero.svg" width="100%" alt="Ooptra 3.0.2：消息桥接、语音对话、自动串门与支持暗色模式的 WebUI" />
+  <img src="./assets/readme/hero.svg" width="100%" alt="Ooptra 3.1.0：消息桥接、语音对话、自动串门与支持暗色模式的 WebUI" />
 </p>
 
 <p align="center">
-  <a href="CHANGELOG.md"><img alt="当前版本 3.0.2" src="https://img.shields.io/badge/version-3.0.2-315DDC?style=flat-square"></a>
+  <a href="CHANGELOG.md"><img alt="当前版本 3.1.0" src="https://img.shields.io/badge/version-3.1.0-315DDC?style=flat-square"></a>
   <a href="https://github.com/Eason4869/Ooptra/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/Eason4869/Ooptra?style=flat-square"></a>
   <a href="https://hits.sh/github.com/Eason4869/Ooptra/"><img alt="README 累计访问次数" src="https://hits.sh/github.com/Eason4869/Ooptra.svg?style=flat-square&amp;label=README%20views&amp;color=315ddc"></a>
   <a href="https://github.com/Eason4869/Ooptra/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Eason4869/Ooptra/ci.yml?style=flat-square&label=CI"></a>
@@ -39,7 +39,7 @@ Ooptra 把 Oopz 的频道会话转换为 [OneBot v11](https://github.com/botuniv
 两端只约定 OneBot v11 协议，不绑定任何具体框架。项目自带本地 Web 控制台，用来查看状态、跟踪日志、编辑配置和登录 Oopz；
 另有一个可选的语音模块，让 bot 进入 Oopz 语音频道与人实时对话。
 
-当前版本：**3.0.2**。WebUI 支持亮色／暗色切换，主题选择在当前浏览器保存。完整变更见[更新日志](CHANGELOG.md)。
+当前版本：**3.1.0**。WebUI 支持亮色／暗色切换，主题选择在当前浏览器保存。完整变更见[更新日志](CHANGELOG.md)。
 
 顶部访问徽章由 [Hits](https://github.com/silentsoft/hits) 提供，接入后累计访问次数仅作曝光参考，不代表独立访客人数。
 项目维护者可在 [Insights → Traffic](https://github.com/Eason4869/Ooptra/graphs/traffic) 查看 GitHub 官方的近 14 天访问、独立访客及克隆统计。
@@ -66,7 +66,7 @@ Ooptra 把 Oopz 的频道会话转换为 [OneBot v11](https://github.com/botuniv
 ## 运行链路
 
 <p align="center">
-  <img src="./assets/readme/runtime-map.svg" width="100%" alt="Ooptra 3.0.2 消息与语音链路：桥接内核、WebUI 和可选语音 Agent 共用同一进程" />
+  <img src="./assets/readme/runtime-map.svg" width="100%" alt="Ooptra 3.1.0 消息与语音链路：桥接内核、WebUI 和可选语音 Agent 共用同一进程" />
 </p>
 
 事件标准化、身份映射、凭据维护与网络适配彼此独立；桥接内核与 Web 控制台在同一个进程内运行。
@@ -183,6 +183,27 @@ Live 的原生音频模型**不支持指定输出语言**（官方文档：*Expl
 
 先在「配置 → 语音模型」开启语音模块并设置后端、密钥、模型和音色，再在「语音台 → 会话控制」选择域与频道后进房／退房。
 成员状态在「房间成员」子页查看，人格与共享记忆在「人格与记忆」子页管理。
+「配置 → 语音模型」中的「语音回复频率（概率 %）」可设为 `0～100`，保存后对后续回合生效；
+默认 `30` 表示随机回应约三成发言，设为 `100` 则每次均允许回复；设为 `0` 时仅命中强制关键词才自动接话。
+这是概率控制，并非每十句固定回复三句；「与 AI 对话」手动开口和自动进退房台词不受限制。
+同页的「强制回复关键词列表」用英文逗号分隔；发言转写包含任一关键词时绕过概率限制，例如 `Ooptra, 机器人, 小欧`。
+匹配忽略大小写、全半角、空格和标点，`OOPTRA`、`Oop tra`、`Ｏｏｐｔｒａ` 均可匹配 `ooptra`；
+同音识别别名可自行添加，列表默认留空。旧配置缺少概率项时也采用默认 `30`，已有明确设置保留。
+MiMo 关闭语音退房控制且未配置关键词时，在 ASR 前判断；其他情况下先识别发言，再决定是否对话回复。Gemini Live 保持听取对话，按模型回复回合选择是否播放，
+因此降低频率不保证减少 Gemini 用量；跳过的 Gemini 回复不会作为 bot 已说过的话写入共享记忆。
+Gemini 的输入转写[不保证与回复消息的先后顺序](https://ai.google.dev/api/live)，关键词识别以转写为准：
+未播放的回复最多缓存 4 MiB，结束后保留 2 秒等待迟到转写，命中后完整播放；
+超时、缓存超限或新一轮语音开始导致归属不明确时，仅按概率处理，避免上一句关键词误触发下一句。
+同页「语音控制退语音」开关默认开启（旧配置缺项也开启），当前监听的所有成员均可让 bot 实际退房：
+AI 判断“退语音”“机器人，你先下吧”等是否为当前针对机器人的退房请求；“不要退语音”、引用、讨论指令或人类自己离开不应触发。
+控制指令不受回复概率限制，包括 `0%`。MiMo 每句先做 ASR 和独立的 AI 意图判断，会增加用量；
+Gemini 使用 [Live 工具调用](https://ai.google.dev/gemini-api/docs/live-api/tools)，须选用支持工具调用的 Live 模型或中转。
+退房前随机选取「自动串门」配置中所在域的退房预设并按人设改写，默认“拜拜，我下了”（空预设列表也使用此默认告别）；
+等离场语播放完毕再退房，生成／播放失败或20秒超时后仍尝试退出，成功后按该域手动退房冷却。
+识别到指令后暂停接听新的发言；WebUI／QQ 手动进退房会取消旧任务，避免旧任务退出新房间。
+实际退房失败时保留房间状态和错误，并恢复接听以便重试。MiMo 的短语音控制入口最低为250毫秒（用户更低的设置保留），
+短句未命中退房意图时仍受原普通回复时长阈值约束，现有能量过滤保持生效。
+开关保存后立即生效；Gemini 会重建当前模型会话以增删退房工具。AI 意图判定依赖模型与语音识别，首次启用请在实际语音房验证。
 「与 AI 对话」卡片用于**用文字发起一次对话**：AI 会在当前语音房用语音回答，和房间里说话属于同一场对话（需已进房）；
 级联模式下不经过模型，直接朗读这段文字。
 
@@ -277,6 +298,9 @@ python -m playwright install chromium
 | `WEBUI_CONFIG.host` / `port` / `token` | 控制台监听地址、端口与访问令牌；语音 API 与外部插件默认也用这个 token |
 | `VOICE_AGENT_CONFIG.enabled` | 是否启用语音模块，默认 `False` |
 | `VOICE_AGENT_CONFIG.backend` | `gemini_live`（默认）或 `mimo_cascade` |
+| `VOICE_AGENT_CONFIG.reply_probability_percent` | 自动语音回复概率，`0～100`，默认 `30`；两个后端均支持，手动开口与进退房台词不受限制 |
+| `VOICE_AGENT_CONFIG.force_reply_keywords` | 强制回复关键词列表，默认 `[]`；发言转写包含关键词时绕过概率限制，忽略大小写、全半角、空格和标点 |
+| `VOICE_AGENT_CONFIG.voice_leave_enabled` | 语音控制退语音，默认 `True`；AI 判断意图，先说离场语再实际退房，不受回复概率限制 |
 | `VOICE_AGENT_CONFIG.proxy` | 模型 API 代理（选填）：`clash` = `127.0.0.1:7890`，`direct` 直连，或显式 `http://主机:端口` |
 | `VOICE_AGENT_CONFIG.barge_in` | 是否允许抢话打断，默认 `True` |
 | `VOICE_AGENT_CONFIG.barge_in_hold_ms` | 连续说话达到此时长才打断 bot，默认 300 毫秒；人多时可适当调高 |

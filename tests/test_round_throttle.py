@@ -21,6 +21,9 @@ import asyncio
 import logging
 import struct
 import time
+from types import SimpleNamespace
+
+import pytest
 
 from voice_agent.agent import VoiceAgent
 from voice_agent.backends.base import VoiceReply
@@ -64,6 +67,8 @@ class _StubVad:
 
 def _agent(utterance: bytes | None = None, **overrides) -> tuple[VoiceAgent, _RecordingBackend]:
     agent = VoiceAgent.__new__(VoiceAgent)
+    overrides.setdefault("reply_probability_percent", 100)
+    overrides.setdefault("voice_leave_enabled", False)
     agent.settings = VoiceAgentSettings(enabled=True, barge_in=False, **overrides)
     agent.live_mode = False
     agent.duplex = None
@@ -149,21 +154,33 @@ def test_newest_utterance_wins_during_the_cooldown(caplog) -> None:
 # ----------------------------------------------------------------------
 
 
-def test_cooldown_delays_the_next_round() -> None:
+def test_cooldown_delays_the_next_round(monkeypatch) -> None:
     """完整说完一条后，下一条要等满冷却才开。"""
 
     async def run() -> None:
+        from voice_agent import agent as agent_module
+
         agent, backend = _agent(reply_cooldown_ms=150)
+        now = [100.0]
+        waits = []
+
+        async def sleep(seconds):
+            waits.append(seconds)
+            now[0] += seconds
+
+        # Windows monotonic clocks can round a 150ms real sleep down to 140ms.
+        # Verify the required deadline and requested wait with a controlled clock.
+        monkeypatch.setattr(agent_module, "time", SimpleNamespace(monotonic=lambda: now[0]))
+        monkeypatch.setattr(agent_module.asyncio, "sleep", sleep)
         _offer(agent, b"first")
         await agent._throttled_round(_take(agent))
-        assert agent._cooldown_until > time.monotonic(), "没设冷却"
+        assert agent._cooldown_until == pytest.approx(100.15)
 
-        started = time.monotonic()
         _offer(agent, b"second")
         await agent._throttled_round(_take(agent))
-        waited = time.monotonic() - started
 
-        assert waited >= 0.15, f"只等了 {waited:.3f}s，冷却没生效"
+        assert waits == pytest.approx([0.15])
+        assert agent._cooldown_until == pytest.approx(100.30)
         assert backend.seen == [b"first", b"second"]
 
     asyncio.run(run())

@@ -106,6 +106,23 @@ def test_reload_settings_propagates_to_running_objects(
     assert result["restart_keys"] == []
 
 
+def test_reply_controls_reload_reaches_backend_without_replacing_it(monkeypatch, tmp_path):
+    rt = _make_runtime(monkeypatch, _settings(tmp_path))
+    original_backend = rt.agent.backend
+    fresh = _settings(tmp_path, reply_probability_percent=0, force_reply_keywords=["ooptra"],
+                      voice_leave_enabled=False)
+    monkeypatch.setattr(
+        runtime_module, "load_voice_agent_settings", lambda: (fresh, VoiceApiSettings())
+    )
+    result = asyncio.run(rt.reload_settings())
+    assert rt.agent.backend is original_backend
+    assert rt.agent.backend.settings.reply_probability_percent == 0
+    assert rt.agent.backend.settings.force_reply_keywords == ["ooptra"]
+    assert rt.agent.backend.settings.voice_leave_enabled is False
+    assert set(result["changed"]) == {"reply_probability_percent", "force_reply_keywords", "voice_leave_enabled"}
+    assert not result["restart_keys"]
+
+
 def test_reload_settings_rebuilds_vad_when_tuning_changes(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:

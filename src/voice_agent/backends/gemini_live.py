@@ -18,13 +18,28 @@ import base64
 import contextlib
 import json
 import logging
+import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit, urlunsplit
 
 from voice_agent.backends.base import VoiceBackend, VoiceReply
+from voice_agent.reply_policy import allow_reply, matches_force_keyword
+from voice_agent.vad import EnergyVad, VadvConfig
 
 logger = logging.getLogger(__name__)
+_MAX_DEFERRED_AUDIO_BYTES = 4 * 1024 * 1024
+_LATE_TRANSCRIPTION_SECONDS = 2.0
+
+
+@dataclass
+class _CompletedReply:
+    audio: list[tuple[bytes, int]]
+    keywords: list[str]
+    user_text: str
+    reply_text: str
+    deadline: float
 
 # Google AI Studio / Gemini API 的 BidiGenerateContent WebSocket 端点
 DEFAULT_LIVE_WS = (
@@ -142,8 +157,20 @@ class GeminiLiveBackend(VoiceBackend):
         self._text_out: Callable[[str], Awaitable[None] | None] | None = None
         self._turn_out: TurnOutHandler | None = None
         self._reply_out = None
+        self._voice_leave_out: Callable[[], bool] | None = None
         self.reply_active = False
         self._announcement = False
+        self._reply_allowed: bool | None = None
+        self._force_reply = False
+        self._explicit_turn = False
+        self._turn_keywords: list[str] | None = None
+        self._deferred_audio: list[tuple[bytes, int]] = []
+        self._deferred_audio_bytes = 0
+        self._deferred_audio_overflow = False
+        self._completed_reply: _CompletedReply | None = None
+        self._policy_generation = 0
+        self._keyword_quarantine = False
+        self._between_turns = False
         # start_session 可能被并发调用（push_audio 在音频热路径上也会调它），
         # 而它开头就 _reset_session() —— 没有这把锁，任何一次非活跃窗口都会
         # 让每个音频帧各建一次会话，互相把对方的 socket 拆掉。
@@ -168,6 +195,9 @@ class GeminiLiveBackend(VoiceBackend):
 
     def set_reply_out(self, handler) -> None:
         self._reply_out = handler
+
+    def set_voice_leave_out(self, handler: Callable[[], bool] | None) -> None:
+        self._voice_leave_out = handler
 
     def _set_reply_active(self, active: bool) -> None:
         self.reply_active = active
@@ -251,6 +281,14 @@ class GeminiLiveBackend(VoiceBackend):
         self._ready.clear()
         self._set_reply_active(False)
         self._announcement = False
+        self._reply_allowed = None
+        self._force_reply = False
+        self._explicit_turn = False
+        had_reply = self._completed_reply is not None or self._turn_keywords is not None
+        self._discard_completed_reply()
+        self._keyword_quarantine = had_reply
+        self._between_turns = True
+        self._clear_deferred_reply()
         self._last_user_text = ""
         self._last_reply = ""
         if task is not None and not task.done():
@@ -319,6 +357,8 @@ class GeminiLiveBackend(VoiceBackend):
         await ws.send(json.dumps(payload, ensure_ascii=False))
 
     async def _send_setup(self) -> None:
+        from voice_agent.voice_control import LEAVE_INTENT_DESCRIPTION, live_leave_tool
+
         setup = {
             "setup": {
                 "model": f"models/{self.settings.gemini_model}",
@@ -340,6 +380,13 @@ class GeminiLiveBackend(VoiceBackend):
                 "realtime_input_config": _realtime_input_config(),
             }
         }
+        if self.settings.voice_leave_enabled:
+            setup["setup"]["tools"] = [{"function_declarations": [live_leave_tool()]}]
+            setup["setup"]["system_instruction"]["parts"].append({"text": (
+                "\n【语音控制】" + LEAVE_INTENT_DESCRIPTION
+                + "确认时调用 leave_voice_room，应用会播放离场语并真正退房，不要仅口头承诺。"
+                "内部语音事件指令和文字快捷开口不调用此工具。"
+            )})
         await self._send(setup)
 
     async def push_audio(self, pcm16: bytes, sample_rate: int | None = None) -> None:
@@ -350,6 +397,13 @@ class GeminiLiveBackend(VoiceBackend):
         """
         if not pcm16 or self._closed:
             return
+        self._expire_completed_reply()
+        if ((self._between_turns or self._completed_reply is not None)
+                and EnergyVad._rms(pcm16) >= VadvConfig().energy_threshold):
+            if self._completed_reply is not None:
+                self._discard_completed_reply()
+                self._keyword_quarantine = True
+            self._between_turns = False
         if not self.session_active:
             await self.start_session()
         mime = f"audio/pcm;rate={int(sample_rate or self._in_sample)}"
@@ -425,9 +479,91 @@ class GeminiLiveBackend(VoiceBackend):
             if owns_session and not self._closed:
                 self._schedule_reconnect()
 
+    def _clear_deferred_reply(self) -> None:
+        self._turn_keywords = None
+        self._deferred_audio.clear()
+        self._deferred_audio_bytes = 0
+        self._deferred_audio_overflow = False
+
+    def _discard_completed_reply(self) -> None:
+        pending, self._completed_reply = self._completed_reply, None
+        self._policy_generation += 1
+        if pending is not None and pending.user_text:
+            try:
+                self.memory.append("user", pending.user_text, user_key="live")
+            except Exception:
+                logger.debug("memory write failed", exc_info=True)
+
+    def _expire_completed_reply(self) -> None:
+        pending = self._completed_reply
+        if pending is not None and time.monotonic() >= pending.deadline:
+            self._discard_completed_reply()
+            self._keyword_quarantine = True
+
+    async def _restore_completed_reply(self, text: str) -> None:
+        pending = self._completed_reply
+        if pending is None:
+            return
+        pending.user_text += text
+        if not matches_force_keyword(pending.user_text, pending.keywords):
+            return
+        # Detach before awaiting callbacks. A reset/new command invalidates this generation.
+        self._completed_reply = None
+        generation = self._policy_generation
+        self._set_reply_active(True)
+        try:
+            for pcm, rate in pending.audio:
+                if generation != self._policy_generation:
+                    return
+                await self._deliver_audio(pcm, rate)
+            if generation != self._policy_generation:
+                return
+            if self._turn_out is not None:
+                result = self._turn_out(False)
+                if asyncio.iscoroutine(result):
+                    await result
+            if generation != self._policy_generation:
+                return
+            try:
+                if pending.user_text:
+                    self.memory.append("user", pending.user_text, user_key="live")
+                if pending.reply_text:
+                    self.memory.append("assistant", pending.reply_text, user_key="live")
+            except Exception:
+                logger.debug("memory write failed", exc_info=True)
+            if pending.reply_text and self._text_out is not None:
+                result = self._text_out(pending.reply_text)
+                if asyncio.iscoroutine(result):
+                    await result
+        finally:
+            if generation == self._policy_generation:
+                self._set_reply_active(False)
+
+    async def _deliver_audio(self, pcm: bytes, rate: int) -> None:
+        handler = self._audio_out
+        if handler is not None and pcm:
+            result = handler(pcm, rate)
+            if asyncio.iscoroutine(result):
+                await result
+
     async def _handle_server_msg(self, msg: dict[str, Any]) -> None:
         if "setupComplete" in msg:
             self._ready.set()
+            return
+        calls = (msg.get("toolCall") or {}).get("functionCalls") or []
+        if calls:
+            responses = []
+            for call in calls:
+                accepted = (
+                    call.get("name") == "leave_voice_room" and self.settings.voice_leave_enabled
+                    and not self._announcement and not self._explicit_turn
+                    and self._voice_leave_out is not None and self._voice_leave_out()
+                )
+                responses.append({"id": call.get("id"), "name": call.get("name"),
+                                  "response": {"status": "requested" if accepted else "rejected"}})
+            # The accepted operation closes this session; acknowledgement can race that close.
+            with contextlib.suppress(Exception):
+                await self._send({"toolResponse": {"functionResponses": responses}})
             return
 
         server = msg.get("serverContent") or {}
@@ -455,14 +591,48 @@ class GeminiLiveBackend(VoiceBackend):
         # 转写（可选进记忆）
         input_tr = server.get("inputTranscription") or {}
         output_tr = server.get("outputTranscription") or {}
+        turn = server.get("modelTurn") or {}
+        self._expire_completed_reply()
+        if turn or output_tr.get("text"):
+            if self._completed_reply is not None:
+                self._discard_completed_reply()
+                self._keyword_quarantine = True
+            self._between_turns = False
+        elif input_tr.get("text") and self._between_turns:
+            # Input transcription is independent of turnComplete (no protocol turn ID).
+            # A late fragment belongs to the pending old reply, never the next reply.
+            await self._restore_completed_reply(input_tr["text"])
+            return
+        if self._turn_keywords is None:
+            self._turn_keywords = list(self.settings.force_reply_keywords)
         if input_tr.get("text"):
             self._set_reply_active(True)
             self._last_user_text = (self._last_user_text + input_tr["text"]).strip()
+            if (self._reply_allowed is False and not self._deferred_audio_overflow
+                    and not self._keyword_quarantine
+                    and matches_force_keyword(self._last_user_text, self._turn_keywords)):
+                # Transcription can arrive after audio: replay all buffered fragments.
+                self._reply_allowed = True
+                buffered = self._deferred_audio
+                self._deferred_audio = []
+                self._deferred_audio_bytes = 0
+                for pcm, rate in buffered:
+                    await self._deliver_audio(pcm, rate)
         if output_tr.get("text"):
             self._last_reply = (self._last_reply + output_tr["text"]).strip()
 
-        turn = server.get("modelTurn") or {}
         if turn or output_tr.get("text"):
+            if self._reply_allowed is None:
+                # Decide once for the entire reply, so audio fragments stay intact.
+                self._reply_allowed = (
+                    self._announcement or self._force_reply
+                    or (not self._keyword_quarantine
+                        and matches_force_keyword(self._last_user_text, self._turn_keywords))
+                    or allow_reply(self.settings.reply_probability_percent)
+                )
+                self._force_reply = False
+                if not self._reply_allowed:
+                    logger.debug("自动语音回复按概率跳过（Gemini Live）")
             self._set_reply_active(True)
         for part in turn.get("parts") or []:
             inline = part.get("inlineData") or part.get("inline_data") or {}
@@ -478,15 +648,30 @@ class GeminiLiveBackend(VoiceBackend):
             if "rate=" in mime:
                 with contextlib.suppress(ValueError):
                     rate = int(mime.split("rate=")[1].split(";")[0].strip())
-            handler = self._audio_out
-            if handler is not None and pcm:
-                result = handler(pcm, rate)
-                if asyncio.iscoroutine(result):
-                    await result
+            if self._reply_allowed is False:
+                if self._turn_keywords and not self._deferred_audio_overflow:
+                    self._deferred_audio_bytes += len(pcm)
+                    if self._deferred_audio_bytes > _MAX_DEFERRED_AUDIO_BYTES:
+                        self._deferred_audio.clear()
+                        self._deferred_audio_overflow = True
+                        logger.warning("关键词等待音频超出缓存上限，跳过整轮回复")
+                    else:
+                        self._deferred_audio.append((pcm, rate))
+                continue
+            await self._deliver_audio(pcm, rate)
 
         if server.get("turnComplete") or server.get("interrupted"):
             self._set_reply_active(False)
             self._turns += 1
+            keep_pending = (self._reply_allowed is False and self._turn_keywords
+                            and not self._keyword_quarantine and not self._deferred_audio_overflow
+                            and bool(self._deferred_audio) and not server.get("interrupted"))
+            if keep_pending:
+                self._completed_reply = _CompletedReply(
+                    list(self._deferred_audio), self._turn_keywords,
+                    self._last_user_text, self._last_reply,
+                    time.monotonic() + _LATE_TRANSCRIPTION_SECONDS,
+                )
             # 转写落日志：语言乱切换这类问题**只能**从这里看出来（模型到底听到了
             # 什么、又用什么语言回答）。记忆里本来就存了这两段文本，日志不增加暴露。
             if self._last_user_text or self._last_reply:
@@ -494,12 +679,13 @@ class GeminiLiveBackend(VoiceBackend):
                     "Live 回合：用户=%r 回复=%r%s",
                     self._last_user_text[:80],
                     self._last_reply[:80],
-                    "（被抢话打断）" if server.get("interrupted") else "",
+                    "（未播放）" if self._reply_allowed is False
+                    else "（被抢话打断）" if server.get("interrupted") else "",
                 )
             # 回合边界：先通知上层（它据此把「正在说话」落回 False、结束一次轮次），
             # 再写记忆。被抢话时上层还要就地丢掉本地已排期的音频。
             turn_handler = self._turn_out
-            if turn_handler is not None:
+            if turn_handler is not None and self._reply_allowed is not False:
                 try:
                     result = turn_handler(bool(server.get("interrupted")))
                     if asyncio.iscoroutine(result):
@@ -508,20 +694,25 @@ class GeminiLiveBackend(VoiceBackend):
                     logger.debug("turn out handler failed", exc_info=True)
             if self._last_user_text or self._last_reply:
                 try:
-                    if self._last_user_text and not self._announcement:
+                    if self._last_user_text and not self._announcement and not keep_pending:
                         self.memory.append("user", self._last_user_text, user_key="live")
-                    if self._last_reply:
+                    if self._last_reply and self._reply_allowed is not False:
                         self.memory.append("assistant", self._last_reply, user_key="live")
                 except Exception:
                     logger.debug("memory write failed", exc_info=True)
             text_handler = self._text_out
-            if text_handler is not None and self._last_reply:
+            if text_handler is not None and self._last_reply and self._reply_allowed is not False:
                 result = text_handler(self._last_reply)
                 if asyncio.iscoroutine(result):
                     await result
             self._last_user_text = ""
             self._last_reply = ""
             self._announcement = False
+            self._explicit_turn = False
+            self._reply_allowed = None
+            self._between_turns = True
+            self._keyword_quarantine = False
+            self._clear_deferred_reply()
 
     # ------------------------------------------------------------------
     # VoiceBackend 兼容接口（Live 走流式，handle_utterance 仅兜底）
@@ -551,20 +742,35 @@ class GeminiLiveBackend(VoiceBackend):
         if not self.session_active:
             await self.start_session()
         payload = {"realtimeInput": {"text": text}}
+        self._discard_completed_reply()
+        self._between_turns = False
         self._set_reply_active(True)
+        self._force_reply = True
+        self._explicit_turn = True
         try:
-            await self._send(payload)
-        except Exception as exc:
-            logger.warning("live speak failed (%s); reconnecting once", exc)
-            await self._reset_session()
-            await self.start_session()
-            await self._send(payload)
+            try:
+                await self._send(payload)
+            except Exception as exc:
+                logger.warning("live speak failed (%s); reconnecting once", exc)
+                await self._reset_session()
+                await self.start_session()
+                self._force_reply = True
+                self._explicit_turn = True
+                self._set_reply_active(True)
+                await self._send(payload)
+        except BaseException:
+            self._force_reply = False
+            self._explicit_turn = False
+            self._set_reply_active(False)
+            raise
 
     async def speak_announcement(self, kind: str, template: str) -> None:
         from voice_agent.announcements import announcement_instruction
 
         if not self.session_active:
             await self.start_session()
+        self._discard_completed_reply()
+        self._between_turns = False
         self._last_user_text = ""
         self._last_reply = ""
         self._announcement = True
