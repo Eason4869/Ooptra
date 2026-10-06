@@ -3,12 +3,13 @@
 </p>
 
 <p align="center">
-  <img src="./assets/readme/hero.svg" width="100%" alt="Ooptra 把 Oopz 频道会话桥接到 OneBot v11" />
+  <img src="./assets/readme/hero.svg" width="100%" alt="Ooptra 3.0.1：消息桥接、语音对话、自动串门与支持暗色模式的 WebUI" />
 </p>
 
 <p align="center">
   <a href="CHANGELOG.md"><img alt="当前版本 3.0.1" src="https://img.shields.io/badge/version-3.0.1-315DDC?style=flat-square"></a>
   <a href="https://github.com/Eason4869/Ooptra/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/Eason4869/Ooptra?style=flat-square"></a>
+  <a href="https://hits.sh/github.com/Eason4869/Ooptra/"><img alt="README 累计访问次数" src="https://hits.sh/github.com/Eason4869/Ooptra.svg?style=flat-square&amp;label=README%20views&amp;color=315ddc"></a>
   <a href="https://github.com/Eason4869/Ooptra/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Eason4869/Ooptra/ci.yml?style=flat-square&label=CI"></a>
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-3776ab?style=flat-square&logo=python&logoColor=white">
   <a href="LICENSE"><img alt="许可" src="https://img.shields.io/badge/license-MIT-3ddc97?style=flat-square"></a>
@@ -33,6 +34,9 @@ Ooptra 把 Oopz 的频道会话转换为 [OneBot v11](https://github.com/botuniv
 
 当前版本：**3.0.1**。WebUI 支持亮色／暗色切换，主题选择在当前浏览器保存。完整变更见[更新日志](CHANGELOG.md)。
 
+顶部访问徽章由 [Hits](https://github.com/silentsoft/hits) 提供，接入后累计访问次数仅作曝光参考，不代表独立访客人数。
+项目维护者可在 [Insights → Traffic](https://github.com/Eason4869/Ooptra/graphs/traffic) 查看 GitHub 官方的近 14 天访问、独立访客及克隆统计。
+
 > [!CAUTION]
 > Ooptra 是独立的第三方项目，与 Oopz 官方没有隶属或授权关系。请仅用于你自己的账号与你负责管理的社群，
 > 并遵守 Oopz 的用户协议与当地法律；软件按“现状”提供，不作任何担保。
@@ -55,7 +59,7 @@ Ooptra 把 Oopz 的频道会话转换为 [OneBot v11](https://github.com/botuniv
 ## 运行链路
 
 <p align="center">
-  <img src="./assets/readme/runtime-map.svg" width="100%" alt="Oopz 与会话经过 Ooptra 的事件标准化和身份映射后，以 OneBot v11 反向 WebSocket 交给对端框架" />
+  <img src="./assets/readme/runtime-map.svg" width="100%" alt="Ooptra 3.0.1 消息与语音链路：桥接内核、WebUI 和可选语音 Agent 共用同一进程" />
 </p>
 
 事件标准化、身份映射、凭据维护与网络适配彼此独立；桥接内核与 Web 控制台在同一个进程内运行。

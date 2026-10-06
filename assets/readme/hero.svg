@@ -1,70 +1,72 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="400" viewBox="0 0 1200 400" role="img" aria-labelledby="hero-title hero-desc">
-  <title id="hero-title">Ooptra — Oopz 到 OneBot v11 的反向 WebSocket 桥</title>
-  <desc id="hero-desc">Ooptra 把 Oopz 频道消息转成 OneBot v11 事件推给任意 OneBot 实现，并把对端动作回落到 Oopz，同时提供本地 Web 控制台。</desc>
-
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="520" viewBox="0 0 1200 520" role="img" aria-labelledby="hero-title hero-desc">
+  <title id="hero-title">Ooptra 3.0.1 · Oopz 消息与语音工作台</title>
+  <desc id="hero-desc">新版双对话环 Logo，OneBot v11 消息桥接、Gemini Live 与 MiMo 语音对话、按域自动串门，以及支持亮暗主题的 Web 控制台。右侧为暗色语音台的简化界面示意。</desc>
   <defs>
-    <linearGradient id="hero-bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#070e18"/>
-      <stop offset="0.6" stop-color="#0d1626"/>
-      <stop offset="1" stop-color="#122036"/>
-    </linearGradient>
-    <linearGradient id="hero-brand" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#eaf6ff"/>
-      <stop offset="0.55" stop-color="#5eead4"/>
-      <stop offset="1" stop-color="#38bdf8"/>
-    </linearGradient>
-    <linearGradient id="hero-wire" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#5eead4"/>
-      <stop offset="1" stop-color="#38bdf8"/>
-    </linearGradient>
-    <style>
-      .sans { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
-      .mono { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; }
-    </style>
+    <g id="hero-logo" fill="none" stroke-width="7" stroke-linejoin="round">
+      <path d="M34 28a18 18 0 1 0-19 30l-5 9 14-6a18 18 0 0 0 10-33Z" stroke="#315DDC"/>
+      <path d="M46 52a18 18 0 1 0 19-30l5-9-14 6a18 18 0 0 0-10 33Z" stroke="#167F7A"/>
+      <path d="M29 40h22" stroke="#173451" stroke-linecap="round"/>
+    </g>
   </defs>
-
-  <rect width="1200" height="400" fill="url(#hero-bg)"/>
-  <g stroke="#94a3b8" stroke-opacity="0.07" stroke-width="1">
-    <path d="M0 96 H1200 M0 200 H1200 M0 304 H1200"/>
-    <path d="M120 0 V400 M400 0 V400 M680 0 V400 M960 0 V400"/>
+  <g font-family="Segoe UI, Microsoft YaHei UI, PingFang SC, sans-serif">
+    <rect width="1200" height="520" rx="20" fill="#F5F8FC"/>
+    <use href="#hero-logo" transform="translate(55 49) scale(.8)"/>
+    <rect x="448" y="64" width="100" height="32" rx="7" fill="#E7EEF7"/>
+    <text x="498" y="85" text-anchor="middle" font-size="15" font-weight="600" fill="#315DDC">v3.0.1</text>
+    <text x="60" y="190" font-size="72" font-weight="700" letter-spacing="-2" fill="#173451">Ooptra</text>
+    <text x="60" y="242" font-size="30" font-weight="600" fill="#173451">Oopz 消息与语音工作台</text>
+    <text x="60" y="280" font-size="18" fill="#506881">把频道会话交给机器人，让语音对话留在房间。</text>
+    <circle cx="68" cy="326" r="4" fill="#315DDC"/>
+    <text x="84" y="332" font-size="17" fill="#173451">OneBot v11 反向 WebSocket 桥接</text>
+    <circle cx="68" cy="359" r="4" fill="#167F7A"/>
+    <text x="84" y="365" font-size="17" fill="#173451">Gemini Live / MiMo 语音对话</text>
+    <circle cx="68" cy="392" r="4" fill="#315DDC"/>
+    <text x="84" y="398" font-size="17" fill="#173451">按域自动串门，自定义 AI 进退房语音</text>
+    <rect x="596" y="52" width="548" height="360" rx="14" fill="#0F1824"/>
+    <path d="M610 52h114v360H610a14 14 0 0 1-14-14V66a14 14 0 0 1 14-14Z" fill="#172537"/>
+    <path d="M724 52v360" stroke="#2C4058"/>
+    <text x="614" y="87" font-size="18" font-weight="700" fill="#E2EDF7">Ooptra</text>
+    <text x="614" y="108" font-size="12" fill="#B0C2D4">语音桥接工作台</text>
+    <text x="618" y="152" font-size="14" fill="#B0C2D4">总览</text>
+    <text x="618" y="189" font-size="14" fill="#B0C2D4">日志</text>
+    <rect x="608" y="209" width="103" height="34" rx="5" fill="#233857"/>
+    <path d="M608 214v24" stroke="#9AB8FF" stroke-width="3"/>
+    <text x="618" y="232" font-size="14" font-weight="600" fill="#9AB8FF">语音台</text>
+    <text x="618" y="275" font-size="14" fill="#B0C2D4">配置</text>
+    <text x="618" y="312" font-size="14" fill="#B0C2D4">账号</text>
+    <path d="M608 357h103" stroke="#2C4058"/>
+    <text x="618" y="384" font-size="12" fill="#94AAC0">维护与账号</text>
+    <text x="746" y="88" font-size="22" font-weight="650" fill="#E2EDF7">语音台</text>
+    <rect x="1018" y="66" width="106" height="29" rx="5" fill="#172537" stroke="#49617B"/>
+    <text x="1027" y="85" font-size="11" fill="#B0C2D4">暗色模式</text>
+    <rect x="1087" y="73" width="26" height="15" rx="8" fill="#9AB8FF"/>
+    <circle cx="1105" cy="80.5" r="5" fill="#14233C"/>
+    <text x="746" y="113" font-size="12" fill="#B0C2D4">手动对话、自动串门、房间成员与共享记忆</text>
+    <rect x="746" y="133" width="378" height="34" rx="6" fill="#22364D"/>
+    <rect x="838" y="137" width="89" height="26" rx="4" fill="#172537"/>
+    <text x="790" y="155" text-anchor="middle" font-size="12" fill="#B0C2D4">会话控制</text>
+    <text x="882" y="155" text-anchor="middle" font-size="12" font-weight="600" fill="#9AB8FF">自动串门</text>
+    <text x="976" y="155" text-anchor="middle" font-size="12" fill="#B0C2D4">房间成员</text>
+    <text x="1071" y="155" text-anchor="middle" font-size="12" fill="#B0C2D4">人格与记忆</text>
+    <rect x="746" y="184" width="378" height="94" rx="7" fill="#1B3047" stroke="#304F6C"/>
+    <text x="762" y="209" font-size="15" font-weight="600" fill="#E2EDF7">自动串门</text>
+    <text x="762" y="233" font-size="12" fill="#B0C2D4">按域开启 · 低频概率进房 · 到期告别退出</text>
+    <text x="762" y="258" font-size="12" fill="#69D4C7">每日上限与冷却持久化，手动房间由你控制</text>
+    <rect x="746" y="294" width="182" height="91" rx="7" fill="#172537" stroke="#2C4058"/>
+    <rect x="942" y="294" width="182" height="91" rx="7" fill="#172537" stroke="#2C4058"/>
+    <path d="M753 294h168" stroke="#9AB8FF" stroke-width="2"/>
+    <path d="M949 294h168" stroke="#69D4C7" stroke-width="2"/>
+    <text x="762" y="321" font-size="14" font-weight="600" fill="#E2EDF7">全局规则</text>
+    <text x="762" y="345" font-size="12" fill="#B0C2D4">间隔 / 概率 / 每日限额</text>
+    <text x="762" y="367" font-size="12" fill="#B0C2D4">停留 / 冷却 / 进退房意图</text>
+    <text x="958" y="321" font-size="14" font-weight="600" fill="#E2EDF7">按域设置</text>
+    <text x="958" y="345" font-size="12" fill="#B0C2D4">各域独立启用</text>
+    <text x="958" y="367" font-size="12" fill="#B0C2D4">继承默认或单独覆盖</text>
+    <path d="M60 443h1084" stroke="#DFE7F0"/>
+    <text x="60" y="479" font-size="16" font-weight="600" fill="#173451">Python 3.10+</text>
+    <text x="242" y="479" font-size="16" fill="#506881">桌面与手机适配</text>
+    <text x="453" y="479" font-size="16" fill="#506881">亮色 / 暗色主题</text>
+    <text x="666" y="479" font-size="16" fill="#506881">本地 WebUI 与语音 HTTP API</text>
+    <text x="1144" y="479" text-anchor="end" font-size="12" fill="#61768C">界面示意</text>
   </g>
-
-  <rect x="96" y="66" width="60" height="60" rx="18" fill="url(#hero-wire)"/>
-  <text x="126" y="108" class="sans" font-size="30" text-anchor="middle" fill="#04211d">⇄</text>
-  <text x="174" y="114" class="sans" font-size="56" font-weight="700" fill="url(#hero-brand)">Ooptra</text>
-  <text x="176" y="154" class="sans" font-size="21" fill="#93a4bd">Oopz ⇄ OneBot v11 反向 WebSocket 桥接</text>
-
-  <rect x="1040" y="70" width="64" height="30" rx="15" fill="#94a3b8" fill-opacity="0.14"/>
-  <text x="1072" y="90" class="mono" font-size="15" text-anchor="middle" fill="#93a4bd">v1.0.0</text>
-
-  <text x="96" y="216" class="sans" font-size="15" letter-spacing="1.5" fill="#64748b">运行链路</text>
-
-  <rect x="96" y="248" width="210" height="72" rx="18" fill="#94a3b8" fill-opacity="0.09" stroke="#94a3b8" stroke-opacity="0.28"/>
-  <text x="201" y="282" class="sans" font-size="19" font-weight="600" text-anchor="middle" fill="#e7eefb">Oopz 平台</text>
-  <text x="201" y="304" class="sans" font-size="13" text-anchor="middle" fill="#7d8da6">域 · 频道 · 消息</text>
-
-  <rect x="436" y="248" width="328" height="72" rx="18" fill="url(#hero-wire)" fill-opacity="0.14" stroke="#5eead4" stroke-opacity="0.45"/>
-  <text x="600" y="282" class="sans" font-size="19" font-weight="600" text-anchor="middle" fill="#eaf6ff">Ooptra 桥接内核</text>
-  <text x="600" y="304" class="sans" font-size="13" text-anchor="middle" fill="#8fb9c9">事件标准化 · 身份映射 · Web 控制台</text>
-
-  <rect x="894" y="248" width="210" height="72" rx="18" fill="#94a3b8" fill-opacity="0.09" stroke="#94a3b8" stroke-opacity="0.28"/>
-  <text x="999" y="282" class="sans" font-size="19" font-weight="600" text-anchor="middle" fill="#e7eefb">OneBot 实现</text>
-  <text x="999" y="304" class="sans" font-size="13" text-anchor="middle" fill="#7d8da6">任意框架 / 自研</text>
-
-  <g stroke="url(#hero-wire)" stroke-width="2.5" stroke-linecap="round" fill="none">
-    <path d="M322 270 H422"/>
-    <path d="M414 262 l10 8 -10 8"/>
-    <path d="M428 300 H328"/>
-    <path d="M336 292 l-10 8 10 8"/>
-    <path d="M780 270 H880"/>
-    <path d="M872 262 l10 8 -10 8"/>
-    <path d="M886 300 H786"/>
-    <path d="M794 292 l-10 8 10 8"/>
-  </g>
-  <text x="375" y="258" class="sans" font-size="14" text-anchor="middle" fill="#8fb9c9">事件</text>
-  <text x="375" y="330" class="sans" font-size="14" text-anchor="middle" fill="#8fb9c9">动作</text>
-  <text x="833" y="258" class="sans" font-size="14" text-anchor="middle" fill="#8fb9c9">事件</text>
-  <text x="833" y="330" class="sans" font-size="14" text-anchor="middle" fill="#8fb9c9">动作</text>
-
-  <text x="96" y="374" class="sans" font-size="15" fill="#64748b">本程序作为客户端主动拨出反向 WebSocket，对端只需监听；Oopz 侧只需一个机器人账号。</text>
 </svg>
