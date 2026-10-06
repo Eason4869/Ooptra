@@ -67,7 +67,7 @@ def test_browser_leave_failure_is_propagated_and_room_preserved():
     asyncio.run(run())
 
 
-def test_real_player_finish_keeps_scheduled_tail_until_clock_and_sources_end(monkeypatch):
+def test_real_player_finish_keeps_scheduled_tail_until_clock_and_sources_end(monkeypatch, tmp_path):
     # English Windows runners default to cp1252; the real player contains Chinese comments.
     monkeypatch.setattr(locale, "getencoding", lambda: "cp1252", raising=False)
     monkeypatch.setattr(locale, "getpreferredencoding", lambda *args: "cp1252")
@@ -107,6 +107,9 @@ const base64ToInt16 = () => new Int16Array(24000);
   assert.equal(window.agoraTtsStatus().remaining_seconds, 0);
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
-    result = subprocess.run([node], input=script, text=True, encoding="utf-8",
-                            capture_output=True, timeout=5)
+    # A file avoids Python/Node stdin EOF timing differences on Windows runners.
+    script_path = tmp_path / "player_completion.cjs"
+    script_path.write_text(script, encoding="utf-8")
+    result = subprocess.run([node, str(script_path)], text=True, encoding="utf-8",
+                            capture_output=True, timeout=15)
     assert result.returncode == 0, result.stderr
