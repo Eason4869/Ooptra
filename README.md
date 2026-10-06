@@ -31,7 +31,7 @@ Ooptra 把 Oopz 的频道会话转换为 [OneBot v11](https://github.com/botuniv
 两端只约定 OneBot v11 协议，不绑定任何具体框架。项目自带本地 Web 控制台，用来查看状态、跟踪日志、编辑配置和登录 Oopz；
 另有一个可选的语音模块，让 bot 进入 Oopz 语音频道与人实时对话。
 
-当前开发版本：**v261006-beta**（`dev` 分支，基于 2.3.0）。完整变更见[更新日志](CHANGELOG.md)。
+当前版本：**3.0**。完整变更见[更新日志](CHANGELOG.md)。
 
 > [!CAUTION]
 > Ooptra 是独立的第三方项目，与 Oopz 官方没有隶属或授权关系。请仅用于你自己的账号与你负责管理的社群，
