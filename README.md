@@ -1,6 +1,10 @@
 <p align="center">
   <img src="./src/webui/assets/logo.svg" width="80" alt="Ooptra 双对话桥 Logo" />
-![:name](https://count.getloli.com/@Ooptra?name=Ooptra&theme=minecraft&padding=6&offset=0&align=top&scale=1&pixelated=1&darkmode=auto)
+</p>
+
+ <p align="center">
+
+  ![:name](https://count.getloli.com/@Ooptra?name=Ooptra&theme=minecraft&padding=6&offset=0&align=top&scale=1&pixelated=1&darkmode=auto)
 </p>
 
 <p align="center">
