@@ -2,12 +2,9 @@
   <img src="./src/webui/assets/logo.svg" width="80" alt="Ooptra 双对话桥 Logo" />
 </p>
 
-
-<div align="center">
-
-  ![:name](https://count.getloli.com/@Ooptra?name=Ooptra&theme=minecraft&padding=6&offset=0&align=top&scale=1&pixelated=1&darkmode=auto)
-
-</div>
+<p align="center">
+  <img src="https://count.getloli.com/@Ooptra?name=Ooptra&amp;theme=minecraft&amp;padding=6&amp;offset=0&amp;align=top&amp;scale=1&amp;pixelated=1&amp;darkmode=auto" alt="Ooptra 访问计数" />
+</p>
 
 <p align="center">
   <img src="./assets/readme/hero.svg" width="100%" alt="Ooptra 3.1.0：消息桥接、语音对话、自动串门与支持暗色模式的 WebUI" />
@@ -17,8 +14,8 @@
   <a href="CHANGELOG.md"><img alt="当前版本 3.1.0" src="https://img.shields.io/badge/version-3.1.0-315DDC?style=flat-square"></a>
   <a href="https://github.com/Eason4869/Ooptra/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/Eason4869/Ooptra?style=flat-square"></a>
   <a href="https://hits.sh/github.com/Eason4869/Ooptra/"><img alt="README 累计访问次数" src="https://hits.sh/github.com/Eason4869/Ooptra.svg?style=flat-square&amp;label=README%20views&amp;color=315ddc"></a>
-  <a href="https://github.com/Eason4869/Ooptra/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Eason4869/Ooptra/ci.yml?style=flat-square&label=CI"></a>
-  <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-3776ab?style=flat-square&logo=python&logoColor=white">
+  <a href="https://github.com/Eason4869/Ooptra/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Eason4869/Ooptra/ci.yml?style=flat-square&amp;label=CI"></a>
+  <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-3776ab?style=flat-square&amp;logo=python&amp;logoColor=white">
   <a href="LICENSE"><img alt="许可" src="https://img.shields.io/badge/license-MIT-3ddc97?style=flat-square"></a>
 </p>
 
@@ -26,385 +23,172 @@
   <a href="#快速开始">快速开始</a> ·
   <a href="#对端对接">对端对接</a> ·
   <a href="#web-控制台">Web 控制台</a> ·
-  <a href="#语音对话">语音对话</a> ·
-  <a href="#关键配置">关键配置</a> ·
-  <a href="#目录结构">目录结构</a> ·
-  <a href="#开发与测试">开发与测试</a> ·
-  <a href="#常见问题">常见问题</a> ·
+  <a href="#语音功能">语音功能</a> ·
+  <a href="docs/voice-guide.md">语音与 API 指南</a> ·
+  <a href="docs/operations.md">配置与维护</a> ·
   <a href="CHANGELOG.md">更新日志</a>
 </p>
 
-Ooptra 把 Oopz 的频道会话转换为 [OneBot v11](https://github.com/botuniverse/onebot-11) 事件与动作，以
-**反向 WebSocket** 接入任意 OneBot v11 实现——机器人框架、平台适配器或自研服务都可以，
-两端只约定 OneBot v11 协议，不绑定任何具体框架。项目自带本地 Web 控制台，用来查看状态、跟踪日志、编辑配置和登录 Oopz；
-另有一个可选的语音模块，让 bot 进入 Oopz 语音频道与人实时对话。
+Ooptra 将 Oopz 消息接入 **OneBot v11**，通过反向 WebSocket 对接机器人框架或自研服务。
+自带 Web 控制台，也可开启 AI 语音对话与分域自动串门。
 
-当前版本：**3.1.0**。WebUI 支持亮色／暗色切换，主题选择在当前浏览器保存。完整变更见[更新日志](CHANGELOG.md)。
-
-顶部访问徽章由 [Hits](https://github.com/silentsoft/hits) 提供，接入后累计访问次数仅作曝光参考，不代表独立访客人数。
-项目维护者可在 [Insights → Traffic](https://github.com/Eason4869/Ooptra/graphs/traffic) 查看 GitHub 官方的近 14 天访问、独立访客及克隆统计。
-
-> [!CAUTION]
-> Ooptra 是独立的第三方项目，与 Oopz 官方没有隶属或授权关系。请仅用于你自己的账号与你负责管理的社群，
-> 并遵守 Oopz 的用户协议与当地法律；软件按“现状”提供，不作任何担保。
-
-## 核心能力
-
-| 场景 | 能力 |
+| 功能 | 说明 |
 | --- | --- |
-| 接入方式 | OneBot v11 反向 WebSocket，本程序作为客户端主动拨出，默认 `universal` 角色，支持 `access_token` |
-| 上行事件 | `message`（群 / 私聊）、`notice`（撤回）、`meta_event`（心跳、生命周期） |
-| 下行动作 | 发送、撤回、消息查询、群与成员查询、禁言、踢人、退群、设置管理员等 OneBot v11 动作 |
-| 身份映射 | `group_id` / `user_id` 与 Oopz 域、频道、成员双向映射，持久化在 SQLite，重启后编号稳定 |
-| 凭据维护 | 账号密码或网页版登录；`device_id` / `person_uid` / `jwt_token` / RSA 私钥自动写回配置并自动重连 |
-| Web 控制台 | 状态总览、实时日志、配置编辑、账号与凭据管理；适配桌面和手机，支持暗色模式，前端不依赖外部框架或 CDN |
-| 语音对话 | 可选模块：进 Oopz 语音房做 **Live 端到端语音**（类似 Gemini Live，语音进语音出），支持抢话打断 |
-| 语音 API | 与控制台同端口的 `/voice/*`、`/persona`、`/memory` 及其 `/api` 别名，供外部插件调用 |
-| 自动串门 | 分域独立启用，低频概率进房、限时告别退出、每日上限与持久化冷却；MiMo / Gemini 每次改写进退房语音 |
-| 项目边界 | 单进程运行，不含内置命令、插件系统与消息存储，只做桥接与运维 |
+| 消息桥接 | 群聊、私聊、撤回、心跳；支持发送消息、成员查询、禁言等 OneBot v11 动作 |
+| Web 控制台 | 状态、日志、配置、登录与语音管理；支持手机访问和暗色模式 |
+| AI 语音 | Gemini Live / MiMo 级联；支持抢话、回复概率、强制关键词与语音退房 |
+| 自动串门 | 按域开启，随机进有人的房间；限时退出、进退房台词、冷却与每日上限 |
+| 插件对接 | HTTP API 提供语音控制、人格与记忆管理，支持外部插件调用 |
 
-## 运行链路
+文字消息指令与插件由对端机器人框架处理。Ooptra 是第三方工具，与 Oopz 官方无隶属关系。
 
 <p align="center">
-  <img src="./assets/readme/runtime-map.svg" width="100%" alt="Ooptra 3.1.0 消息与语音链路：桥接内核、WebUI 和可选语音 Agent 共用同一进程" />
+  <img src="./assets/readme/runtime-map.svg" width="100%" alt="Ooptra 3.1.0 消息与语音链路" />
 </p>
-
-事件标准化、身份映射、凭据维护与网络适配彼此独立；桥接内核与 Web 控制台在同一个进程内运行。
 
 ## 快速开始
 
-需要 Git、Python 3.10 或更高版本。纯文字桥接只需运行时依赖；语音和网页版登录另需[可选依赖](#语音依赖)。
+需要 **Git、Python 3.10+**。以下命令适用于首次安装；已有配置请先备份，勿覆盖 `config.py`。
 
-1. 获取代码并安装依赖：
+### 1. 获取代码
 
-   ```bash
-   git clone https://github.com/Eason4869/Ooptra.git
-   cd Ooptra
-   python -m venv .venv
-   ```
-
-2. 激活虚拟环境、安装依赖并生成配置。Windows PowerShell：
-
-   ```powershell
-   .\.venv\Scripts\Activate.ps1
-   python -m pip install -r requirements.txt
-   Copy-Item config.example.py config.py
-   ```
-
-   Linux / macOS：
-
-   ```bash
-   source .venv/bin/activate
-   python -m pip install -r requirements.txt
-   cp config.example.py config.py
-   ```
-
-   使用账号密码登录时，填入 `OOPZ_CONFIG["login_phone"]` 与 `OOPZ_CONFIG["login_password"]`；
-   也可启动后在「账号」页登录。其余凭据字段会在登录成功后自动写入。
-
-3. 启动：
-
-   ```bash
-   python main.py
-   ```
-
-4. 打开 `http://127.0.0.1:3090`，在「配置」页把**反向 WS 地址**改成对端的监听地址（示例默认 `ws://127.0.0.1:6200/ws`），
-   保存并重新连接。概览页的「OneBot v11 反向 WS」显示已接入，就说明两端握手成功。
-
-Windows 下可以双击 `start_silent.vbs` 静默后台启动；把它放进「启动」文件夹即可开机自启，
-带参数启动（快捷方式目标后加 `delay`）会先等待 30 秒再拉起。
-
-## 对端对接
-
-反向 WebSocket 的方向是**本程序主动拨出、对端监听**。因此对端只需要提供一个 OneBot v11 反向 WS 服务端：
-
-| 项目 | 说明 |
-| --- | --- |
-| 地址 | `ONEBOT_V11_CONFIG["ws_reverse_url"]`，例如 `ws://127.0.0.1:6200/ws`；路径由对端决定 |
-| 令牌 | 对端要求校验时，把相同的值填进 `access_token`；两边都留空则跳过校验 |
-| 分离端点 | 对端区分 API / Event 两个端点时，另外填 `ws_reverse_api_url` 与 `ws_reverse_event_url` |
-| 连接角色 | 只填 `ws_reverse_url` 时以 `universal` 角色连接，事件与动作走同一条连接 |
-
-如果对端反而是「等待客户端连入」的形态（本地 HTTP 或正向 WebSocket），打开 `enable_http` / `enable_ws`，
-再让对端连到 `host:port`（默认 `127.0.0.1:6700`）；纯反向桥接场景不需要打开。
-
-> `data/onebot_v11.sqlite3` 保存 `group_id` / `user_id` 映射，**请勿删除**，否则对端看到的群号与成员编号会全部变化。
-
-## Web 控制台
-
-默认只监听 `127.0.0.1:3090`。访问令牌留空即免登录，仅建议在本机使用时这样做。
-
-| 页面 | 内容 |
-| --- | --- |
-| 概览 | 两条链路的连接状态、事件与动作吞吐、最近推送与最近指令；异常时直接给出重连入口 |
-| 日志 | 实时跟随日志文件（SSE），支持关键字与级别过滤、清屏、下载、回到底部 |
-| 配置 | 分为「连接」「语音模型」「系统」三个子页；不常用项收在右上角「高级选项」，保存写回 `config.py` |
-| 账号 | 凭据状态与有效期、账号密码登录、网页版登录（可手动过验证） |
-| 语音台 | 分为「会话控制」「自动串门」「房间成员」「人格与记忆」；模型、密钥和音色在「配置 → 语音模型」中设置 |
-
-右上角的「暗色模式」开关可即时切换主题，登录页也可切换。默认亮色，刷新或重新打开后沿用当前浏览器的选择；
-切换主题不会重新加载页面，也不会清空尚未保存的配置。浏览器禁止本地存储时，主题选择仅在当前页面有效。
-
-侧栏「维护与账号」中提供「重新连接」「检查更新」「GitHub」和「退出登录」；手机端展开同名菜单即可访问。
-「检查更新」会查询 GitHub 最新版本并与本地版本比较。连接设置变更后，可点击「保存并重新连接」重新建立桥接。
-
-### 绑定到局域网
-
-把 `WEBUI_CONFIG["host"]` 改成 `0.0.0.0` 可以让同网段的设备访问，但**务必同时设置 `token`**，否则任何人都能打开控制台。
-设置令牌后访问需带上它：`http://<你的 IP>:3090/?token=<token>`。
-
-## 语音对话
-
-语音模块默认关闭。启用 `VOICE_AGENT_CONFIG.enabled` 后，bot 可以进入 Oopz 语音频道参与实时语音：
-
-- **听**：订阅 Agora 远端音轨，按电平选择当前主讲人的音频；Live 持续输入 PCM，级联先经 VAD 切句再识别文字
-- **想**：模型在语音域直接推理，或走「语音转文字 → 语言模型 → 文字转语音」的级联链路
-- **说**：模型音频分片**流式**推回语音房，按时间轴排期播放，支持抢话打断（`barge_in`）
-- **记**：人格提示词与共享记忆（`data/voice_memory.jsonl`）持久化，多端保持一致
-
-### 两种后端
-
-| 后端 | 取值 | 特点 |
-| --- | --- | --- |
-| Live 端到端语音 | `gemini_live`（默认） | 语音进、语音出，延迟低、语气自然；需要 Live 模型的配额与网络可达 |
-| 级联 | `mimo_cascade` | ASR → LLM → TTS 三段式，延迟更高，适合没有 Live 配额时兜底 |
-| OpenAI Realtime | `openai_realtime` | **骨架，协议尚未接入**，暂不可用 |
-
-Live 模式下，**抢话打断由客户端判定**：某位成员连续说话达到 `barge_in_hold_ms`（默认 300 毫秒）后，
-客户端清空当前播放并丢弃本回合剩余音频。服务端设置 `NO_INTERRUPTION`，避免背景人声持续打断生成。
-客户端不会向服务端发送「说完了」之类的信号，以免把缓冲区里的音频碎片误当成一个完整回合。
-
-Live 的原生音频模型**不支持指定输出语言**（官方文档：*Explicitly setting a language code is not supported for native audio output models*），
-它依据输入音频自动选择。输入采用主讲人选择，而非把多人音轨按到达顺序拼接；人格提示词之后还会追加约束，要求用中文普通话作答。
-这是提示词层面的约束，房间里长时间出现外语或纯音乐时仍可能失准。
-`VOICE_AGENT_CONFIG.listen_only_uids` 可以限定只监听指定成员，减少无关声音的干扰。
-
-### 控制台入口
-
-先在「配置 → 语音模型」开启语音模块并设置后端、密钥、模型和音色，再在「语音台 → 会话控制」选择域与频道后进房／退房。
-成员状态在「房间成员」子页查看，人格与共享记忆在「人格与记忆」子页管理。
-「配置 → 语音模型」中的「语音回复频率（概率 %）」可设为 `0～100`，保存后对后续回合生效；
-默认 `30` 表示随机回应约三成发言，设为 `100` 则每次均允许回复；设为 `0` 时仅命中强制关键词才自动接话。
-这是概率控制，并非每十句固定回复三句；「与 AI 对话」手动开口和自动进退房台词不受限制。
-同页的「强制回复关键词列表」用英文逗号分隔；发言转写包含任一关键词时绕过概率限制，例如 `Ooptra, 机器人, 小欧`。
-匹配忽略大小写、全半角、空格和标点，`OOPTRA`、`Oop tra`、`Ｏｏｐｔｒａ` 均可匹配 `ooptra`；
-同音识别别名可自行添加，列表默认留空。旧配置缺少概率项时也采用默认 `30`，已有明确设置保留。
-MiMo 关闭语音退房控制且未配置关键词时，在 ASR 前判断；其他情况下先识别发言，再决定是否对话回复。Gemini Live 保持听取对话，按模型回复回合选择是否播放，
-因此降低频率不保证减少 Gemini 用量；跳过的 Gemini 回复不会作为 bot 已说过的话写入共享记忆。
-Gemini 的输入转写[不保证与回复消息的先后顺序](https://ai.google.dev/api/live)，关键词识别以转写为准：
-未播放的回复最多缓存 4 MiB，结束后保留 2 秒等待迟到转写，命中后完整播放；
-超时、缓存超限或新一轮语音开始导致归属不明确时，仅按概率处理，避免上一句关键词误触发下一句。
-同页「语音控制退语音」开关默认开启（旧配置缺项也开启），当前监听的所有成员均可让 bot 实际退房：
-AI 判断“退语音”“机器人，你先下吧”等是否为当前针对机器人的退房请求；“不要退语音”、引用、讨论指令或人类自己离开不应触发。
-控制指令不受回复概率限制，包括 `0%`。MiMo 每句先做 ASR 和独立的 AI 意图判断，会增加用量；
-Gemini 使用 [Live 工具调用](https://ai.google.dev/gemini-api/docs/live-api/tools)，须选用支持工具调用的 Live 模型或中转。
-退房前随机选取「自动串门」配置中所在域的退房预设并按人设改写，默认“拜拜，我下了”（空预设列表也使用此默认告别）；
-等离场语播放完毕再退房，生成／播放失败或20秒超时后仍尝试退出，成功后按该域手动退房冷却。
-识别到指令后暂停接听新的发言；WebUI／QQ 手动进退房会取消旧任务，避免旧任务退出新房间。
-实际退房失败时保留房间状态和错误，并恢复接听以便重试。MiMo 的短语音控制入口最低为250毫秒（用户更低的设置保留），
-短句未命中退房意图时仍受原普通回复时长阈值约束，现有能量过滤保持生效。
-开关保存后立即生效；Gemini 会重建当前模型会话以增删退房工具。AI 意图判定依赖模型与语音识别，首次启用请在实际语音房验证。
-「与 AI 对话」卡片用于**用文字发起一次对话**：AI 会在当前语音房用语音回答，和房间里说话属于同一场对话（需已进房）；
-级联模式下不经过模型，直接朗读这段文字。
-
-### 自动串门
-
-先配置可用的语音后端并开启语音总开关，再打开「语音台 → 自动串门」，选择已加入的域，
-勾选「允许在这个域自动串门」并保存。域开关默认全部关闭；旧版 `auto_join` 已移除，残留字段忽略且不会开启任何域。
-
-| 默认规则 | 行为 |
-| --- | --- |
-| 检查间隔 | 全实例共用，每 10～20 分钟随机检查一次，不会看到有人立即进房 |
-| 选择与概率 | 先在符合条件且有真人的域中等概率选域，再随机选房间，按该域概率决定是否加入；默认 20% |
-| 停留 | 10～20 分钟；到期最多等 bot 当前回复 30 秒，告别语音生成及播放最多 20 秒，之后退出 |
-| 自动退房冷却 | 全实例休息 30～60 分钟，期间仍可手动进房 |
-| 手动退房冷却 | 刚退出的域休息 2～4 小时，其他开启域仍可串门 |
-| 每日上限 | 北京时间自然日全实例默认 3 次；可另设域上限，0 为不限；手动进房及已确认失败不计数 |
-| 空房 | 真人全部离开且连续确认 2 分钟后复查并静默退房；查询失败按未知处理 |
-
-检查间隔只支持全局设置，其余策略可按域覆盖；取消覆盖恢复继承。每行一条进房／告别表达意图，随机选取后由当前 AI
-每次改写：MiMo 使用文字生成与 TTS，Gemini 使用当前 Live 会话生成语音，无需额外 MiMo 密钥。
-清空列表即静默，合成失败也会按正常停留／退出规则继续。台词不写作用户记忆，不会携带其他房间的聊天历史。
-
-暂停只停止新的自动加入；已开始的自动停留仍会按规则退出。恢复不清空次数和冷却；关闭域开关会告别退出该域的自动房间。
-手动房间始终由用户控制，不受自动换房、限时退出或域开关影响。退出失败会保留实际房间状态并暂停后续自动加入。
-
-运行状态损坏、磁盘写入失败或中断进房留下未确认记录时，自动加入会暂停，文字桥接与手动操作仍可使用。
-先检查控制台与日志，确认账号实际所在房间并手动退出，停止程序并备份 `data/voice_auto_visit.json`；
-对未确认记录，应保守核对并补记当天成功次数及对应域次数，保持 `confirmed` 与计数一致，再清理对应 `pending`。
-恢复文件后重启或点击恢复。不要直接删除状态文件绕过当日额度；尚未核清的记录应保持暂停。
-
-详细设计与实施验收见 [需求说明](docs/superpowers/specs/2026-10-06-voice-auto-visit-design.md) 和
-[实施计划](docs/superpowers/plans/2026-10-06-voice-auto-visit-brand-release.md)。本次自动化与匿名界面验证的范围见更新日志；
-真实联调时分别检查 MiMo/Gemini 进房问候、到期尾音播完再退出、手动接管、空房退出及重启后额度仍在。
-
-### HTTP API
-
-Web 控制台同时挂载 JSON API（与控制台同端口，默认 `3090`，复用 `WEBUI_CONFIG.token`）。**外部插件一律用这个入口**——它路由完整、契约是扁平的：
-
-```http
-GET  /health
-GET  /voice/status
-GET  /voice/members?area=&channel=
-GET  /voice/channels?area=
-POST /voice/join     {"area":"","channel":""}
-POST /voice/leave
-POST /voice/speak    {"text":"..."}
-GET  /voice/auto-visit
-POST /voice/auto-visit/config  {"updates":{...}}
-POST /voice/auto-visit/pause
-POST /voice/auto-visit/resume
-GET  /oopz/areas
-GET  /oopz/channels?area=
-GET  /persona        PUT /persona
-GET  /memory         POST /memory   DELETE /memory
+```bash
+git clone https://github.com/Eason4869/Ooptra.git
+cd Ooptra
+python -m venv .venv
 ```
 
-以上每个路径都另有 `/api` 前缀的等价别名（如 `/api/voice/status`），供控制台自身使用，两者由同一份实现生成，行为完全一致。
+### 2. 安装依赖并生成配置
 
-`VOICE_API_CONFIG`（默认 `3091`，默认关闭）只是给「不想走 WebUI 端口」的场景准备的**等价副本**：它挂载同一套 handler，
-路由与响应结构完全一致（有测试断言两者路由集合相同），鉴权用 `VOICE_API_CONFIG.token`；开启时记得配 token，否则该端口无鉴权。
+Windows PowerShell：
 
-外部插件（如 [astrbot_plugin_ooptra](https://github.com/Eason4869/astrbot_plugin_ooptra)）调用这些接口时，令牌填 **`WEBUI_CONFIG.token`**（默认同端口）；
-只有单独启用 `VOICE_API_CONFIG` 独立端口时才改用 `VOICE_API_CONFIG.token`。两边都留空则不校验。
-域 ID / 频道 ID 可在「语音台 → 会话控制」页查看并一键复制，用于群绑定；选中目标后点**「设为默认」**可写入
-`OOPZ_CONFIG.default_area` / `default_channel`，作为插件进房的默认目标。
+```powershell
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+Copy-Item config.example.py config.py
+```
 
-### 语音依赖
+Linux / macOS：
 
-语音对话与 WebUI 的「网页版登录」都需要 Playwright 和 Chromium。在已激活的虚拟环境中执行：
+```bash
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+cp config.example.py config.py
+```
+
+在 `config.py` 中填写 `OOPZ_CONFIG` 的 `login_phone` 和 `login_password`，也可启动后在 WebUI「账号」页登录。
+其他登录凭据会自动写入。**语音和网页版登录**还需安装以下可选依赖，纯文字桥接无需安装：
 
 ```bash
 python -m pip install -r requirements-optional.txt
 python -m playwright install chromium
 ```
 
-未启用语音时行为与纯桥接一致，不会加载浏览器。语音模型 API 若需走代理，见下文 `VOICE_AGENT_CONFIG.proxy`。
+### 3. 启动并连接
 
-## 关键配置
-
-配置文件是 `config.py`：`OOPZ_CONFIG`、`ONEBOT_V11_CONFIG`、`WEBUI_CONFIG` 是桥接与控制台的主体，
-`VOICE_AGENT_CONFIG`、`VOICE_API_CONFIG` 对应语音模块（默认关闭），`VOICE_AUTO_VISIT_CONFIG` 管理自动串门。
-控制台只改写白名单字段，其余内容与注释保持原样。
-
-| 字段 | 说明 |
-| --- | --- |
-| `OOPZ_CONFIG.login_phone` / `login_password` | Oopz 账号；登录成功后自动写入并维护凭据 |
-| `OOPZ_CONFIG.default_area` / `default_channel` | OneBot 调用没有指定目标时的兜底域 / 频道 |
-| `OOPZ_CONFIG.proxy` | 网络出口：留空跟随系统代理，`direct` 直连，也可填 `http://主机:端口` |
-| `ONEBOT_V11_CONFIG.ws_reverse_url` | 对端的反向 WS 地址，最常修改的一项 |
-| `ONEBOT_V11_CONFIG.access_token` | 与对端一致的令牌 |
-| `ONEBOT_V11_CONFIG.db_path` | 身份映射数据库路径 |
-| `WEBUI_CONFIG.host` / `port` / `token` | 控制台监听地址、端口与访问令牌；语音 API 与外部插件默认也用这个 token |
-| `VOICE_AGENT_CONFIG.enabled` | 是否启用语音模块，默认 `False` |
-| `VOICE_AGENT_CONFIG.backend` | `gemini_live`（默认）或 `mimo_cascade` |
-| `VOICE_AGENT_CONFIG.reply_probability_percent` | 自动语音回复概率，`0～100`，默认 `30`；两个后端均支持，手动开口与进退房台词不受限制 |
-| `VOICE_AGENT_CONFIG.force_reply_keywords` | 强制回复关键词列表，默认 `[]`；发言转写包含关键词时绕过概率限制，忽略大小写、全半角、空格和标点 |
-| `VOICE_AGENT_CONFIG.voice_leave_enabled` | 语音控制退语音，默认 `True`；AI 判断意图，先说离场语再实际退房，不受回复概率限制 |
-| `VOICE_AGENT_CONFIG.proxy` | 模型 API 代理（选填）：`clash` = `127.0.0.1:7890`，`direct` 直连，或显式 `http://主机:端口` |
-| `VOICE_AGENT_CONFIG.barge_in` | 是否允许抢话打断，默认 `True` |
-| `VOICE_AGENT_CONFIG.barge_in_hold_ms` | 连续说话达到此时长才打断 bot，默认 300 毫秒；人多时可适当调高 |
-| `VOICE_AGENT_CONFIG.listen_only_uids` | 只监听这些成员的音频；留空表示整个房间 |
-| `VOICE_AUTO_VISIT_CONFIG` | 自动串门全局规则、默认策略与分域覆盖；使用「语音台 → 自动串门」管理 |
-| `VOICE_AGENT_CONFIG.gemini.voice` | Gemini Live 音色（Puck / Charon / Kore…，可自定义） |
-| `VOICE_AGENT_CONFIG.mimo.tts_voice` | MiMo TTS 音色（冰糖 / 茉莉 / 苏打 / 白桦…，可自定义） |
-
-更细的开关（心跳间隔、重连间隔、本地接入、域语义映射、采样率、静音判定时长等）都在控制台「配置」页的「高级选项」里，
-默认值适用于绝大多数情况。「配置 → 语音模型」按后端和厂商展示 API Key、模型名与音色；
-当前可用后端为 Gemini Live 和 MiMo 级联，OpenAI Realtime 仅为预留骨架，暂不可用。
-
-## 环境变量
-
-除 `config.py` 外还支持环境变量覆盖，完整清单见 [`.env.example`](.env.example)，常用的有
-`BOT_WEBUI_HOST`、`BOT_WEBUI_PORT`、`BOT_WEBUI_TOKEN`、`BOT_ONEBOT_REVERSE_URL`、`BOT_OOPZ_PROXY`。
-
-> [!NOTE]
-> 程序**不会**自动读取 `.env` 文件，`.env.example` 只是变量名的参照表。请把变量设进进程环境：
-> Windows 用 `setx 变量名 值`（需重开终端）或 `$env:变量名 = "值"`（仅当前会话），Linux / macOS 用 `export`。
-
-## 数据文件
-
-| 路径 | 内容 |
-| --- | --- |
-| `config.py` | 你的配置与凭据，已在 `.gitignore` 中，**请勿提交** |
-| `private_key.py` | 登录用的 RSA 私钥，自动生成，同样不入库 |
-| `data/onebot_v11.sqlite3` | `group_id` / `user_id` 映射，删除会导致对端群号全部变化 |
-| `data/names.json` | 成员与频道昵称缓存，可安全删除（会重新拉取） |
-| `data/voice_memory.jsonl` | 语音共享记忆，删除即清空上下文 |
-| `data/voice_auto_visit.json` | 北京时间每日自动加入次数、两种冷却与未确认记录；重启保留，不应删除以重置上限 |
-| `logs/oopz_bot.log` | 运行日志，控制台「日志」页读取的就是它；保留 7 天 |
-
-## 目录结构
-
+```bash
+python main.py
 ```
-Ooptra/
-├─ main.py                  入口：装配桥接内核与 Web 控制台
-├─ config.example.py        配置模板（复制为 config.py）
-├─ private_key.example.py   RSA 私钥模板
-├─ start_silent.vbs         Windows 静默后台启动
-├─ assets/readme/           README 插图
-├─ src/
-│  ├─ bridge/               桥接内核：控制器、反向 WS 服务、运行时状态
-│  ├─ core/                 日志、路径、代理、配置读写、版本号
-│  ├─ onebot_v11/           OneBot v11 协议模型与 SDK 接入、数据迁移
-│  ├─ oopz/                 Oopz 业务层：凭据、昵称解析、代理传输
-│  ├─ oopz_sdk/             随项目附带的 Oopz SDK 源码（不参与 lint）
-│  ├─ voice_agent/          语音 Agent：编排、VAD、记忆、双工与模型后端
-│  └─ webui/                Web 控制台、配置编辑、日志跟随、语音 HTTP API
-└─ tests/                   pytest 用例
-```
+
+打开 **`http://127.0.0.1:3090`**，在「配置 → 连接」填写对端反向 WS 地址，点击「保存并重新连接」。
+概览页显示「OneBot v11 反向 WS」已接入，即连接成功。
+
+Windows 可双击 `start_silent.vbs` 后台启动；开机自启与其他维护说明见[配置与维护](docs/operations.md)。
+
+## 对端对接
+
+Ooptra 主动连接，对端需开启 **OneBot v11 反向 WebSocket 服务端**。
+
+| `ONEBOT_V11_CONFIG` 字段 | 设置 |
+| --- | --- |
+| `ws_reverse_url` | 对端地址，默认示例 `ws://127.0.0.1:6200/ws`；端口、路径以对端配置为准 |
+| `access_token` | 与对端令牌一致；两边留空则不校验 |
+| `ws_reverse_api_url` / `ws_reverse_event_url` | 仅对端区分 API / Event 端点时填写；单一地址使用 `universal` 角色 |
+
+也支持本地 HTTP / 正向 WS（默认 `127.0.0.1:6700`），需另外开启 `enable_http` / `enable_ws`。
+
+## Web 控制台
+
+| 页面 | 用途 |
+| --- | --- |
+| 概览 | 连接状态、事件与动作统计、重连 |
+| 日志 | 实时日志、关键词与级别过滤、下载 |
+| 配置 | 连接、语音模型、系统设置；不常用项位于「高级选项」 |
+| 账号 | 凭据状态、账号密码登录、网页版登录 |
+| 语音台 | 会话控制、自动串门、房间成员、人格与记忆 |
+
+右上角可切换暗色模式，选择保存在当前浏览器。侧栏「维护与账号」提供重连、检查更新和退出登录。
+**检查更新只查询 GitHub Release / 标签，不会自动下载、安装，也不会检测仅推送到 main 的代码更新。**
+
+局域网访问：将 `WEBUI_CONFIG.host` 设为 `0.0.0.0`，**同时设置 `token`**，然后打开
+`http://<部署机器的 IP>:3090/?token=<token>`。默认 `127.0.0.1` 仅允许本机访问。
+
+## 语音功能
+
+语音默认关闭。在「配置 → 语音模型」开启模块，选择后端并填写密钥、模型与音色，
+再到「语音台 → 会话控制」选择域和频道进房。支持 **Gemini Live**（语音进出）和 **MiMo 级联**（ASR → LLM → TTS）；OpenAI Realtime 暂不可用。
+
+| 设置 | 行为 |
+| --- | --- |
+| 语音回复频率 | 默认 **30%**，可设 `0～100%`；按概率接话，手动开口和进退房台词不受限制 |
+| 强制回复关键词 | 默认空列表；转写包含关键词即绕过概率，忽略大小写、全半角、空格和标点；同音别名可自行添加 |
+| 语音控制退语音 | 默认开启；AI 识别当前监听成员的退房请求，先说离场语再退出；`0%` 回复概率也可触发 |
+| 抢话与监听范围 | 默认允许抢话；可调打断门限，或用 `listen_only_uids` 限定监听成员 |
+| 人格与记忆 | 在「语音台 → 人格与记忆」管理，记忆保存在本地 |
+
+降低回复频率不保证减少 Gemini 用量；语音退房依赖 ASR / AI 判定，首次启用请实际验证。
+后端差异、离场语、手动开口及 API 详见[语音与 API 指南](docs/voice-guide.md)。
+
+### 自动串门
+
+开启语音后，在「语音台 → 自动串门」逐域启用，**所有域默认关闭**。
+
+| 默认策略 | 数值 |
+| --- | --- |
+| 检查与进房 | 全实例每 **10～20 分钟**检查一次，公平选域后随机选房，进房概率 **20%** |
+| 停留 | **10～20 分钟**，到期告别退出；持续空房 **2 分钟**提前静默退出 |
+| 自动退房冷却 | 全实例 **30～60 分钟** |
+| 手动退房冷却 | 仅刚退出的域 **2～4 小时** |
+| 每日上限 | 北京时间自然日，全实例 **3 次**成功自动进房；可另设域上限，`0` 为不限 |
+
+策略采用全局默认与分域覆盖，检查间隔仅支持全局设置。进退房台词可自定义多条，每次随机选取并由 AI 改写。
+手动房间由用户控制；暂停、空台词与异常恢复规则见[自动串门说明](docs/voice-guide.md#自动串门)。
+
+## 配置与维护
+
+常用配置可在 WebUI 修改；完整字段见 [config.example.py](config.example.py)，
+环境变量见 [.env.example](.env.example)。程序**不会自动读取 `.env`**，需把变量设进进程环境。
+
+升级或迁移前备份 `config.py`、`private_key.py` 和 `data/`，不要提交账号凭据。
+**请保留 `data/onebot_v11.sqlite3`**，删除会改变群与成员编号；自动串门状态文件也应保留，以延续额度和冷却。
+
+配置字段、数据文件、Windows 启动与完整排查说明见[配置与维护指南](docs/operations.md)。
+
+## 常见问题
+
+- **反向 WS 未连接**：检查对端服务、地址、路径、令牌；跨机部署还需放行端口。
+- **凭据无效**：有账号密码时自动续期；只导入 JWT 时，请到「账号」页重新登录。
+- **进房后没有回复**：检查语音开关、可选依赖、API Key、模型代理与会话日志；默认只随机回应约三成发言。
+- **语音进退房失败**：核对「会话控制」状态与日志，确认账号实际所在房间后重试；自动串门暂停时先处理原因。
 
 ## 开发与测试
 
 ```bash
-pip install -r requirements-dev.txt   # 运行时依赖 + ruff / pytest / pyright
-ruff check .                          # 代码检查
-pytest -q                             # 单元测试
-pyright                               # 可选：类型检查
+python -m pip install -r requirements-dev.txt
+ruff check .
+pytest -q
+pyright  # 可选：类型检查
 ```
 
-CI（`.github/workflows/ci.yml`）在每次 PR，以及 `main` / `dev` 推送时运行 Ruff 与 pytest，测试矩阵为 Ubuntu（Python 3.10 / 3.13）与 Windows（Python 3.13）。
-`src/oopz_sdk/` 是内置 SDK，包含语音生命周期和播放完成检测的适配修复，不参与 lint 与类型检查。
+CI 在 PR 和 `main` / `dev` 推送时执行 Ruff 与 pytest，覆盖 Ubuntu（Python 3.10 / 3.13）和 Windows（Python 3.13）。
+源码目录与测试注意事项见[开发说明](docs/operations.md#开发说明)。
 
-> 本地跑测试会写入 `logs/oopz_bot.log`；CI 上的 `config.py` 由 `config.example.py` 生成，语音模块为关闭状态，
-> 因此涉及语音的用例需要自己显式打开相关字段，不能依赖本机配置。
+## 许可与鸣谢
 
-## 常见问题
+采用 [MIT 许可](LICENSE)，软件按现状提供。请遵守平台协议与当地法律，仅用于自己的账号及有权管理的社群，勿用于骚扰或刷屏。
+项目源自社区项目 `Oopzbot`；内置 `src/oopz_sdk/` 的版权归原作者，如权利人提出异议会移除或替换。
 
-**桥接**
+[提交问题](https://github.com/Eason4869/Ooptra/issues) · [OneBot v11 协议](https://github.com/botuniverse/onebot-11) ·
+[SnowLuma](https://github.com/SnowLuma/SnowLuma)（文档与产品形态参考，无隶属关系）
 
-- **反向 WS 一直未连接**：确认对端已启动反向 WS 服务端，地址、路径、`access_token` 三者与对端一致；跨机部署还要放行端口。
-- **对端收不到消息内容**：Oopz 的频道消息以 `message_type=group` 上报，检查对端是否放行了群消息。
-- **群号或成员编号变了**：`data/onebot_v11.sqlite3` 被删除或路径被改动，映射需要重新积累。
-- **提示凭据无效**：JWT 过期时程序会尝试用账号密码自动续期；如果当初只导入了 JWT 而没有密码，请在「账号」页重新登录。
-- **想让对端连进来**：打开 `enable_http` / `enable_ws`，让对端连到 `127.0.0.1:6700`。
-
-**语音**
-
-- **进房后完全没有反应**：按顺序检查——`VOICE_AGENT_CONFIG.enabled` 是否为 `True`、是否已安装 Playwright 与 Chromium、
-  API Key 是否填对、日志里是否出现会话就绪。模型 API 在国内通常需要走代理，确认 `VOICE_AGENT_CONFIG.proxy` 可用。
-- **退出重进或换频道后听不到它说话 / 听不到别人说话**：2.1.0 已修复此类资源残留问题，请先升级到最新版本。
-- **回复偶发切成英文或其他语言**：Live 模型按输入音频自动选语言。可设置 `listen_only_uids` 只监听指定成员，
-  或在人格里进一步强调语言要求。日志中 `Live 回合：` 一行会同时打印模型听到的转写与它的回复，可据此判断是听错还是答错。
-- **成员列表的麦克风状态是「未知」或「未广播」**：该状态只由**同一 Agora 房间内**的客户端广播，跨频道或对方客户端未广播时无法得知，属正常现象。
-- **想只听指定成员**：bot 只监听当前加入的语音频道，用 `listen_only_uids` 进一步限定成员；留空时按主讲人选择接收房间音频。
-
-**Windows**
-
-- **控制台中文乱码**：`main.py` 启动时会执行 `chcp 65001` 切到 UTF-8；若在自定义脚本里启动，请自行保证终端为 UTF-8 编码。
-- **路径含空格或中文**：安装目录建议使用纯英文路径，避免 Playwright 与浏览器内核加载异常。
-
-## 使用边界与许可
-
-> [!IMPORTANT]
-> 本项目采用 [MIT 许可](LICENSE)，是独立的第三方工具，与 Oopz 官方无隶属关系，也不对 Oopz 服务的可用性作任何保证。
-
-- 请只在自己的账号与有权管理的社群中使用，不要用于骚扰、刷屏或对他人社群做批量自动化。
-- `src/oopz_sdk/` 是随项目附带的 Oopz SDK 源码，版权归其原作者所有；如权利人提出异议，我们会移除或替换。
-- 项目最初派生自社区项目 `Oopzbot`，当前仓库是围绕「纯 OneBot v11 反向桥接 + Web 控制台」重写后的版本。
-
-## 社区与鸣谢
-
-- [提交问题](https://github.com/Eason4869/Ooptra/issues)
-- 协议参考：[OneBot v11](https://github.com/botuniverse/onebot-11)
-- 文档组织与产品形态参考了 [SnowLuma](https://github.com/SnowLuma/SnowLuma)（无隶属关系）
+访问计数仅作曝光参考，不代表独立访客；维护者可在 [GitHub Traffic](https://github.com/Eason4869/Ooptra/graphs/traffic) 查看近 14 天访问与克隆统计。
