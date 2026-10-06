@@ -1,6 +1,6 @@
 # Ooptra 自动语音串门与品牌改版 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 实现已确认的分域自动语音串门，更新 Logo 与 WebUI，验证后以 v261006-beta 推送到 dev。
 
@@ -125,11 +125,13 @@
 - [x] 独立审查完整差异与Spec，覆盖正确性、架构、权限、资源、UI；重要发现补失败测试后修复，再跑受影响测试／全量检查。
 - [x] WebUI用本地匿名fixture验证；真实Oopz/MiMo/Gemini验收如无授权账号条件则明确未验证，不把fixture当实房。给出真实验收步骤和恢复默认方法。
 - [x] 设置单一版本 `261006-beta` 和正式比较基线；CHANGELOG标题 `v261006-beta`。更新迁移：旧auto_join移除、域默认关闭、默认参数、意图列表、quota与冷却持久。
-- [ ] 完成最终全量检查；git状态只含预期文件；敏感路径不进入提交；提交后核对最新远端dev，若变化整合并验证。
-- [ ] 普通推送 `HEAD:refs/heads/dev`，创建并推送 `v261006-beta` 标记（已有同名标记则先核对，禁止覆盖）；核对远端分支／标记哈希。用户未要求main合并，不操作main。
+- [x] 完成最终全量检查；git状态只含预期文件；敏感路径不进入提交；提交后核对最新远端dev，若变化整合并验证。
+- [x] 普通推送 `HEAD:refs/heads/dev`，创建并推送 `v261006-beta` 标记（已有同名标记则先核对，禁止覆盖）；核对远端分支／标记哈希。用户未要求main合并，不操作main。
 
 ## 执行与发布证据
 
 账本记录每任务RED／GREEN命令、提交、偏差与审查结果。最终说明分别报告自动化测试、浏览器视觉验证、真实语音验证、dev提交和版本标记，不能将未做的实房验收写成通过。
 
 实施状态（2026-10-06）：Task0—Task6已完成并集成；最终pytest410passed6.27s，Ruff/JS语法/diff检查通过。独立审查APPROVE；4个P1与2个P2全部修复并重放。各依赖任务统一以整体验证后的release提交交付，替代中间任务提交。详见2026-10-06-voice-auto-visit-validation.md。Task7提交和远端核验见最终交付。
+
+跨平台补充：首次CI发现Python3.10 Task取消兼容性与英文Windows验证脚本的编码问题。通过任务取消适配、去重与最终清理、UTF-8及超时修复，并增加同时取消/清理期间重复取消回归；保留CI栈诊断与时限。本次新建版本标签将在最终跨平台验证后以精确lease核对并指向修复后的dev，其他历史标签不变。

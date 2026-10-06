@@ -151,6 +151,7 @@ class VoiceAgent:
         self._reply_generating = False
         self._reply_tasks: set[asyncio.Task] = set()
         self._announcement_task: asyncio.Task | None = None
+        self._announcement_cancel_requests: set[asyncio.Task] = set()
         self._announcement_active = False
         self._announcement_collecting = False
         self._announcement_done = asyncio.Event()
@@ -200,9 +201,31 @@ class VoiceAgent:
         self._ensure_operations()
         task = self._announcement_task
         if task is not None and task is not asyncio.current_task() and not task.done():
+            self._request_announcement_cancel(task)
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                await self._wait_announcement_cleanup(task)
+                if not task.cancelled():
+                    raise
+
+    def _request_announcement_cancel(self, task: asyncio.Task) -> None:
+        # Both an operation and the caller may cancel the same expression.
+        # A second Task.cancel() would interrupt its asynchronous finally.
+        if not task.done() and task not in self._announcement_cancel_requests:
+            self._announcement_cancel_requests.add(task)
             task.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await task
+
+    async def _wait_announcement_cleanup(self, task: asyncio.Task) -> None:
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                # Repeated cancellation of this waiter must not be forwarded
+                # into the child's bounded model/audio cleanup.
+                continue
+            except Exception:
+                break
 
     def _init_throttle(self) -> None:
         """级联模式的回合节流状态。
@@ -774,17 +797,29 @@ class VoiceAgent:
             if self._announcement_task is not None and not self._announcement_task.done():
                 return {"ok": False, "text": "", "error": "announcement already active"}
             epoch = self._operation_epoch
-            task = asyncio.create_task(run_announcement(self, kind, template, expected_visit_id, epoch, timeout))
+
+            async def execute() -> dict[str, Any]:
+                try:
+                    return await run_announcement(self, kind, template, expected_visit_id, epoch, timeout)
+                except asyncio.CancelledError:
+                    # An operation cancelling this child is a failed expression,
+                    # while cancelling its caller must still propagate below.
+                    return {"ok": False, "text": "", "error": "announcement cancelled"}
+
+            task = asyncio.create_task(execute())
             self._announcement_task = task
         try:
-            return await task
+            # Keep caller cancellation distinct from an operation cancelling the
+            # child on Python 3.10 as well as newer runtimes.
+            return await asyncio.shield(task)
         except asyncio.CancelledError:
-            if asyncio.current_task().cancelling():
-                raise
-            return {"ok": False, "text": "", "error": "announcement cancelled"}
+            self._request_announcement_cancel(task)
+            await self._wait_announcement_cleanup(task)
+            raise
         finally:
             if self._announcement_task is task:
                 self._announcement_task = None
+            self._announcement_cancel_requests.discard(task)
 
     # ------------------------------------------------------------------
     # 音频进出

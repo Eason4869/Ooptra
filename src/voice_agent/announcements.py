@@ -99,29 +99,31 @@ async def run_announcement(agent: Any, kind: str, template: str, visit_id: str, 
     except Exception as exc:
         return {"ok": False, "text": "", "error": str(exc)}
     finally:
-        if not succeeded and epoch == agent._operation_epoch:
-            agent._discard_live_audio = True
-            disposed = not agent.live_mode
-            if agent.live_mode:
-                # Cancel the session reader first: it may currently hold the
-                # output lock inside a pending browser push.
-                agent._operation_epoch += 1
-                try:
-                    reset = getattr(agent.backend, "reset_reply_session", agent.backend.aclose)
-                    await asyncio.wait_for(reset(), 3.0)
-                except Exception:
-                    pass
-                else:
-                    disposed = True
-            async with agent._live_output_lock:
-                if agent.duplex is not None:
-                    with contextlib.suppress(Exception):
-                        await asyncio.wait_for(agent.duplex.stop_tts(), 1.0)
-            if agent.live_mode and disposed:
-                await agent._wire_live()
-        agent._announcement_active = False
-        agent._announcement_collecting = False
-        agent._reply_generating = False
-        agent._speaking = False
-        agent._user_buffers.clear()
-        agent._vad.reset()
+        try:
+            if not succeeded and epoch == agent._operation_epoch:
+                agent._discard_live_audio = True
+                disposed = not agent.live_mode
+                if agent.live_mode:
+                    # Cancel the session reader first: it may currently hold the
+                    # output lock inside a pending browser push.
+                    agent._operation_epoch += 1
+                    try:
+                        reset = getattr(agent.backend, "reset_reply_session", agent.backend.aclose)
+                        await asyncio.wait_for(reset(), 3.0)
+                    except Exception:
+                        pass
+                    else:
+                        disposed = True
+                async with agent._live_output_lock:
+                    if agent.duplex is not None:
+                        with contextlib.suppress(Exception):
+                            await asyncio.wait_for(agent.duplex.stop_tts(), 1.0)
+                if agent.live_mode and disposed:
+                    await agent._wire_live()
+        finally:
+            agent._announcement_active = False
+            agent._announcement_collecting = False
+            agent._reply_generating = False
+            agent._speaking = False
+            agent._user_buffers.clear()
+            agent._vad.reset()

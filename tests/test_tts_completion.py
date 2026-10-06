@@ -1,4 +1,5 @@
 import asyncio
+import locale
 import shutil
 import subprocess
 from pathlib import Path
@@ -66,7 +67,10 @@ def test_browser_leave_failure_is_propagated_and_room_preserved():
     asyncio.run(run())
 
 
-def test_real_player_finish_keeps_scheduled_tail_until_clock_and_sources_end():
+def test_real_player_finish_keeps_scheduled_tail_until_clock_and_sources_end(monkeypatch):
+    # English Windows runners default to cp1252; the real player contains Chinese comments.
+    monkeypatch.setattr(locale, "getencoding", lambda: "cp1252", raising=False)
+    monkeypatch.setattr(locale, "getpreferredencoding", lambda *args: "cp1252")
     node = shutil.which("node")
     if node is None:
         pytest.skip("Node is needed to execute the actual player functions")
@@ -103,5 +107,6 @@ const base64ToInt16 = () => new Int16Array(24000);
   assert.equal(window.agoraTtsStatus().remaining_seconds, 0);
 })().catch(error => { console.error(error); process.exitCode = 1; });
 """
-    result = subprocess.run([node], input=script, text=True, capture_output=True)
+    result = subprocess.run([node], input=script, text=True, encoding="utf-8",
+                            capture_output=True, timeout=5)
     assert result.returncode == 0, result.stderr
