@@ -55,21 +55,21 @@ README 顶部只保留一套累计访问计数展示，不能据此判断独立�
 
 ### 1. 获取代码
 
-本 README 对应 **dev · 261007-dev**，包含最新预览改动；新安装建议选择正式版。选择一个频道执行对应的克隆命令：
+本 README 对应 **dev · 预览版**，包含最新预览改动；新安装建议选择正式版。选择一个频道执行对应的克隆命令：
 
-正式版（`main`，`3.2.0`）：
+正式版（`main`）：
 
 ```bash
 git clone -b main https://github.com/Eason4869/Ooptra.git
 ```
 
-测试版（`beta`，`261007-beta`）：
+测试版（`beta`）：
 
 ```bash
 git clone -b beta https://github.com/Eason4869/Ooptra.git
 ```
 
-预览版（`dev`，`261007-dev`）：
+预览版（`dev`）：
 
 ```bash
 git clone -b dev https://github.com/Eason4869/Ooptra.git
