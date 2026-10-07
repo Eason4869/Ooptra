@@ -7,13 +7,13 @@
 </p>
 
 <p align="center">
-  <img src="./assets/readme/hero.svg" width="100%" alt="Ooptra 261007-dev：语音对话、自检试听、自动串门与更新备份" />
+  <img src="./assets/readme/hero.svg" width="100%" alt="Ooptra：语音对话、自检试听、自动串门与更新备份" />
 </p>
 
 <p align="center">
-  <a href="CHANGELOG.md"><img alt="当前版本 261007-dev" src="https://img.shields.io/badge/version-261007--dev-315DDC?style=flat-square"></a>
+  <a href="CHANGELOG.md"><img alt="更新日志" src="https://img.shields.io/badge/changelog-更新日志-315DDC?style=flat-square"></a>
   <a href="https://github.com/Eason4869/Ooptra/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/Eason4869/Ooptra?style=flat-square"></a>
-  <a href="https://github.com/Eason4869/Ooptra/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Eason4869/Ooptra/ci.yml?style=flat-square&amp;label=CI&amp;branch=dev"></a>
+  <a href="https://github.com/Eason4869/Ooptra/actions/workflows/ci.yml?query=branch%3Amain"><img alt="正式版 CI" src="https://img.shields.io/github/actions/workflow/status/Eason4869/Ooptra/ci.yml?style=flat-square&amp;label=main%20CI&amp;branch=main"></a>
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-3776ab?style=flat-square&amp;logo=python&amp;logoColor=white">
   <a href="LICENSE"><img alt="许可" src="https://img.shields.io/badge/license-MIT-3ddc97?style=flat-square"></a>
 </p>
@@ -46,7 +46,7 @@ README 顶部只保留一套累计访问计数展示，不能据此判断独立�
 文字消息指令与插件由对端机器人框架处理。Ooptra 是第三方工具，与 Oopz 官方无隶属关系。
 
 <p align="center">
-  <img src="./assets/readme/runtime-map.svg" width="100%" alt="Ooptra 261007-dev 消息与语音链路" />
+  <img src="./assets/readme/runtime-map.svg" width="100%" alt="Ooptra 消息与语音链路" />
 </p>
 
 ## 快速开始
@@ -55,7 +55,7 @@ README 顶部只保留一套累计访问计数展示，不能据此判断独立�
 
 ### 1. 获取代码
 
-本 README 对应 **dev · 预览版**，包含最新预览改动；新安装建议选择正式版。选择一个频道执行对应的克隆命令：
+本 README 适用于三个频道，新安装建议选择正式版。选择一个频道执行对应的克隆命令；具体版本与变更见当前分支的 [更新日志](CHANGELOG.md)。
 
 正式版（`main`）：
 
@@ -151,9 +151,8 @@ Ooptra 主动连接，对端需开启 **OneBot v11 反向 WebSocket 服务端**�
 备份列表、部署预检查和存储统计独立加载；更新检查最多等待 60 秒。网络设置支持部署端代理和可配置 HTTPS Git 镜像，安装前校验官方目标提交；镜像仅加速代码传输。
 备份支持下载、恢复与确认删除，包括最新备份；更新／恢复／回滚引用的备份受保护。网络与诊断收纳在「高级选项」，GitHub 加速提供预设、自定义地址和部署端 Git 连通性测试；手动代理与加速独立，默认填入 `http://127.0.0.1:7890`，手动地址留空则不使用代理。
 
-首次未设置密码时，在部署机器本机打开 WebUI 设置；已有 `WEBUI_CONFIG.token` 即为登录密码。
-密码与插件 API Token 共用，只在「配置 → 系统」修改，保存后重新登录并同步插件 Token。
-退出登录会注销服务端会话，再次进入须输入密码；旧链接中的 `?token=` 不再用于浏览器自动登录。
+首次使用请在部署机器本机设置 `WEBUI_CONFIG.token`，作为 WebUI 登录密码；外部插件连接 WebUI 端口时使用同一令牌。
+修改后按对应分支指南使配置生效，再重新登录并同步插件 Token。各分支的登录、退出与独立 API 设置见对应的[配置与维护指南](docs/operations.md)及[更新日志](CHANGELOG.md)。
 
 局域网访问：将 `WEBUI_CONFIG.host` 设为 `0.0.0.0`，设置非空共享密码后，打开
 `http://<部署机器的 IP>:3090/` 并登录。默认 `127.0.0.1` 仅允许本机访问。

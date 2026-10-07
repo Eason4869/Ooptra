@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-labelledby="map-title map-desc">
-  <title id="map-title">Ooptra 261007-dev 运行链路：消息桥接与可选语音 Agent</title>
+  <title id="map-title">Ooptra 运行链路：消息桥接与可选语音 Agent</title>
   <desc id="map-desc">文字链路连接 Oopz 平台、Ooptra 桥接内核和 OneBot v11 对端。语音链路连接 Oopz 语音房、可选语音 Agent 和 Gemini Live 或 MiMo 级联模型。Web 控制台管理两条链路；内核、控制台与 Agent 共用同一进程。</desc>
   <defs>
     <marker id="map-arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0l10 5-10 5Z" fill="#315DDC"/></marker>
@@ -7,7 +7,7 @@
   </defs>
   <g font-family="Segoe UI, Microsoft YaHei UI, PingFang SC, sans-serif">
     <rect width="1200" height="720" rx="20" fill="#F5F8FC"/>
-    <text x="56" y="63" font-size="30" font-weight="650" fill="#173451">Ooptra 261007-dev 的运行链路</text>
+    <text x="56" y="63" font-size="30" font-weight="650" fill="#173451">Ooptra 的运行链路</text>
     <text x="56" y="99" font-size="17" fill="#506881">文字事件走 OneBot v11，语音通过可选 Agent 对话。</text>
     <rect x="400" y="133" width="396" height="533" rx="14" fill="#EAF0FA" stroke="#C8D6E9"/>
     <rect x="500" y="120" width="196" height="25" rx="5" fill="#F5F8FC"/>
