@@ -52,11 +52,14 @@ class WebUIConsole:
         *,
         config: dict[str, Any] | None = None,
         voice_runtime: Any = None,
+        shutdown: Any = None,
     ) -> None:
         self._state = state
         self._controller = controller
         self._config = config if isinstance(config, dict) else getattr(runtime_config, "WEBUI_CONFIG", {}) or {}
         self._voice_runtime = voice_runtime
+        self._shutdown = shutdown
+        self._maintenance = None
         self._tailer = LogTailer(LOGS_DIR)
         self._login = OopzLoginService(controller, state)
         self._token = ""
@@ -96,6 +99,11 @@ class WebUIConsole:
             )
 
         app = web.Application(middlewares=[self._auth_middleware])
+        from webui.maintenance import MaintenanceService, mount_maintenance_routes
+
+        self._maintenance = MaintenanceService(PROJECT_ROOT, shutdown=self._shutdown,
+                                               port=self._port, host=self._host, token=self._token)
+        mount_maintenance_routes(app, self._maintenance)
         app.add_routes(
             [
                 web.get("/", self._handle_index),
@@ -145,6 +153,8 @@ class WebUIConsole:
         logger.info("Web 控制台已启动：%s%s", self.base_url, suffix)
 
     async def stop(self) -> None:
+        if self._maintenance is not None:
+            await self._maintenance.close()
         await self._login.shutdown()
         if self._runner is not None:
             with contextlib.suppress(Exception):
@@ -162,6 +172,8 @@ class WebUIConsole:
         protected = path.startswith("/api/") or path.startswith(
             ("/voice/", "/health", "/oopz/", "/persona", "/memory")
         )
+        if path.startswith("/api/maintenance") and not self._token and not _is_loopback(request.remote or ""):
+            return web.json_response({"ok": False, "error": "远程维护需要先配置 WebUI 访问令牌"}, status=403)
         if not self._token or not protected:
             return await handler(request)
 
@@ -219,6 +231,7 @@ class WebUIConsole:
                 "process": {
                     "version": __version__,
                     "pid": os.getpid(),
+                    "update_id": os.environ.get("OOPTRA_UPDATE_ID", ""),
                     "python": platform.python_version(),
                     "executable": sys.executable,
                     "platform": platform.platform(),
