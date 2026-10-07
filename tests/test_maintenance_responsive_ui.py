@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 
-def _run_scenario(scenario, scenario_timeout_ms=10000, replay_original_await=False):
+def _run_scenario(scenario, scenario_timeout_ms=10000, replay_original_await=False, windows_newlines=False):
     node = shutil.which("node")
     if not node:
         pytest.skip("Node is required for maintenance runtime regressions")
@@ -64,7 +64,13 @@ const context={console,Date,Set,Option:function(){},window:{},state:{process:{}}
   return {};
  }};
 let source=fs.readFileSync(process.argv[1],'utf8');
-if(process.argv[4]==='original-await') source=source.replace("text('maintenance-feedback', feedback);\n      void window.refreshMaintenance(true);", "text('maintenance-feedback', feedback);\n      await window.refreshMaintenance(true);");
+if(process.argv[5]==='crlf') source=source.replace(/\r?\n/g,'\r\n');
+source=source.replace(/\r\n/g,'\n');
+if(process.argv[4]==='original-await') {
+ const marker="text('maintenance-feedback', feedback);\n      void window.refreshMaintenance(true);";
+ assert(source.includes(marker),'original await replay must locate the operation refresh');
+ source=source.replace(marker,"text('maintenance-feedback', feedback);\n      await window.refreshMaintenance(true);");
+}
 vm.createContext(context);vm.runInContext(source,context);
 const tick=()=>new Promise(r=>setImmediate(r));
 (async()=>{
@@ -185,7 +191,7 @@ const tick=()=>new Promise(r=>setImmediate(r));
 """
     # This outer limit protects process startup and pipe teardown. The Node
     # watchdog still permits at most ten seconds for the actual scenario.
-    return subprocess.run([node, "-e", runner, str(script), scenario, str(scenario_timeout_ms), "original-await" if replay_original_await else ""], capture_output=True, text=True, encoding="utf-8", timeout=30)
+    return subprocess.run([node, "-e", runner, str(script), scenario, str(scenario_timeout_ms), "original-await" if replay_original_await else "", "crlf" if windows_newlines else ""], capture_output=True, text=True, encoding="utf-8", timeout=30)
 
 
 @pytest.mark.parametrize("scenario", ["immediate_error", "independent_sections", "status_failure", "pending_preflight", "poll_preserves_error", "singleflight", "retry_section", "network_save", "network_clear", "network_redaction", "check_stage", "network_dirty_retry", "pagination_queued", "proxy_failure", "proxy_explicit_blank", "page_supplement", "proxy_keep"])
@@ -202,9 +208,10 @@ def test_maintenance_harness_rejects_unfinished_scenario():
     assert [json.loads(line) for line in result.stdout.splitlines()] == [{"scenario": "harness_unfinished", "ready": True}]
 
 
-def test_maintenance_harness_still_rejects_waiting_for_post_operation_status():
+@pytest.mark.parametrize("windows_newlines", [False, True])
+def test_maintenance_harness_still_rejects_waiting_for_post_operation_status(windows_newlines):
     """Replay the original await bug without changing the production script."""
-    result = _run_scenario("immediate_error", replay_original_await=True)
+    result = _run_scenario("immediate_error", replay_original_await=True, windows_newlines=windows_newlines)
     assert result.returncode != 0, "fixture cleanup must not make the original await regression pass"
     assert "operation must complete before post-operation status finishes" in result.stderr
     assert [json.loads(line) for line in result.stdout.splitlines()] == [{"scenario": "immediate_error", "ready": True}]
