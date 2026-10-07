@@ -16,7 +16,6 @@ const PAGE_META = {
 };
 const GROUP_TITLE = { oopz: 'Oopz 账号与事件', onebot: 'OneBot v11 桥接', webui: 'Web 控制台', voice: '语音对话 Agent', voice_api: '语音 HTTP API' };
 
-let token = '';
 let pollTimer = null;
 let logStream = null;
 let loginPollTimer = null;
@@ -34,8 +33,7 @@ const show = (el, on) => { el.hidden = !on; };
 class AuthError extends Error {}
 
 function withToken(path) {
-  if (!token) return path;
-  return path + (path.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token);
+  return path; // Browser requests use the HttpOnly session cookie, never the shared password.
 }
 
 async function api(path, opts = {}) {
@@ -54,7 +52,10 @@ async function api(path, opts = {}) {
       if (controller.signal.aborted) throw err;
       payload = null;
     }
-    if (res.status === 401) throw new AuthError('需要访问令牌');
+    if (res.status === 401) {
+      if (!path.startsWith('/api/auth/') && !$('screen-app').hidden) showLogin({gate: 'token'});
+      throw new AuthError('请重新登录控制台');
+    }
     if (!res.ok) throw new Error((payload && payload.error) || ('HTTP ' + res.status));
     return payload || {};
   } catch (err) {
@@ -185,6 +186,13 @@ async function tryStatus() {
 }
 
 async function guard() {
+  try {
+    const auth = await api('/api/auth/status');
+    if (!auth.configured) return {gate: auth.setup_allowed ? 'setup' : 'unconfigured'};
+    if (!auth.authenticated) return {gate: 'token'};
+  } catch (err) {
+    return {gate: 'offline', message: err.message};
+  }
   const probe = await tryStatus();
   if (probe.kind === 'auth') return { gate: 'token' };
   if (probe.kind === 'error') return { gate: 'offline', message: probe.message };
@@ -196,7 +204,6 @@ async function guard() {
     state.creds = {};
   }
   if (!credsUsable(state.creds)) return { gate: 'oopz' };
-  if (sessionStorage.getItem(SIGNED_OUT_KEY) === '1') return { gate: 'signedout' };
   return { gate: null };
 }
 
@@ -204,28 +211,36 @@ let state = {};
 let loginGate = 'token';
 
 function showLogin(result) {
+  stopPolling();
+  stopLogStream();
+  clearTimeout(loginPollTimer);
   loginGate = result.gate;
   show($('screen-app'), false);
   show($('screen-login'), true);
 
   const titles = {
-    token: ['输入访问令牌', 'config.py 的 WEBUI_CONFIG.token。令牌只存在这台机器的浏览器里。'],
+    token: ['登录控制台', result.message || (sessionStorage.getItem(SIGNED_OUT_KEY) === '1' ? '已退出登录，请重新输入控制台密码。' : '输入控制台密码，继续管理你的 Ooptra。')],
+    setup: ['设置控制台密码', '首次使用请设置密码。插件 API Token 也使用此密码；以后在「配置 → 系统」统一修改。'],
+    unconfigured: ['请先设置密码', '请在部署机器本机打开控制台设置首次密码，或在 config.py 中填写 WEBUI_CONFIG.token，然后重启。'],
     oopz: ['登录 Oopz', '桥接需要一份可用的 Oopz 凭据；登录成功后会写入 config.py 与 private_key.py 并自动重连。'],
-    signedout: ['已退出控制台', '点击下方按钮重新进入。'],
     offline: ['连不上控制台后端', result.message || '请确认进程仍在运行。'],
   };
-  const buttons = { token: '进入控制台', oopz: '登录并进入', signedout: '进入控制台', offline: '重试' };
+  const buttons = { token: '登录控制台', setup: '设置密码并进入', unconfigured: '重新检查', oopz: '登录并进入', offline: '重试' };
   const t = titles[loginGate] || titles.token;
   $('login-title').textContent = t[0];
   $('login-sub').className = loginGate === 'offline' ? 'hint err' : 'hint';
   $('login-sub').textContent = t[1];
-  show($('login-token-field'), loginGate === 'token');
+  show($('login-token-field'), ['token', 'setup'].includes(loginGate));
+  show($('login-token-confirm-field'), loginGate === 'setup');
+  $('login-token').value = '';
+  $('login-token-confirm').value = '';
+  $('login-token').autocomplete = loginGate === 'setup' ? 'new-password' : 'current-password';
   show($('login-oopz-field'), loginGate === 'oopz');
   show($('login-alt'), loginGate === 'oopz');
   $('login-submit').textContent = buttons[loginGate] || '进入';
   $('login-msg').textContent = '';
   $('login-msg').className = 'login-msg';
-  const focus = loginGate === 'token' ? $('login-token') : (loginGate === 'oopz' ? $('login-phone') : $('login-submit'));
+  const focus = ['token', 'setup'].includes(loginGate) ? $('login-token') : (loginGate === 'oopz' ? $('login-phone') : $('login-submit'));
   if (focus) setTimeout(() => focus.focus(), 60);
 }
 
@@ -237,19 +252,24 @@ function loginMsg(message, kind) {
 async function onLoginSubmit(event) {
   event.preventDefault();
   const button = $('login-submit');
-  if (loginGate === 'signedout') return enterApp();
-  if (loginGate === 'offline') { const g = await guard(); return g.gate ? showLogin(g) : enterApp(); }
-  if (loginGate === 'token') {
+  if (['offline', 'unconfigured'].includes(loginGate)) { const g = await guard(); return g.gate ? showLogin(g) : enterApp(); }
+  if (['token', 'setup'].includes(loginGate)) {
     const value = $('login-token').value.trim();
-    if (!value) return loginMsg('请填写访问令牌', 'err');
-    token = value;
-    const probe = await tryStatus();
-    if (probe.kind === 'auth') { token = ''; return loginMsg('令牌不正确', 'err'); }
-    if (probe.kind === 'error') return loginMsg(probe.message, 'err');
-    localStorage.setItem(TOKEN_KEY, token);
-    loginMsg('令牌有效，正在继续…', 'ok');
-    const g = await guard();
-    return g.gate ? showLogin(g) : enterApp();
+    if (!value) return loginMsg('请填写控制台密码', 'err');
+    if (loginGate === 'setup' && value !== $('login-token-confirm').value.trim()) return loginMsg('两次输入的密码不一致', 'err');
+    button.disabled = true;
+    loginMsg('正在验证…');
+    try {
+      await api('/api/auth/' + (loginGate === 'setup' ? 'setup' : 'login'), {method: 'POST', body: {password: value}});
+      $('login-token').value = '';
+      $('login-token-confirm').value = '';
+      sessionStorage.removeItem(SIGNED_OUT_KEY);
+      const g = await guard();
+      return g.gate ? showLogin(g) : enterApp();
+    } catch (err) {
+      loginMsg(err instanceof AuthError ? '控制台密码不正确' : err.message, 'err');
+    } finally { button.disabled = false; }
+    return;
   }
   if (loginGate === 'oopz') {
     button.disabled = true;
@@ -282,13 +302,19 @@ function enterApp() {
   startPolling();
 }
 
-function logout() {
+async function logout() {
+  try { await api('/api/auth/logout', {method: 'POST', body: {}}); }
+  catch (err) { toast('退出登录失败', err.message + '；请重试。', 'err'); return; }
   sessionStorage.setItem(SIGNED_OUT_KEY, '1');
-  localStorage.removeItem(TOKEN_KEY);
+  clearLegacyCredentials();
   stopLogStream();
   stopPolling();
-  token = '';
-  location.reload();
+  dirty = {};
+  configSchema = null;
+  logBuffer = [];
+  state = {};
+  updateSavebar();
+  showLogin({gate: 'token'});
 }
 
 /* ───────── 导航 ───────── */
@@ -309,7 +335,7 @@ function setupNav() {
     renderOverview();
   });
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) stopPolling(); else startPolling();
+    if (document.hidden || $('screen-app').hidden) stopPolling(); else startPolling();
   });
 }
 
@@ -519,6 +545,7 @@ function renderPageToolsIfNeeded() {
 
 function startPolling() {
   stopPolling();
+  if ($('screen-app').hidden) return;
   refreshStatus();
   pollTimer = setInterval(() => { if (!document.hidden) refreshStatus(); }, POLL_MS);
 }
@@ -804,16 +831,13 @@ async function cancelBrowserLogin(statusEl) {
 
 /* ───────── 装配 ───────── */
 
-function readToken() {
-  const fromQuery = new URLSearchParams(location.search).get('token');
-  if (fromQuery) {
-    localStorage.setItem(TOKEN_KEY, fromQuery);
-    const url = new URL(location.href);
+function clearLegacyCredentials() {
+  localStorage.removeItem(TOKEN_KEY);
+  const url = new URL(location.href);
+  if (url.searchParams.has('token')) {
     url.searchParams.delete('token');
-    history.replaceState(null, '', url.pathname + url.search);
-    return fromQuery;
+    history.replaceState(null, '', url.pathname + url.search + url.hash);
   }
-  return localStorage.getItem(TOKEN_KEY) || '';
 }
 
 function wireLogin() {
@@ -843,7 +867,7 @@ function wireRail() {
   $('btn-restart').addEventListener('click', restartBridge);
   $('verdict-action').addEventListener('click', restartBridge);
   $('btn-logout').addEventListener('click', async () => {
-    const ok = await confirmDialog('退出登录', '会清除本机浏览器里保存的访问令牌。服务器端配置不受影响。', '退出');
+    const ok = await confirmDialog('退出登录', '将注销当前浏览器会话，再次进入需重新输入控制台密码。bot 会继续运行。', '退出');
     if (ok) logout();
   });
   const checkBtn = $('btn-check-update');
@@ -866,7 +890,7 @@ async function checkUpdate() {
 }
 
 async function boot() {
-  token = readToken();
+  clearLegacyCredentials();
   wireLogin();
   wireLogs();
   wireConfig();

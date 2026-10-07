@@ -29,7 +29,10 @@ OFFICIAL_REMOTES = {
 }
 CHANNELS = {"main": "正式版", "beta": "测试版", "dev": "预览版"}
 ACTIVE_PHASES = {"preparing", "awaiting_restart", "switching", "checking", "rolling_back"}
-PUBLIC_JOB_FIELDS = {"id", "action", "phase", "detail", "started_at", "updated_at", "target_sha", "old_sha", "backup_id", "channel"}
+PUBLIC_JOB_FIELDS = {
+    "id", "action", "phase", "detail", "started_at", "updated_at", "target_sha",
+    "old_sha", "backup_id", "channel", "progress_stage", "stage_started_at",
+}
 QUERY_WAIT_SECONDS = 12
 PREFLIGHT_SECONDS = 10
 INSTALLED_SECONDS = 4
@@ -451,14 +454,21 @@ class MaintenanceService:
         self._task = asyncio.create_task(self._prepare_restore(job))
         return {k: v for k, v in job.items() if k in PUBLIC_JOB_FIELDS}
 
+    def _progress(self, job, stage, detail):
+        if job.get("progress_stage") != stage:
+            job.update(progress_stage=stage, stage_started_at=time.time())
+        job["detail"] = detail
+        self.write_job(job)
+
     def _prepare_environment(self, job):
         def progress(detail):
             logger.info("Maintenance preparation: %s", detail)
-            job["detail"] = detail
-            self.write_job(job)
+            self._progress(job, "download", detail)
+        self._progress(job, "download", "正在下载并核对目标提交")
         fetch_verified(self.root, job["channel"], job["target_sha"], time.monotonic() + 120,
                        run_command, progress=progress)
         fetched = job["target_sha"]
+        self._progress(job, "source", "正在解包并校验目标代码")
         stage_root = self.root / "data/maintenance/staging"
         stage_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=stage_root) as folder:
@@ -480,15 +490,20 @@ class MaintenanceService:
             if (not (source / "launcher.py").is_file()
                     or any(marker not in server_text for marker in ("OOPTRA_UPDATE_ID", "bootstrap_ready"))):
                 raise ValueError("目标版本不支持自动升级健康检查，请按 README 手动安装")
+            self._progress(job, "environment", "正在创建独立 Python 虚拟环境")
             run_command(self.root, [sys.executable, "-m", "venv", str(environment)], 120)
             python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+            self._progress(job, "dependencies", "正在安装 Python 依赖，网络较慢时可能需要数分钟")
             run_command(source, [str(python), "-m", "pip", "install", "-r", "requirements.txt", "-r", "requirements-optional.txt"], 900)
+            self._progress(job, "verify", "正在检查代码与依赖可用性")
             run_command(source, [str(python), "-m", "compileall", "-q", "main.py", "src"], 60)
             run_command(source, [str(python), "-c", "import aiohttp, pydantic, cryptography, PIL, aiosqlite, playwright, websockets"], 30)
             browsers = self.root / "data/maintenance/browsers" / job["id"]
             job["browser_path"] = str(browsers)
             env = dict(os.environ, PLAYWRIGHT_BROWSERS_PATH=str(browsers))
+            self._progress(job, "browser", "正在下载浏览器组件，网络较慢时可能需要数分钟")
             run_command(source, [str(python), "-m", "playwright", "install", "chromium"], 900, env)
+            self._progress(job, "browser_check", "正在验证浏览器组件能否启动")
             run_command(source, [str(python), "-c", "from playwright.sync_api import sync_playwright; p=sync_playwright().start(); b=p.chromium.launch(headless=True); b.close(); p.stop()"], 60, env)
             return str(python)
 
@@ -498,6 +513,7 @@ class MaintenanceService:
             job["new_python"] = await asyncio.to_thread(self._prepare_environment, job)
             if not (await asyncio.to_thread(self.preflight))["supported"]:
                 raise ValueError("准备期间部署状态变化，取消切换")
+            self._progress(job, "backup", "正在创建更新前安全备份")
             job["backup_id"] = (await asyncio.to_thread(self.backups.create))["id"]
             await self._ready(job)
         except Exception as exc:
@@ -505,11 +521,13 @@ class MaintenanceService:
 
     async def _prepare_restore(self, job):
         try:
+            self._progress(job, "restore_validate", "正在校验备份完整性与恢复配置")
             def validate():
                 with tempfile.TemporaryDirectory(dir=self.backups.directory) as folder:
                     self.backups.validate(job["backup_id"], Path(folder))
                     job["restore_endpoint"] = restored_endpoint(Path(folder) / "config.py")
             await asyncio.to_thread(validate)
+            self._progress(job, "backup", "正在创建恢复前安全备份")
             job["safety_backup_id"] = (await asyncio.to_thread(self.backups.create))["id"]
             await self._ready(job)
         except Exception as exc:

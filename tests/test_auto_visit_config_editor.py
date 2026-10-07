@@ -98,14 +98,14 @@ def test_sync_runtime_is_serialized_with_sequential_sparse_saves(config_file, mo
     second_sync = Event()
     original_sync = editor._sync_runtime
 
-    def delayed_sync(namespace):
+    def delayed_sync(namespace, updates):
         areas = namespace['VOICE_AUTO_VISIT_CONFIG']['areas']
         if 'c' not in areas:
             first_sync.set()
             assert release_first.wait(3)
         else:
             second_sync.set()
-        original_sync(namespace)
+        original_sync(namespace, updates)
 
     monkeypatch.setattr(editor, '_sync_runtime', delayed_sync)
     with ThreadPoolExecutor(max_workers=2) as pool:

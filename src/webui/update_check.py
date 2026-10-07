@@ -37,7 +37,8 @@ def _version_tuple(value: str) -> tuple[int, ...]:
 def _is_newer(latest: str, current: str) -> bool:
     latest = _normalize_version(latest)
     current = _normalize_version(current)
-    if re.fullmatch(r"\d{6}-(?:beta|dev)", current) and not re.fullmatch(r"\d{6}-(?:beta|dev)", latest):
+    date_version = r"\d{6}(?:\.\d+)?-(?:beta|dev)"
+    if re.fullmatch(date_version, current) and not re.fullmatch(date_version, latest):
         current = RELEASE_BASE_VERSION
     return _version_tuple(latest) > _version_tuple(current)
 
