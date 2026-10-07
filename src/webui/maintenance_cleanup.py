@@ -9,6 +9,7 @@ import re
 import shutil
 import stat
 import sys
+import time
 from pathlib import Path
 
 
@@ -30,18 +31,33 @@ def linked(path):
     return path.is_symlink() or bool(getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT)
 
 
-def tree_snapshot(root, path):
+def _budget(deadline, count):
+    if time.monotonic() >= deadline:
+        raise ValueError("空间扫描超时，请缩小维护目录后重试；不会删除任何文件")
+    if count > 100000:
+        raise ValueError("空间扫描超出文件数量限制；不会删除任何文件")
+
+
+def tree_snapshot(root, path, *, deadline=None):
     """Skip links/junctions rather than following them during inventory or deletion."""
+    deadline = time.monotonic() + 10 if deadline is None else deadline
+    _budget(deadline, 0)
     try:
         if not path.resolve().is_relative_to(root) or any(linked(p) for p in [path, *path.parents] if p.is_relative_to(root)):
             return None
         paths = [path]
         if path.is_dir():
             for folder, dirs, files in os.walk(path, followlinks=False):
+                _budget(deadline, len(paths) + len(dirs) + len(files))
+                # os.walk must never descend into a junction before the final
+                # fingerprint validation notices it.
+                if any(linked(Path(folder) / name) for name in dirs):
+                    return None
                 paths.extend(Path(folder) / name for name in dirs + files)
         size = 0
         digest = hashlib.sha256()
         for entry in sorted(paths):
+            _budget(deadline, len(paths))
             if linked(entry):
                 return None
             info = entry.stat()
@@ -55,7 +71,9 @@ def tree_snapshot(root, path):
         return None
 
 
-def inventory(root, backups, job):
+def inventory(root, backups, job, *, timeout=10):
+    deadline = time.monotonic() + timeout
+    _budget(deadline, 0)
     runtime = read_runtime(root)
     references = [sys.executable, os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "")]
     for source in [runtime, job or {}]:
@@ -63,19 +81,25 @@ def inventory(root, backups, job):
     protected_paths = [Path(value).resolve() for value in references if isinstance(value, str) and value]
     protected_backups = {row["id"] for row in backups[:2]}
     protected_backups.update((job or {}).get(key) for key in ("backup_id", "safety_backup_id"))
-    candidates = [(p, "environment")
-                  for p in root.glob(".venv-update-*") if re.fullmatch(r"\.venv-update-[a-f0-9]{32}", p.name)]
+    candidates = []
+    for path in root.glob(".venv-update-*"):
+        _budget(deadline, len(candidates))
+        if re.fullmatch(r"\.venv-update-[a-f0-9]{32}", path.name):
+            candidates.append((path, "environment"))
     for folder, kind in [("browsers", "browser"), ("staging", "staging")]:
         parent = root / "data/maintenance" / folder
         if parent.exists() and not linked(parent):
-            candidates.extend((path, kind) for path in parent.iterdir()
-                              if path.is_dir() and (kind == "staging" or re.fullmatch(r"[a-f0-9]{32}", path.name)))
+            for path in parent.iterdir():
+                _budget(deadline, len(candidates))
+                if path.is_dir() and (kind == "staging" or re.fullmatch(r"[a-f0-9]{32}", path.name)):
+                    candidates.append((path, kind))
     candidates.extend((root / "data/maintenance/backups" / (row["id"] + ".zip"), "backup") for row in backups)
     totals = {"backups_count": len(backups), "backups_bytes": 0, "environments_bytes": 0, "browsers_bytes": 0, "staging_bytes": 0}
     keys = {"backup": "backups_bytes", "environment": "environments_bytes", "browser": "browsers_bytes", "staging": "staging_bytes"}
     items = []
     for path, kind in candidates:
-        snapshot = tree_snapshot(root, path)
+        _budget(deadline, len(candidates))
+        snapshot = tree_snapshot(root, path, deadline=deadline)
         if snapshot is None:
             continue
         size, fingerprint = snapshot

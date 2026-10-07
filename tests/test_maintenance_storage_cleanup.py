@@ -95,7 +95,7 @@ def test_unreadable_runtime_record_blocks_cleanup_conservatively(tmp_path):
     with pytest.raises(ValueError):
         service.preview_cleanup()
     assert retired.exists()
-    assert "error" in service.status()["storage"]
+    assert "error" in asyncio.run(service.query("storage"))["storage"]
 
 
 def test_expired_cleanup_preview_leaves_every_candidate_intact(tmp_path, monkeypatch):
@@ -109,7 +109,7 @@ def test_expired_cleanup_preview_leaves_every_candidate_intact(tmp_path, monkeyp
     assert retired.exists()
 
 
-def test_status_reuses_storage_scan_but_new_backup_invalidates_it(tmp_path, monkeypatch):
+def test_storage_query_reuses_scan_but_new_backup_invalidates_it(tmp_path, monkeypatch):
     from webui import maintenance
     original = maintenance.inventory
     scans = []
@@ -118,11 +118,12 @@ def test_status_reuses_storage_scan_but_new_backup_invalidates_it(tmp_path, monk
         return original(*args)
     monkeypatch.setattr(maintenance, "inventory", tracked)
     service = MaintenanceService(tmp_path)
-    first = service.status()["storage"]
+    first = asyncio.run(service.query("storage"))["storage"]
     assert service.status()["storage"] == first
+    assert asyncio.run(service.query("storage"))["storage"] == first
     assert len(scans) == 1  # A three-second page poll must not walk every venv again.
     asyncio.run(service.create_backup())
-    assert service.status()["storage"]["backups_bytes"] > first["backups_bytes"]
+    assert asyncio.run(service.query("storage"))["storage"]["backups_bytes"] > first["backups_bytes"]
     assert len(scans) == 2
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -18,6 +19,7 @@ from pathlib import Path
 
 from core.version import __version__
 from webui.maintenance_cleanup import delete_items, inventory
+from webui.maintenance_network import fetch_verified, lookup_official_sha
 from webui.maintenance_storage import BackupStore, atomic_json, restored_endpoint
 from webui.maintenance_worker import runtime_health
 
@@ -28,11 +30,26 @@ OFFICIAL_REMOTES = {
 CHANNELS = {"main": "正式版", "beta": "测试版", "dev": "预览版"}
 ACTIVE_PHASES = {"preparing", "awaiting_restart", "switching", "checking", "rolling_back"}
 PUBLIC_JOB_FIELDS = {"id", "action", "phase", "detail", "started_at", "updated_at", "target_sha", "old_sha", "backup_id", "channel"}
+QUERY_WAIT_SECONDS = 12
+PREFLIGHT_SECONDS = 10
+INSTALLED_SECONDS = 4
+CHECK_SECONDS = 60
+logger = logging.getLogger(__name__)
+
+
+def remaining(deadline, stage, maximum=None):
+    seconds = deadline - time.monotonic()
+    if seconds <= 0:
+        raise ValueError(f"{stage}超时，请稍后重试")
+    return min(seconds, maximum) if maximum is not None else seconds
 
 
 def run_command(root: Path, args: list[str], timeout: int = 30, env=None) -> str:
     """Never accept shell commands or arbitrary arguments from the HTTP caller."""
-    result = subprocess.run(args, cwd=root, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
+    child_env = dict(os.environ if env is None else env)
+    if Path(args[0]).stem.lower() == "git":
+        child_env.update(GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="Never", GIT_OPTIONAL_LOCKS="0")
+    result = subprocess.run(args, cwd=root, env=child_env, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
     if result.returncode:
         # pip/git output may contain credentials; retain only the step and return code.
         raise ValueError(f"{Path(args[0]).name} 执行失败（退出码 {result.returncode}）")
@@ -55,6 +72,12 @@ class MaintenanceService:
         self._check = None
         self._cleanup = None
         self._storage_cache = None
+        self._backup_totals = {"backups_count": 0, "backups_bytes": 0}
+        self._query_tasks = {}
+        self._query_cache = {}
+        self._read_generation = 0
+        self._check_task = None
+        self._check_stage = None
         self.runtime_status = runtime_status
         self.bootstrap_ready = bootstrap_ready
         previous = self.read_job()
@@ -72,7 +95,60 @@ class MaintenanceService:
     def write_job(self, value):
         value["updated_at"] = time.time()
         atomic_json(self.job_file, value)
+        self._invalidate_reads()
+
+    def _invalidate_reads(self):
+        self._read_generation += 1
         self._storage_cache = None
+        self._query_cache.clear()
+
+    def _cached_query(self, kind):
+        cached = self._query_cache.get(kind)
+        return cached[1] if cached and time.monotonic() - cached[0] < 30 else None
+
+    def _pending_query(self, kind, backups=None):
+        if kind == "preflight":
+            return {"supported": False, "checks": [], "pending": True,
+                    "detail": "预检查尚未完成；备份和版本信息可独立查看"}
+        totals = self._backup_totals if backups is None else {"backups_count": len(backups), "backups_bytes": sum(row["size"] for row in backups)}
+        return {**totals, "pending": True, "detail": "完整空间统计尚未完成"}
+
+    def _read_storage(self):
+        backups = self.backups.list(limit=None)
+        self._backup_totals = {"backups_count": len(backups), "backups_bytes": sum(row["size"] for row in backups)}
+        return self.storage_status(backups, self.read_job())
+
+    async def query(self, kind):
+        """Share a bounded read; an HTTP timeout never launches duplicate workers."""
+        cached = self._cached_query(kind)
+        if cached is not None:
+            return {"ok": True, kind: cached}
+        task = self._query_tasks.get(kind)
+        if task is None or task.done():
+            generation = self._read_generation
+            async def sample():
+                try:
+                    if kind == "preflight":
+                        result = await asyncio.to_thread(self.preflight)
+                    else:
+                        result = await asyncio.to_thread(self._read_storage)
+                    result = {**result, "pending": False}
+                except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+                    logger.warning("Maintenance %s read failed (%s)", kind, type(exc).__name__)
+                    result = {**self._pending_query(kind), "pending": False,
+                              "error": str(exc) if isinstance(exc, ValueError) else "维护读取失败，请检查部署环境"}
+                if generation != self._read_generation:
+                    return self._pending_query(kind)
+                self._query_cache[kind] = (time.monotonic(), result)
+                return result
+            task = asyncio.create_task(sample())
+            self._query_tasks[kind] = task
+        try:
+            result = await asyncio.wait_for(asyncio.shield(task), QUERY_WAIT_SECONDS)
+        except asyncio.TimeoutError:
+            logger.warning("Maintenance %s response deadline exceeded; worker remains shared", kind)
+            result = {**self._pending_query(kind), "error": "读取超时；后台仍在完成本次读取，请稍后刷新"}
+        return {"ok": True, kind: result}
 
     def storage_status(self, backups, job):
         # Status runs in a worker thread. Repeated page polling must not walk
@@ -81,16 +157,19 @@ class MaintenanceService:
         cached = self._storage_cache
         if cached and time.monotonic() - cached[0] < 30:
             return cached[1]
+        generation = self._read_generation
         try:
             storage, _ = inventory(self.root, backups, job)
         except ValueError as exc:
             storage = {"error": str(exc), "backups_count": len(backups), "backups_bytes": sum(row["size"] for row in backups)}
         storage["sampled_at"] = time.time()
-        self._storage_cache = (time.monotonic(), storage)
+        if generation == self._read_generation:
+            self._storage_cache = (time.monotonic(), storage)
         return storage
 
     def preflight(self):
         checks = []
+        deadline = time.monotonic() + PREFLIGHT_SECONDS
         write_directories = [self.root, self.backups.directory.parent]
 
         def check(name, passed, detail):
@@ -98,18 +177,26 @@ class MaintenanceService:
 
         check("venv", self.venv, "使用 Python 虚拟环境")
         check("launcher", self.managed, "使用 python launcher.py 启动，才能安全停止、升级和回滚")
+        stage = "Git 仓库读取"
         try:
-            top = run_command(self.root, ["git", "rev-parse", "--show-toplevel"])
+            def git(*args):
+                return run_command(self.root, ["git", *args], remaining(deadline, stage, 2))
+            top = git("rev-parse", "--show-toplevel")
             check("git", Path(top).resolve() == self.root, "当前目录是 Git 仓库根目录")
-            remote = run_command(self.root, ["git", "remote", "get-url", "origin"])
+            stage = "Git 更新源读取"
+            remote = git("remote", "get-url", "origin")
             check("remote", remote.lower().rstrip("/") in OFFICIAL_REMOTES, "origin 指向 Eason4869/Ooptra 官方仓库")
-            dirty = run_command(self.root, ["git", "status", "--porcelain"])
+            stage = "Git 本地改动检查"
+            dirty = git("status", "--porcelain")
             check("clean", not dirty, "代码有本地改动或未跟踪文件时，先自行提交或处理；不会强制覆盖")
             for flag in ("--git-dir", "--git-common-dir"):
-                directory = Path(run_command(self.root, ["git", "rev-parse", flag]))
+                stage = "Git 元数据读取"
+                directory = Path(git("rev-parse", flag))
                 write_directories.append(directory if directory.is_absolute() else self.root / directory)
-        except (OSError, ValueError, subprocess.TimeoutExpired):
-            check("git", False, "Git 不可用或仓库无法读取")
+        except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+            logger.warning("Maintenance preflight failed at %s (%s)", stage, type(exc).__name__)
+            timed_out = isinstance(exc, subprocess.TimeoutExpired) or time.monotonic() >= deadline
+            check("git", False, f"{stage}{'超时' if timed_out else '失败'}；请检查本地 Git 环境后重试")
         try:
             check("disk", shutil.disk_usage(self.root).free >= 512 * 1024 * 1024, "至少 512 MB 可用空间；安装依赖时可能需要更多")
         except OSError:
@@ -123,13 +210,55 @@ class MaintenanceService:
             check("writable", False, "当前服务账户无法写入部署目录、维护目录或 Git 元数据")
         return {"supported": all(c["passed"] for c in checks), "checks": checks}
 
-    def installed(self):
+    def installed(self, *, deadline=None, strict=False):
         """Read the installed channel independently of the last selected target."""
+        deadline = min(deadline, time.monotonic() + INSTALLED_SECONDS) if deadline is not None else time.monotonic() + INSTALLED_SECONDS
         try:
-            current_sha = run_command(self.root, ["git", "rev-parse", "HEAD"])
-            branch = run_command(self.root, ["git", "branch", "--show-current"])
-        except (OSError, ValueError, subprocess.TimeoutExpired):
+            current_sha = run_command(self.root, ["git", "rev-parse", "HEAD"], remaining(deadline, "本地版本读取", 2))
+            branch = run_command(self.root, ["git", "branch", "--show-current"], remaining(deadline, "本地渠道读取", 2))
+        except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+            if strict:
+                logger.warning("Maintenance installed Git read failed (%s)", type(exc).__name__)
+                raise ValueError("本地 Git 版本读取超时或失败，请检查部署目录后重试") from exc
             current_sha, branch = "", ""
+        return self._installed_channel(current_sha, branch)
+
+    def installed_hint(self):
+        """Filesystem-only display hint; update authorization still uses real Git."""
+        current_sha, branch = "", ""
+        try:
+            directory = self.root / ".git"
+            if directory.is_file():
+                text = directory.read_text(encoding="utf-8").strip()
+                if not text.startswith("gitdir: "):
+                    raise ValueError
+                directory = (self.root / text[8:]).resolve()
+            head = (directory / "HEAD").read_text(encoding="utf-8").strip()
+            if head.startswith("ref: refs/heads/"):
+                ref = head[5:]
+                branch = ref[len("refs/heads/"):]
+                if not re.fullmatch(r"refs/heads/[A-Za-z0-9_./-]+", ref) or ".." in ref:
+                    raise ValueError
+                common = directory
+                if (directory / "commondir").is_file():
+                    common = (directory / (directory / "commondir").read_text(encoding="utf-8").strip()).resolve()
+                if (common / ref).is_file():
+                    current_sha = (common / ref).read_text(encoding="utf-8").strip()
+                elif (common / "packed-refs").is_file():
+                    with (common / "packed-refs").open(encoding="utf-8") as stream:
+                        for row in stream.read(1024 * 1024).splitlines():
+                            if row.endswith(" " + ref):
+                                current_sha = row.split()[0]
+                                break
+            else:
+                current_sha = head
+            if not re.fullmatch(r"[a-f0-9]{40}", current_sha):
+                current_sha = ""
+        except (OSError, ValueError):
+            pass
+        return self._installed_channel(current_sha, branch)
+
+    def _installed_channel(self, current_sha, branch):
         if branch in CHANNELS:
             return current_sha, branch
         try:
@@ -149,14 +278,15 @@ class MaintenanceService:
             raise ValueError("备份分页参数无效")
         job = self.read_job()
         backups = self.backups.list(limit=None)
+        self._backup_totals = {"backups_count": len(backups), "backups_bytes": sum(row["size"] for row in backups)}
         pages = max(1, (len(backups) + page_size - 1) // page_size)
         page = min(page, pages)
-        preflight = self.preflight()
-        current_sha, channel = self.installed()
+        preflight = self._cached_query("preflight") or self._pending_query("preflight")
+        current_sha, channel = self.installed_hint()
         update = {"channel": channel, "current_sha": current_sha,
                   "target_sha": None, "available": False, "version": __version__, **(self._check or {}),
                   "supported": preflight["supported"], "current_channel": channel}
-        storage = self.storage_status(backups, job)
+        storage = self._cached_query("storage") or self._pending_query("storage", backups)
         bridge = self.runtime_status() if self.runtime_status else {}
         return {
             "ok": True, "preflight": preflight, "backups": backups[(page - 1) * page_size:page * page_size],
@@ -165,6 +295,7 @@ class MaintenanceService:
             "health": runtime_health({"ok": True, "process": {"pid": os.getpid(), "bootstrap_ready": bool(self.bootstrap_ready and self.bootstrap_ready())}, "bridge": bridge}),
             "job": {k: v for k, v in job.items() if k in PUBLIC_JOB_FIELDS} if isinstance(job, dict) else None,
             "check": self._check, "busy": self._busy,
+            "check_stage": self._check_stage if self._check_task and not self._check_task.done() else None,
             "restore_supported": bool(self.managed and self.shutdown),
         }
 
@@ -193,25 +324,56 @@ class MaintenanceService:
             return await asyncio.to_thread(apply)
         finally:
             self._busy = False
-            self._storage_cache = None
+            self._invalidate_reads()
 
     async def check_update(self, channel=None):
-        current, current_channel = await asyncio.to_thread(self.installed)
-        channel = current_channel if channel is None else channel
-        if not isinstance(channel, str) or channel not in CHANNELS:
+        if channel is not None and (not isinstance(channel, str) or channel not in CHANNELS):
             raise ValueError("仅支持 main、beta 或 dev 更新源")
         if self._busy:
             raise ValueError("维护任务进行中")
+        if self._check_task and not self._check_task.done():
+            raise ValueError("更新检查进行中，请等待本次检查完成")
         self._check = None
+        self._check_stage = "读取本地安装版本"
+        deadline = time.monotonic() + CHECK_SECONDS
+        state = {"expired": False}
+        self._check_task = asyncio.create_task(self._perform_check(channel, deadline, state))
+        # Retrieve errors even when a timed-out HTTP caller has already returned.
+        self._check_task.add_done_callback(lambda task: task.exception() if not task.cancelled() else None)
+        try:
+            return await asyncio.wait_for(asyncio.shield(self._check_task), CHECK_SECONDS)
+        except asyncio.TimeoutError as exc:
+            state["expired"] = True
+            logger.warning("Maintenance update check exceeded total response deadline")
+            raise ValueError("更新检查总耗时超过 60 秒，请检查本地 Git 和 GitHub 连接后重试") from exc
+
+    async def _perform_check(self, channel, deadline, state):
+        installed_supported = (self.root / ".git").exists()
+        if installed_supported:
+            current, current_channel = await asyncio.to_thread(self.installed, deadline=deadline, strict=True)
+        else:
+            current, current_channel = await asyncio.to_thread(self.installed_hint)
+        channel = current_channel if channel is None else channel
         # Read-only remote lookup also works for unsupported installations.
-        output = await asyncio.to_thread(run_command, self.root,
-                                         ["git", "ls-remote", "https://github.com/Eason4869/Ooptra.git", f"refs/heads/{channel}"], 60)
-        sha = output.split()[0] if output else ""
+        try:
+            def progress(detail):
+                self._check_stage = detail
+                logger.info("Maintenance update check: %s", detail)
+            sha = await asyncio.to_thread(lookup_official_sha, self.root, channel, deadline, run_command, progress=progress)
+        except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+            logger.warning("Maintenance update GitHub lookup failed (%s)", type(exc).__name__)
+            if isinstance(exc, ValueError):
+                raise
+            detail = "超时" if isinstance(exc, subprocess.TimeoutExpired) or time.monotonic() >= deadline else "失败"
+            raise ValueError(f"GitHub 更新查询{detail}；请检查服务进程的网络、代理与 Git 配置后重试") from exc
         if not re.fullmatch(r"[a-f0-9]{40}", sha):
             raise ValueError("无法读取更新版本")
         switching = channel != current_channel
+        if state["expired"] or time.monotonic() >= deadline:
+            raise ValueError("更新检查超时，请重新检查")
         self._check = {"channel": channel, "channel_label": CHANNELS[channel], "target_sha": sha,
                        "current_sha": current, "current_channel": current_channel,
+                       "installed_supported": installed_supported,
                        "available": sha != current or switching,
                        "action": "switch" if switching else "update" if sha != current else "current",
                        "requires_confirmation": switching, "checked_at": time.time()}
@@ -229,7 +391,7 @@ class MaintenanceService:
             return await asyncio.to_thread(self.backups.create)
         finally:
             self._busy = False
-            self._storage_cache = None
+            self._invalidate_reads()
 
     async def start_update(self, channel, target_sha, *, confirm_channel_switch=False):
         if not isinstance(channel, str) or channel not in CHANNELS or not re.fullmatch(r"[a-f0-9]{40}", str(target_sha)):
@@ -266,10 +428,13 @@ class MaintenanceService:
         return {k: v for k, v in job.items() if k in PUBLIC_JOB_FIELDS}
 
     def _prepare_environment(self, job):
-        run_command(self.root, ["git", "fetch", "origin", job["channel"]], 120)
-        fetched = run_command(self.root, ["git", "rev-parse", "FETCH_HEAD"])
-        if fetched != job["target_sha"]:
-            raise ValueError("远端版本已变化，请重新检查更新")
+        def progress(detail):
+            logger.info("Maintenance preparation: %s", detail)
+            job["detail"] = detail
+            self.write_job(job)
+        fetch_verified(self.root, job["channel"], job["target_sha"], time.monotonic() + 120,
+                       run_command, progress=progress)
+        fetched = job["target_sha"]
         stage_root = self.root / "data/maintenance/staging"
         stage_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=stage_root) as folder:
@@ -348,6 +513,10 @@ class MaintenanceService:
             # race the supervisor's code switch. No shutdown is requested until ready.
             with contextlib.suppress(Exception):
                 await self._task
+        for task in [*self._query_tasks.values(), self._check_task]:
+            if task is not None:
+                with contextlib.suppress(Exception, asyncio.CancelledError):
+                    await task
 
 
 def mount_maintenance_routes(app, service):
@@ -373,6 +542,12 @@ def mount_maintenance_routes(app, service):
             return web.json_response(await asyncio.to_thread(service.status, page, page_size))
         except ValueError as exc:
             return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+    async def preflight_status(request):
+        return web.json_response(await service.query("preflight"))
+
+    async def storage_status(request):
+        return web.json_response(await service.query("storage"))
 
     async def download(request):
         try:
@@ -407,6 +582,8 @@ def mount_maintenance_routes(app, service):
 
     app.add_routes([
         web.get("/api/maintenance", status), web.get("/api/maintenance/backups/{id}", download),
+        web.get("/api/maintenance/preflight", preflight_status),
+        web.get("/api/maintenance/storage", storage_status),
         web.post("/api/maintenance/check", handler("check")),
         web.post("/api/maintenance/backups", handler("backup")),
         web.post("/api/maintenance/restore", handler("restore")),
