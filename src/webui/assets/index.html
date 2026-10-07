@@ -477,39 +477,60 @@
 
     <section class="page" id="page-maintenance">
       <section class="maintenance-banner">
-        <div><h2>先备份，再更新</h2><p>先准备运行环境和备份，再切换版本。所有操作在部署 Ooptra 的机器上执行。</p></div>
+        <div><p>更新时会自动备份，所有操作由部署机器执行。</p></div>
         <span class="chip" id="maintenance-capability">正在检查部署方式</span>
       </section>
+      <div class="maintenance-notices" aria-live="polite">
+        <p class="hint" id="maintenance-status" role="status">正在读取版本与备份，最长等待 15 秒…</p>
+        <p class="hint" id="maintenance-feedback" role="status"></p>
+        <div class="maintenance-job" id="maintenance-job" hidden role="status"><b id="maintenance-phase"></b><p id="maintenance-detail"></p></div>
+      </div>
       <div class="tool-workspace">
         <section class="card">
           <header class="card-head"><h3>版本更新</h3><span class="chip" id="maintenance-version">—</span></header>
-          <label class="field"><span>更新频道</span><select class="control" id="maintenance-channel"><option value="main">main · 正式版</option><option value="beta">beta · 测试版</option><option value="dev" selected>dev · 预览版</option></select></label>
+          <label class="field"><span>更新频道</span><select class="control" id="maintenance-channel"><option value="main">main · 正式版</option><option value="beta" selected>beta · 测试版</option><option value="dev">dev · 预览版</option></select></label>
           <p class="hint" id="maintenance-check-detail">先检查更新，再确认安装。</p>
-          <p class="hint" id="maintenance-update-metadata"></p>
-          <ul class="check-list" id="maintenance-health" aria-label="分层运行状态"></ul>
-          <div class="btn-row"><button class="btn ghost" id="maintenance-check" type="button">检查更新</button><button class="btn primary" id="maintenance-update" type="button" disabled>备份并更新</button></div>
-          <div class="maintenance-job" id="maintenance-job" hidden role="status"><b id="maintenance-phase"></b><p id="maintenance-detail"></p></div>
-          <details class="tool-details"><summary>部署预检查与手动更新</summary><p class="hint" id="maintenance-preflight-status" role="status">部署预检查尚未完成；可先检查更新和查看备份。</p><ul class="check-list" id="maintenance-checks"></ul><button class="btn ghost sm" id="maintenance-preflight-retry" type="button">重试部署预检查</button><p class="hint">自动升级需要官方 Git 仓库、虚拟环境、干净的代码和可写目录，并通过 <code>python launcher.py</code> 启动。其他部署方式可下载备份后，按 README 手动更新。</p></details>
+          <div class="btn-row maintenance-update-actions"><button class="btn primary" id="maintenance-check" type="button">检查更新</button><button class="btn ghost" id="maintenance-update" type="button" disabled>备份并更新</button></div>
+        </section>
+        <section class="card">
+          <header class="card-head"><h3>本地备份 <span class="hint" id="maintenance-backup-count"></span></h3><div class="btn-row"><button class="btn ghost sm" id="maintenance-status-retry" type="button">刷新</button><button class="btn primary sm" id="maintenance-backup" type="button">创建备份</button></div></header>
+          <p class="hint">包含配置、凭据和用户数据，请妥善保管。恢复会备份当前数据并重启；删除仅移除所选备份文件。</p>
+          <ul class="backup-list" id="maintenance-backups"><li class="empty">正在读取备份…</li></ul>
+          <div class="btn-row maintenance-pagination" id="maintenance-pagination-row" hidden><button class="btn ghost sm" id="maintenance-prev" type="button">上一页</button><p class="hint" id="maintenance-pagination"></p><button class="btn ghost sm" id="maintenance-next" type="button">下一页</button></div>
+        </section>
+      </div>
+      <details class="card maintenance-advanced" id="maintenance-advanced">
+        <summary>高级选项 <span>更新网络、部署诊断与存储清理</span></summary>
+        <div class="tool-workspace">
+        <div>
           <details class="tool-details"><summary>更新网络设置</summary>
-            <p class="hint">更新请求由运行 Ooptra 的部署机器发出。浏览器能打开 GitHub，不代表部署机器可访问。默认优先使用官方 GitHub；失败时自动尝试直连和已配置的镜像，目标提交仍由官方确认。</p>
-            <label class="field"><span>更新专用代理</span><input class="control" id="maintenance-network-proxy" type="password" autocomplete="new-password" placeholder="留空保留原代理；direct 表示直连"></label>
-            <label class="check-row"><input id="maintenance-network-clear-proxy" type="checkbox"><span>清除已保存代理，使用部署机器的环境代理</span></label>
-            <label class="field"><span>备用仓库镜像</span><input class="control" id="maintenance-network-mirror" type="url" placeholder="https://镜像站/仓库路径.git"></label>
-            <p class="hint">代理支持 HTTP、HTTPS、SOCKS URL；已有代理凭据不会回显。镜像必须是可供 Git 下载的完整 HTTPS 仓库地址，留空关闭。仅影响更新仓库访问，Python 依赖和浏览器下载仍使用各自网络设置。</p>
+            <p class="hint">选择 GitHub 加速地址后保存。第三方节点可用性会变化，请先测试；安装仍核对官方提交。</p>
+            <label class="field"><span>GitHub 加速</span><select class="control" id="maintenance-accelerator-mode"><option value="off">不使用 GitHub 加速</option><option value="on">使用 GitHub 加速</option><option value="repository">使用完整仓库镜像</option></select></label>
+            <div id="maintenance-accelerator-options" hidden>
+              <label class="field"><span>加速地址</span><select class="control" id="maintenance-accelerator-node"><option value="https://edgeone.gh-proxy.com">https://edgeone.gh-proxy.com</option><option value="https://hk.gh-proxy.com">https://hk.gh-proxy.com</option><option value="https://gh-proxy.com" selected>https://gh-proxy.com</option><option value="https://gh.dpik.top">https://gh.dpik.top</option><option value="custom">自定义</option></select></label>
+              <label class="field" id="maintenance-accelerator-custom-field" hidden><span>自定义加速地址</span><input class="control" id="maintenance-accelerator-custom" type="url" placeholder="https://你的加速站（不含 GitHub 仓库地址）"></label>
+            </div>
+            <label class="field" id="maintenance-mirror-field" hidden><span>完整 HTTPS Git 仓库镜像</span><input class="control" id="maintenance-network-mirror" type="url" placeholder="https://镜像站/仓库路径.git"></label>
+            <button class="btn ghost sm" id="maintenance-network-test" type="button" disabled>测试连通性</button><p class="hint" id="maintenance-network-test-status" role="status"></p>
+            <details class="tool-details"><summary>部署机器代理</summary>
+              <p class="hint">官方版本校验需要部署机器可访问 GitHub。加速节点用于代码下载；代理可帮助官方查询，留空保留已保存设置。</p>
+              <label class="field"><span>代理方式（与 GitHub 加速独立）</span><select class="control" id="maintenance-proxy-mode"><option value="keep">保持当前代理设置</option><option value="manual">使用手动代理</option><option value="environment">使用部署机器的环境代理</option><option value="direct">直连，不使用代理</option></select></label>
+              <label class="field"><span>更新专用代理</span><input class="control" id="maintenance-network-proxy" type="password" autocomplete="new-password" placeholder="留空保留原代理；direct 表示直连"></label>
+              <p class="hint">手动代理默认 http://127.0.0.1:7890，可自行修改；手动地址留空则直连，不使用代理。地址指向部署机器，关闭 GitHub 加速仍可使用代理。</p>
+              <label class="check-row"><input id="maintenance-network-clear-proxy" type="checkbox"><span>清除已保存代理，使用部署机器的环境代理</span></label>
+              <p class="hint">支持 HTTP、HTTPS、SOCKS URL。仅用于更新仓库；Python 依赖与浏览器下载使用各自的网络设置。</p>
+            </details>
             <div class="btn-row"><button class="btn primary sm" id="maintenance-network-save" type="button" disabled>保存更新网络设置</button><button class="btn ghost sm" id="maintenance-network-retry" type="button">重新读取</button></div>
             <p class="hint" id="maintenance-network-status" role="status">尚未读取更新网络配置。</p>
           </details>
-        </section>
-        <section class="card">
-          <header class="card-head"><h3>本地备份</h3><button class="btn primary sm" id="maintenance-backup" type="button">创建备份</button></header>
-          <p class="hint">保存配置、凭据和用户数据。备份包含密钥，请妥善保管；恢复前会再创建一份安全备份，并重启服务。</p>
-          <ul class="backup-list" id="maintenance-backups"><li class="empty">正在读取备份…</li></ul>
-          <div class="btn-row"><button class="btn ghost sm" id="maintenance-prev" type="button">上一页</button><p class="hint" id="maintenance-pagination"></p><button class="btn ghost sm" id="maintenance-next" type="button">下一页</button></div>
+          <details class="tool-details"><summary>部署预检查与手动更新</summary><p class="hint" id="maintenance-preflight-status" role="status">部署预检查尚未完成；可先检查更新和查看备份。</p><ul class="check-list" id="maintenance-checks"></ul><button class="btn ghost sm" id="maintenance-preflight-retry" type="button">重试部署预检查</button><p class="hint">自动升级需要官方 Git 仓库、虚拟环境、干净的代码和可写目录，并通过 <code>python launcher.py</code> 启动。其他部署方式可下载备份后，按 README 手动更新。</p></details>
+        </div>
+        <div>
           <details class="tool-details"><summary>存储与清理</summary><p class="hint" id="maintenance-storage" role="status">完整空间统计尚未完成。</p><button class="btn ghost sm" id="maintenance-storage-retry" type="button">重试空间统计</button><p class="hint">先查看可清理项目，再确认删除。运行环境和回滚材料受保护。</p><button class="btn ghost" id="maintenance-cleanup-preview" type="button">预览可清理项目</button><ul class="check-list" id="maintenance-cleanup-result"></ul><button class="btn warn" id="maintenance-cleanup-apply" type="button" hidden disabled>确认清理</button></details>
-          <p class="hint" id="maintenance-status" role="status">正在读取版本与备份，最长等待 15 秒…</p><button class="btn ghost sm" id="maintenance-status-retry" type="button">重试版本与备份</button>
-          <p class="hint" id="maintenance-feedback" role="status"></p>
-        </section>
-      </div>
+          <details class="tool-details"><summary>版本与运行详情</summary><p class="hint" id="maintenance-update-metadata"></p><ul class="check-list" id="maintenance-health" aria-label="分层运行状态"></ul></details>
+        </div>
+        </div>
+      </details>
     </section>
 
 <section class="page" id="page-config">

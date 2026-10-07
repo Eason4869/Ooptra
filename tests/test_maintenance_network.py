@@ -262,7 +262,7 @@ def test_fetch_deadline_never_resets_for_mirror(tmp_path, monkeypatch):
     with pytest.raises(ValueError):
         module.fetch_verified(tmp_path, "dev", SHA, 112.0, run,
                               settings=module.NetworkSettings("http://proxy.example:7890", "https://mirror.example/repo.git"))
-    assert len(attempts) == 3
+    assert len(attempts) == 4
     assert sum(attempts) <= 12.001
 
 
