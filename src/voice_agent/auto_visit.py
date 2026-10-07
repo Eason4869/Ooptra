@@ -1,4 +1,4 @@
-"""Low-frequency, bounded auto visits; one controller owns one voice room."""
+"""Bounded auto visits and a shared empty-room guard for all voice rooms."""
 
 from __future__ import annotations
 
@@ -51,6 +51,7 @@ class AutoVisitController:
         self._next_check: float | None = None
         self._leave_at: float | None = None
         self._empty_since: float | None = None
+        self._empty_room: tuple[int, int, str, str] | None = None
         self._visit_id = ""
         self._visit_area = ""
         self._visit_channel = ""
@@ -173,6 +174,7 @@ class AutoVisitController:
         await self._cancel_visit()
         self._next_check = None
         self._leave_at = None
+        self._empty_since = self._empty_room = None
 
     def set_bot_ready(self, ready: bool) -> None:
         if self._ready != ready:
@@ -186,6 +188,11 @@ class AutoVisitController:
         self._visit_wake.set()
 
     def notify_presence(self, area: str, channel: str) -> None:
+        room = self.agent.status()
+        if room.get("joined") and area == room.get("area") and channel == room.get("channel"):
+            # A member can enter and leave between polls; require a fresh quiet interval.
+            self._empty_since = None
+            self._wake.set()
         if area == self._visit_area and channel == self._visit_channel:
             self._visit_wake.set()
 
@@ -216,6 +223,7 @@ class AutoVisitController:
         self._visit_wake.set()
 
     async def on_operation(self, event: Any) -> None:
+        self._empty_since = self._empty_room = None
         if event.source == "manual":
             self._epoch += 1
             await self._cancel_visit()
@@ -231,13 +239,20 @@ class AutoVisitController:
                     return
                 self._last_action = "手动退房：该域进入较长冷却，其他域继续等待检查"
             else:
-                self._last_action = "手动房间由你控制"
+                self._last_action = "手动房间由你控制；独处 30 秒会自动退出"
             self._schedule_check()
+            if event.kind == "join":
+                # Manual API joins are possible even when voice/auto-visit switches are off.
+                await self.start()
         elif event.source == "system":
             self._epoch += 1
             await self._cancel_visit()
             self._visit_id = ""
             self._leave_at = self._empty_since = None
+        elif event.kind == "leave":
+            await self._cancel_visit()
+            self._visit_id = ""
+            self._leave_at = None
         self._wake.set()
 
     async def _sleep_or_wake(self, seconds: float, *, visit: bool = False) -> None:
@@ -279,6 +294,7 @@ class AutoVisitController:
 
     async def _run_loop(self) -> None:
         while True:
+            await self._check_empty_room()
             snapshot = self._snapshot()
             blocked = self._blocked(snapshot)
             if blocked:
@@ -287,7 +303,7 @@ class AutoVisitController:
                     self._last_action = blocked
                     self._phase = "cooldown" if self._cooling(
                         "global", snapshot["global_cooldown_until"]) else "waiting"
-                await self._sleep_or_wake(60)
+                await self._sleep_or_wake(5 if self.agent.status().get("joined") else 60)
                 continue
             if self._next_check is None:
                 self._schedule_check()
@@ -299,15 +315,15 @@ class AutoVisitController:
             await self._check_once()
             self._schedule_check()
 
-    async def _query_rooms(self, area: str) -> dict[str, list[Any]]:
+    async def _query_rooms(self, area: str, *, humans_only: bool = True) -> dict[str, list[Any]]:
         result = await asyncio.wait_for(
             self.agent._bot.channels.get_voice_channel_members(area=area), timeout=10)
         grouped = _field(result, "channel_members", None)
         if grouped is None:
-            grouped = _field(result, "channelMembers", {})
+            grouped = _field(result, "channelMembers", None)
         if not isinstance(grouped, Mapping):
             raise ValueError("语音成员响应不是频道列表")
-        self_uid = str(getattr(self.agent._bot.config, "person_uid", "") or "")
+        self_uid = str(getattr(getattr(self.agent._bot, "config", None), "person_uid", "") or "")
         rooms = {}
         for channel, members in grouped.items():
             if not isinstance(members, list):
@@ -316,7 +332,7 @@ class AutoVisitController:
             for member in members:
                 uid = str(_field(member, "uid", "") or "")
                 bot = _field(member, "is_bot", _field(member, "isBot", False))
-                if uid and uid != self_uid and str(bot).lower() not in {"true", "1"}:
+                if not humans_only or (uid and uid != self_uid and str(bot).lower() not in {"true", "1"}):
                     people.append(member)
             rooms[str(channel)] = people
         return rooms
@@ -429,9 +445,6 @@ class AutoVisitController:
                 if self._leave_at is not None and self.clock.monotonic() >= self._leave_at:
                     await self._finish_visit("scheduled")
                     return
-                if await self._room_empty_confirmed():
-                    await self._finish_visit("empty")
-                    return
                 self._phase = "active"
                 delay = max(0, min(60, (self._leave_at or self.clock.monotonic() + 60)
                                     - self.clock.monotonic()))
@@ -444,26 +457,77 @@ class AutoVisitController:
             if self.agent.is_auto_visit_current(visit_id):
                 await self._finish_visit("speech_error")
 
+    def _room_key(self) -> tuple[int, int, str, str] | None:
+        room = self.agent.status()
+        if not self._ready or self.agent._bot is None or not room.get("joined"):
+            return None
+        return (id(self.agent._bot), self.agent.operation_epoch,
+                room.get("area", ""), room.get("channel", ""))
+
     async def _room_empty_confirmed(self) -> bool:
+        key = self._room_key()
+        if key != self._empty_room:
+            self._empty_room, self._empty_since = key, None
+        if key is None:
+            self._empty_since = None
+            return False
+        self_uid = str(getattr(getattr(self.agent._bot, "config", None), "person_uid", "") or "")
+
+        async def only_self() -> bool:
+            # Include other bots: "no humans" is not the same as "only this bot".
+            rooms = await self._query_rooms(key[2], humans_only=False)
+            members = rooms.get(key[3], [])
+            return bool(self_uid and len(members) == 1
+                        and str(_field(members[0], "uid", "") or "") == self_uid)
+
         try:
-            rooms = await self._query_rooms(self._visit_area)
+            alone = await only_self()
         except Exception:
             self._empty_since = None
             return False
-        if rooms.get(self._visit_channel):
+        if not alone or key != self._room_key():
             self._empty_since = None
             return False
         now = self.clock.monotonic()
         if self._empty_since is None:
             self._empty_since = now
-        if now - self._empty_since < 120:
+        if now - self._empty_since < 30:
             return False
         try:
-            verified = await self._query_rooms(self._visit_area)
+            verified = await only_self()
         except Exception:
             self._empty_since = None
             return False
-        return not verified.get(self._visit_channel)
+        if not verified or key != self._room_key():
+            self._empty_since = None
+            return False
+        return self._empty_since is not None and self.clock.monotonic() - self._empty_since >= 30
+
+    async def _check_empty_room(self) -> None:
+        key = self._room_key()
+        if not await self._room_empty_confirmed() or key != self._room_key():
+            return
+        try:
+            source = "auto" if self.agent.status().get("join_source") == "auto" else "manual"
+            # Empty-room exits bypass farewell waits and short retries, regardless of ownership.
+            result = await self.agent.leave(source=source, expected_operation_epoch=key[1])
+            if not result.get("ok", False):
+                raise RuntimeError(result.get("error", "无人退房未成功"))
+            if source == "auto":
+                await self._cooldown_after_auto_exit(key[2])
+            self._last_action = "房间只剩 bot 持续 30 秒，已静默退出"
+        except Exception as exc:
+            self._last_error = str(exc)
+            logger.warning("empty room leave failed: %s", exc)
+        finally:
+            # A failed leave retains the room and waits another confirmed interval to retry.
+            self._empty_since = None
+
+    async def _cooldown_after_auto_exit(self, area: str) -> None:
+        seconds = self.rng.uniform(*effective_area(self.config, area)["auto_cooldown_minutes"]) * 60
+        await self._write("set_global_cooldown", self.clock.utcnow() + timedelta(seconds=seconds))
+        self._last_action = "自动退房，进入全实例休息"
+        self._phase = "cooldown"
 
     async def _finish_visit(self, reason: str) -> None:
         async with self._finish_lock:
@@ -473,7 +537,7 @@ class AutoVisitController:
             if not self.agent.begin_auto_retirement(visit_id):
                 return
             try:
-                if reason not in {"empty", "disconnect"}:
+                if reason != "disconnect":
                     self._phase = "waiting_reply"
                     try:
                         if not await self.agent.wait_for_reply_end(timeout=30):
@@ -499,11 +563,7 @@ class AutoVisitController:
                     await self.pause()
                     self._pause_reason = "退房失败，请检查当前语音状态后恢复"
                     return
-                seconds = self.rng.uniform(*effective_area(
-                    self.config, area)["auto_cooldown_minutes"]) * 60
-                await self._write("set_global_cooldown", self.clock.utcnow() + timedelta(seconds=seconds))
-                self._last_action = "自动退房，进入全实例休息"
-                self._phase = "cooldown"
+                await self._cooldown_after_auto_exit(area)
             finally:
                 if not self.agent.is_auto_visit_current(visit_id):
                     self._visit_id = ""

@@ -1,5 +1,6 @@
 """Room operations keep ownership, cancellation and observable success honest."""
 import asyncio
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -19,6 +20,9 @@ class Duplex:
 
     async def wait_tts_complete(self, timeout):
         return {"ok": True}
+
+    async def close(self):
+        return None
 
 
 def make_agent(tmp_path):
@@ -75,6 +79,69 @@ def test_old_visit_cannot_leave_new_room(tmp_path):
         assert not agent.is_auto_visit_current("old")
         assert "visit_id" not in agent.status()
         await agent.leave()
+    asyncio.run(run())
+
+
+def test_old_empty_room_check_cannot_leave_a_rejoined_room(tmp_path):
+    async def run():
+        agent = make_agent(tmp_path)
+        await agent.join("a", "c")
+        old_epoch = agent.operation_epoch
+        await agent.join("a", "c")
+        result = await agent.leave(expected_operation_epoch=old_epoch)
+        assert not result["ok"]
+        assert agent.status()["joined"] and agent.status()["channel"] == "c"
+        assert agent._bot.voice.leaves == 1
+        await agent.leave()
+    asyncio.run(run())
+
+
+def test_empty_guard_uses_real_agent_and_retries_failed_manual_exit(tmp_path):
+    async def run():
+        from voice_agent.auto_visit import AutoVisitController
+        from voice_agent.auto_visit_settings import parse_auto_visit_config
+        from voice_agent.auto_visit_state import AutoVisitStateStore
+
+        agent = make_agent(tmp_path)
+        agent._bot.config = SimpleNamespace(person_uid="bot")
+
+        async def members(area):
+            assert area == "a"
+            return {"channelMembers": {"c": [{"uid": "bot"}]}}
+
+        agent._bot.channels = SimpleNamespace(get_voice_channel_members=members)
+        elapsed = 0
+        clock = SimpleNamespace(
+            monotonic=lambda: elapsed,
+            utcnow=lambda: datetime(2026, 10, 7, tzinfo=timezone.utc) + timedelta(seconds=elapsed),
+            sleep=asyncio.sleep,
+        )
+        store = AutoVisitStateStore(tmp_path / "visits.json")
+        ctrl = AutoVisitController(agent, parse_auto_visit_config({}), store, clock=clock)
+        agent.set_operation_callback(ctrl.on_operation)
+        ctrl.set_bot_ready(True)
+        try:
+            await agent.join("a", "c")
+            await ctrl._check_empty_room()
+            agent._bot.voice.fail_leave = True
+            elapsed = 30
+            await ctrl._check_empty_room()
+            assert agent.status()["joined"]
+            assert "leave failed" in ctrl.status()["last_error"]
+            assert "a" not in store.snapshot(clock.utcnow())["area_cooldowns"]
+            agent._bot.voice.fail_leave = False
+            await ctrl._check_empty_room()
+            elapsed = 59
+            await ctrl._check_empty_room()
+            assert agent.status()["joined"]
+            elapsed = 60
+            await ctrl._check_empty_room()
+            assert not agent.status()["joined"]
+            assert agent._bot.voice.leaves == 1
+            assert store.snapshot(clock.utcnow())["area_cooldowns"]["a"]
+        finally:
+            await ctrl.stop()
+            await agent.stop()
     asyncio.run(run())
 
 

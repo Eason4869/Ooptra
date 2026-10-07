@@ -4,6 +4,8 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+import pytest
+
 from voice_agent.auto_visit import AutoVisitController
 from voice_agent.auto_visit_settings import parse_auto_visit_config
 from voice_agent.auto_visit_state import AutoVisitStateStore
@@ -105,7 +107,9 @@ class FakeAgent:
                                                 channel=channel, visit_id=visit_id))
         return {"ok": True, "area": area, "channel": channel}
 
-    async def leave(self, *, source="manual", expected_visit_id=None):
+    async def leave(self, *, source="manual", expected_visit_id=None, expected_operation_epoch=None):
+        if expected_operation_epoch is not None and expected_operation_epoch != self.operation_epoch:
+            return {"ok": False, "error": "stale operation"}
         if expected_visit_id and not self.is_auto_visit_current(expected_visit_id):
             return {"ok": False, "stale": True}
         if self.fail_leave:
@@ -263,19 +267,30 @@ def test_manual_takeover_invalidates_previous_auto_exit(tmp_path):
     asyncio.run(run())
 
 
-def test_empty_room_requires_two_minutes_then_silent_leave(tmp_path):
+@pytest.mark.parametrize("source", ["auto", "manual"])
+def test_only_self_for_thirty_seconds_leaves_silently_with_original_cooldown(tmp_path, source):
     async def run():
-        ctrl, agent, clock, _, _ = scenario(tmp_path)
-        await ctrl._check_once()
-        agent.rooms["a"]["one"] = []
-        assert await ctrl._room_empty_confirmed() is False
-        clock.advance(119)
-        assert await ctrl._room_empty_confirmed() is False
+        ctrl, agent, clock, _, store = scenario(tmp_path)
+        if source == "auto":
+            await ctrl._check_once()
+        else:
+            await agent.join("a", "one")
+        agent.rooms["a"]["one"] = [{"uid": "bot"}]
+        await ctrl._check_empty_room()
+        clock.advance(29)
+        await ctrl._check_empty_room()
+        assert agent.joined
         clock.advance(1)
-        assert await ctrl._room_empty_confirmed() is True
-        await ctrl._finish_visit("empty")
+        await ctrl._check_empty_room()
         assert not agent.joined
         assert ("speech", "leave", "拜拜，我下了") not in agent.calls
+        snapshot = store.snapshot(clock.utcnow())
+        assert snapshot["daily_count"] == (1 if source == "auto" else 0)
+        if source == "auto":
+            assert snapshot["global_cooldown_until"] is not None
+        else:
+            assert snapshot["global_cooldown_until"] is None
+            assert snapshot["area_cooldowns"]["a"] is not None
         await ctrl.stop()
     asyncio.run(run())
 
@@ -398,7 +413,7 @@ def test_unknown_membership_resets_empty_confirmation(tmp_path):
     async def run():
         ctrl, agent, clock, _, _ = scenario(tmp_path)
         await ctrl._check_once()
-        agent.rooms["a"]["one"] = []
+        agent.rooms["a"]["one"] = [{"uid": "bot"}]
         assert not await ctrl._room_empty_confirmed()
         clock.advance(100)
         agent.fail_queries.add("a")
@@ -406,8 +421,165 @@ def test_unknown_membership_resets_empty_confirmation(tmp_path):
         agent.fail_queries.clear()
         clock.advance(30)
         assert not await ctrl._room_empty_confirmed()
-        clock.advance(120)
+        clock.advance(30)
         assert await ctrl._room_empty_confirmed()
+        await ctrl.stop()
+    asyncio.run(run())
+
+
+def test_returning_member_resets_empty_countdown(tmp_path):
+    async def run():
+        ctrl, agent, clock, _, _ = scenario(tmp_path)
+        await agent.join("a", "one")
+        agent.rooms["a"]["one"] = [{"uid": "bot"}]
+        await ctrl._check_empty_room()
+        clock.advance(29)
+        agent.rooms["a"]["one"].append({"uid": "human"})
+        await ctrl._check_empty_room()
+        agent.rooms["a"]["one"] = [{"uid": "bot"}]
+        clock.advance(1)
+        await ctrl._check_empty_room()
+        clock.advance(29)
+        await ctrl._check_empty_room()
+        assert agent.joined
+        clock.advance(1)
+        await ctrl._check_empty_room()
+        assert not agent.joined
+        await ctrl.stop()
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("members", [
+    [{"uid": "bot"}, {"uid": "other-bot", "isBot": True}],
+    [{"uid": "bot"}, {}],
+    [],
+    [{"uid": "human"}],
+])
+def test_other_bots_or_unconfirmed_self_never_count_as_only_self(tmp_path, members):
+    async def run():
+        ctrl, agent, clock, _, _ = scenario(tmp_path)
+        await agent.join("a", "one")
+        agent.rooms["a"]["one"] = members
+        await ctrl._check_empty_room()
+        clock.advance(60)
+        await ctrl._check_empty_room()
+        assert agent.joined
+        await ctrl.stop()
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("change", ["switch", "return", "event", "failure"])
+def test_empty_exit_rechecks_room_and_ownership_before_leaving(tmp_path, change):
+    async def run():
+        ctrl, agent, clock, _, _ = scenario(tmp_path)
+        await agent.join("a", "one")
+        agent.rooms["a"]["one"] = [{"uid": "bot"}]
+        await ctrl._check_empty_room()
+        clock.advance(30)
+        original = agent.members
+        queries = 0
+
+        async def changing_members(area):
+            nonlocal queries
+            queries += 1
+            if queries == 2:
+                if change == "switch":
+                    await agent.join("b", "two")
+                elif change == "return":
+                    agent.rooms["a"]["one"].append({"uid": "human"})
+                elif change == "event":
+                    ctrl.notify_presence("a", "one")
+                else:
+                    raise OSError("unknown membership")
+            return await original(area)
+
+        agent._bot.channels.get_voice_channel_members = changing_members
+        await ctrl._check_empty_room()
+        assert agent.joined
+        assert not any(call[0] == "leave" for call in agent.calls)
+        await ctrl.stop()
+    asyncio.run(run())
+
+
+def test_manual_empty_monitor_runs_when_auto_visits_are_off_and_paused(tmp_path):
+    async def run():
+        ctrl, agent, clock, _, _ = scenario(tmp_path, raw={"areas": {}})
+        agent.settings.enabled = False
+        await ctrl.pause()
+        agent.rooms["a"]["one"] = [{"uid": "bot"}]
+        await agent.join("a", "one")
+        await turns()
+        for _ in range(6):
+            clock.advance(5)
+            # Disk persistence runs in a thread at retirement; yield real time too.
+            for _ in range(20):
+                await asyncio.sleep(0.001)
+        assert not agent.joined
+        assert ctrl.status()["paused"]
+        await ctrl.stop()
+    asyncio.run(run())
+
+
+def test_same_room_rejoin_starts_a_fresh_empty_countdown(tmp_path):
+    async def run():
+        ctrl, agent, clock, _, _ = scenario(tmp_path)
+        await agent.join("a", "one")
+        agent.rooms["a"]["one"] = [{"uid": "bot"}]
+        await ctrl._check_empty_room()
+        clock.advance(29)
+        await agent.join("a", "one")
+        await ctrl._check_empty_room()
+        clock.advance(1)
+        await ctrl._check_empty_room()
+        assert agent.joined
+        clock.advance(29)
+        await ctrl._check_empty_room()
+        assert not agent.joined
+        await ctrl.stop()
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("after_failure", ["member_returns", "query_unknown"])
+def test_failed_auto_empty_exit_does_not_retry_when_presence_changes(tmp_path, after_failure):
+    async def run():
+        ctrl, agent, clock, _, _ = scenario(tmp_path)
+        await ctrl._check_once()
+        agent.rooms["a"]["one"] = [{"uid": "bot"}]
+        await ctrl._check_empty_room()
+        original = agent.leave
+        attempts = 0
+
+        async def fails_once(**kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise OSError("leave failed")
+            return await original(**kwargs)
+
+        agent.leave = fails_once
+        clock.advance(30)
+        departure = asyncio.create_task(ctrl._check_empty_room())
+        await turns()
+        assert attempts == 1
+        if after_failure == "member_returns":
+            agent.rooms["a"]["one"].append({"uid": "human"})
+            ctrl.notify_presence("a", "one")
+        else:
+            agent.fail_queries.add("a")
+        clock.advance(2)
+        await turns()
+        await asyncio.wait_for(departure, timeout=1)
+        assert agent.joined
+        await ctrl._check_empty_room()
+        clock.advance(60)
+        await ctrl._check_empty_room()
+        assert agent.joined and attempts == 1
+        agent.fail_queries.clear()
+        agent.rooms["a"]["one"] = [{"uid": "bot"}]
+        await ctrl._check_empty_room()
+        clock.advance(30)
+        await ctrl._check_empty_room()
+        assert not agent.joined and attempts == 2
         await ctrl.stop()
     asyncio.run(run())
 

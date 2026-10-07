@@ -741,14 +741,19 @@ class VoiceAgent:
         self._cooldown_until = 0.0
         self._pending_event.clear()
 
-    async def leave(self, *, source: str = "manual", expected_visit_id: str | None = None) -> dict[str, Any]:
+    async def leave(self, *, source: str = "manual", expected_visit_id: str | None = None,
+                    expected_operation_epoch: int | None = None) -> dict[str, Any]:
         self._ensure_operations()
+        if expected_operation_epoch is not None and expected_operation_epoch != self._operation_epoch:
+            return {"ok": False, "error": "stale operation"}
         # A stale controller must not cancel an announcement in the new room.
         if expected_visit_id is not None and not self.is_auto_visit_current(expected_visit_id):
             return {"ok": False, "error": "stale visit"}
         await self._cancel_voice_control()
         await self._cancel_announcement()
         async with self._operation_lock:
+            if expected_operation_epoch is not None and expected_operation_epoch != self._operation_epoch:
+                return {"ok": False, "error": "stale operation"}
             if expected_visit_id is not None and not self.is_auto_visit_current(expected_visit_id):
                 return {"ok": False, "error": "stale visit"}
             was_joined = self._joined
