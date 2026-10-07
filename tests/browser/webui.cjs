@@ -155,10 +155,13 @@ async function main() {
     await page.locator('#dialog-yes').click();
     await page.waitForFunction(() => !document.querySelector('#maintenance-cleanup-preview').disabled);
     assert(requests.some(item => item.endpoint === '/api/maintenance/cleanup/apply' && item.body.token === 'fixture-cleanup'));
+    slowMaintenance = true;
+    await page.evaluate(() => toast('旧错误提示', 'fixture offline', 'err'));
     failures.add('/api/maintenance/check');
     await page.locator('#maintenance-check').click();
-    await page.getByText('fixture offline', {exact: true}).first().waitFor();
+    await page.waitForFunction(() => document.querySelector('#maintenance-feedback').textContent.includes('fixture offline'));
     assert.match(await page.locator('#maintenance-feedback').textContent(), /fixture offline/);
+    slowMaintenance = false;
     failures.clear();
     job = {phase: 'checking', detail: '重启中'};
     await page.evaluate(() => window.refreshMaintenance(true));
