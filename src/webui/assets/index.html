@@ -220,14 +220,14 @@
           <option value="ERROR">仅错误</option>
         </select>
         <label class="switch"><input type="checkbox" id="log-follow" checked /><span>实时跟随</span></label>
-        <label class="switch"><input type="checkbox" id="log-wrap" /><span>自动换行</span></label>
+        <label class="switch"><input type="checkbox" id="log-wrap" checked /><span>自动换行</span></label>
         <span class="spacer"></span>
         <span class="hint" id="log-status"></span>
         <button class="btn ghost sm" id="log-clear">清屏</button>
         <button class="btn ghost sm" id="log-download">下载</button>
       </div>
       <div class="logwrap">
-        <div class="logview" id="log-view"></div>
+        <div class="logview wrap" id="log-view"></div>
         <button class="jump" id="log-jump" hidden>↓ 回到底部</button>
       </div>
     </section>
@@ -478,7 +478,12 @@
       <div class="maintenance-notices" aria-live="polite">
         <p class="hint" id="maintenance-status" role="status">正在读取版本与备份，最长等待 15 秒…</p>
         <p class="hint" id="maintenance-feedback" role="status"></p>
-        <div class="maintenance-job" id="maintenance-job" hidden role="status"><b id="maintenance-phase"></b><p id="maintenance-detail"></p></div>
+        <div class="maintenance-job" id="maintenance-job" hidden role="status">
+          <div class="maintenance-progress-head"><b id="maintenance-phase"></b><span id="maintenance-progress-label"></span></div>
+          <div class="maintenance-progress-track"><progress id="maintenance-progress" max="100" value="0" aria-label="维护预计进度"></progress></div>
+          <p id="maintenance-detail"></p>
+          <small id="maintenance-progress-hint">按执行阶段估算，非下载百分比；耗时取决于网络与依赖安装。</small>
+        </div>
       </div>
       <div class="tool-workspace">
         <section class="card">
