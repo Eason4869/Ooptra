@@ -66,6 +66,22 @@ class BackupStore:
             raise ValueError("备份路径无效")
         return target
 
+    def delete(self, backup_id: str) -> None:
+        """Only unlink a regular backup file inside the original, unlinked directory."""
+        target = self.path(backup_id)
+        for path in (target, *target.parents):
+            if path == self.root:
+                break
+            try:
+                info = path.lstat()
+            except FileNotFoundError:
+                raise ValueError("备份不存在") from None
+            if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+                raise ValueError("备份路径不能包含链接或联接目录")
+        if not stat.S_ISREG(target.lstat().st_mode):
+            raise ValueError("备份不存在或不是普通文件")
+        target.unlink()
+
     def _target(self, name: str) -> Path:
         part = PurePosixPath(name)
         if (not name or "\\" in name or ":" in name or part.is_absolute()
