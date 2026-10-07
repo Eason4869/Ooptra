@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from webui import update_check
 
 
@@ -60,3 +62,17 @@ def test_date_dev_compares_stable_updates_against_release_base(monkeypatch):
     assert update_check._is_newer("3.0.2", "261007-dev") is False
     assert update_check._is_newer("261008-dev", "261007-dev") is True
     assert update_check._is_newer("261006-beta", "261007-dev") is False
+
+
+@pytest.mark.parametrize("channel", ["beta", "dev"])
+def test_revision_date_versions_use_the_stable_release_base(monkeypatch, channel):
+    monkeypatch.setattr(update_check, "RELEASE_BASE_VERSION", "3.2.1")
+    current = f"261007.2-{channel}"
+    assert update_check._is_newer("v3.2.2", current) is True
+    assert update_check._is_newer("3.2.1", current) is False
+    assert update_check._is_newer("3.2.0", current) is False
+    assert update_check._is_newer(f"261007.3-{channel}", current) is True
+    assert update_check._is_newer(f"261008-{channel}", current) is True
+    assert update_check._is_newer(f"261007.1-{channel}", current) is False
+    assert update_check._is_newer(current, current) is False
+    assert update_check._is_newer(current, f"261007-{channel}") is True
