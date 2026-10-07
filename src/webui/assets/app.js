@@ -12,6 +12,7 @@ const PAGE_META = {
   voice: ['语音台', '手动对话、自动串门、房间成员与共享记忆'],
   config: ['配置', '连接 / 语音模型 / 系统；常用项直接改'],
   account: ['账号', '查看凭据状态，或重新登录 Oopz'],
+  maintenance: ['更新与备份', '准备、切换与恢复，在部署机器上完成维护'],
 };
 const GROUP_TITLE = { oopz: 'Oopz 账号与事件', onebot: 'OneBot v11 桥接', webui: 'Web 控制台', voice: '语音对话 Agent', voice_api: '语音 HTTP API' };
 
@@ -38,16 +39,25 @@ function withToken(path) {
 }
 
 async function api(path, opts = {}) {
-  const res = await fetch(withToken(path), {
-    method: opts.method || 'GET',
-    headers: opts.body ? { 'Content-Type': 'application/json' } : {},
-    body: opts.body ? JSON.stringify(opts.body) : undefined,
-  });
-  let payload = null;
-  try { payload = await res.json(); } catch (err) { payload = null; }
-  if (res.status === 401) throw new AuthError('需要访问令牌');
-  if (!res.ok) throw new Error((payload && payload.error) || ('HTTP ' + res.status));
-  return payload || {};
+  const controller = opts.timeout ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), opts.timeout) : null;
+  try {
+    const res = await fetch(withToken(path), {
+      method: opts.method || 'GET',
+      headers: opts.body ? { 'Content-Type': 'application/json' } : {},
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+      signal: controller?.signal,
+    });
+    let payload = null;
+    try { payload = await res.json(); }
+    catch (err) { if (controller?.signal.aborted) throw err; }
+    if (res.status === 401) throw new AuthError('需要访问令牌');
+    if (!res.ok) throw new Error((payload && payload.error) || ('HTTP ' + res.status));
+    return payload || {};
+  } catch (err) {
+    if (controller?.signal.aborted) throw new Error('请求超过 ' + (opts.timeout / 1000) + ' 秒，请重试。');
+    throw err;
+  } finally { if (timer !== null) clearTimeout(timer); }
 }
 
 function toast(title, text, kind) {
@@ -322,6 +332,7 @@ function switchPage(name, tab) {
   else stopLogStream();
   if (name === 'config') loadConfig();
   if (name === 'account') refreshCredentials();
+  if (name === 'maintenance' && window.refreshMaintenance) window.refreshMaintenance();
   if (name === 'voice') {
     if (tab) switchVoiceTab(tab);
     refreshVoiceStatus();
@@ -475,6 +486,7 @@ async function refreshStatus() {
     renderRailMeta(healthy ? 'ok' : (rt.running ? 'warn' : 'err'), healthy ? '链路正常' : (rt.running ? '部分异常' : '桥接未运行'));
     syncConfigChips();
   }
+  if (isPage('maintenance') && window.refreshMaintenance) await window.refreshMaintenance();
   if (isPage('voice')) {
     await _origRefreshVoiceStatus();
     if ($('vpane-auto-visit').classList.contains('is-active')) await refreshAutoVisit(false);
@@ -1113,35 +1125,8 @@ function openGithubRepo() {
 }
 
 async function checkUpdate() {
-  const btn = $('btn-check-update');
-  if (btn) btn.disabled = true;
-  try {
-    toast('正在检查更新', '查询 GitHub 仓库…', 'ok');
-    const data = await api('/api/update');
-    const current = data.current_version || '';
-    const latest = data.latest_version || '';
-    if (data.update_available) {
-      const url = data.release_url || data.branch_url || data.repo_url || GITHUB_REPO_URL;
-      toast('发现新版本', '当前 v' + current + ' → 最新 v' + latest, 'warn');
-      if (await confirmDialog('发现新版本', '当前 v' + current + '，最新 v' + latest + '。是否打开 GitHub 仓库查看？', '打开 GitHub')) {
-        window.open(url, '_blank', 'noopener');
-      }
-    } else if (data.ok) {
-      toast('已是最新版本', data.message || ('当前 v' + current), 'ok');
-    } else {
-      toast('检查更新失败', data.error || '未知错误', 'err');
-      if (await confirmDialog('检查更新失败', (data.error || '无法连接 GitHub') + '。是否直接打开 GitHub 仓库？', '打开 GitHub')) {
-        window.open(data.repo_url || GITHUB_REPO_URL, '_blank', 'noopener');
-      }
-    }
-  } catch (err) {
-    toast('检查更新失败', err.message, 'err');
-    if (await confirmDialog('检查更新失败', err.message + '。是否直接打开 GitHub 仓库？', '打开 GitHub')) {
-      window.open(GITHUB_REPO_URL, '_blank', 'noopener');
-    }
-  } finally {
-    if (btn) btn.disabled = false;
-  }
+  await switchPage('maintenance');
+  if (window.checkMaintenanceUpdate) await window.checkMaintenanceUpdate();
 }
 
 async function boot() {

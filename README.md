@@ -52,11 +52,34 @@ Ooptra 将 Oopz 消息接入 **OneBot v11**，通过反向 WebSocket 对接机�
 
 ### 1. 获取代码
 
+选择一个频道执行对应的克隆命令：
+
+正式版（`main`，本 README 对应 `3.1.0`）：
+
 ```bash
-git clone https://github.com/Eason4869/Ooptra.git
+git clone -b main https://github.com/Eason4869/Ooptra.git
+```
+
+测试版（`beta`）：
+
+```bash
+git clone -b beta https://github.com/Eason4869/Ooptra.git
+```
+
+预览版（`dev`）：
+
+```bash
+git clone -b dev https://github.com/Eason4869/Ooptra.git
+```
+
+进入刚克隆的目录并创建虚拟环境：
+
+```bash
 cd Ooptra
 python -m venv .venv
 ```
+
+测试版和开发预览可能存在未完成的改动，已有配置与数据请先备份。
 
 ### 2. 安装依赖并生成配置
 
@@ -87,13 +110,17 @@ python -m playwright install chromium
 ### 3. 启动并连接
 
 ```bash
-python main.py
+python launcher.py
 ```
+
+在激活的虚拟环境中使用 `launcher.py`，才能通过 WebUI「维护」执行备份、更新与失败回滚。自动更新还要求官方 Git 仓库、干净的工作区、可写目录及足够磁盘空间；预检查不通过时，请先处理页面列出的原因。配置和凭据放在已忽略的 `config.py`、`private_key.py` 与 `data/`，不需提交到 Git。
+
+`python main.py` 仍可直接启动；这种方式可查看维护信息和创建备份，自动更新与恢复需要改用 `launcher.py`。切换正式版、测试版或开发预览时会显示确认提示，跨分支切换可能降级。
 
 打开 **`http://127.0.0.1:3090`**，在「配置 → 连接」填写对端反向 WS 地址，点击「保存并重新连接」。
 概览页显示「OneBot v11 反向 WS」已接入，即连接成功。
 
-Windows 可双击 `start_silent.vbs` 后台启动；开机自启与其他维护说明见[配置与维护](docs/operations.md)。
+Windows 可双击 `start_silent.vbs` 后台启动管理器，支持网页自动更新。开机自启与其他维护说明见[配置与维护](docs/operations.md)。
 
 ## 对端对接
 
@@ -116,9 +143,10 @@ Ooptra 主动连接，对端需开启 **OneBot v11 反向 WebSocket 服务端**�
 | 配置 | 连接、语音模型、系统设置；不常用项位于「高级选项」 |
 | 账号 | 凭据状态、账号密码登录、网页版登录 |
 | 语音台 | 会话控制、自动串门、房间成员、人格与记忆 |
+| 维护 | 按分支检查更新、备份和恢复、部署预检查、存储清理 |
 
 右上角可切换暗色模式，选择保存在当前浏览器。侧栏「维护与账号」提供重连、检查更新和退出登录。
-**检查更新只查询 GitHub Release / 标签，不会自动下载、安装，也不会检测仅推送到 main 的代码更新。**
+侧栏快捷「检查更新」与「维护」页使用同一更新来源，按 `main` 正式版、`beta` 测试版、`dev` 开发预览的最新提交检查并安装更新。默认选择当前安装分支，切换来源后需重新检查并确认。准备环境与备份期间服务继续运行，准备完成后关闭当前会话、切换版本，并核对新进程身份和本地启动状态；本地启动失败时回滚，外部连接暂时离线会显示降级状态。
 
 局域网访问：将 `WEBUI_CONFIG.host` 设为 `0.0.0.0`，**同时设置 `token`**，然后打开
 `http://<部署机器的 IP>:3090/?token=<token>`。默认 `127.0.0.1` 仅允许本机访问。
@@ -181,7 +209,7 @@ pytest -q
 pyright  # 可选：类型检查
 ```
 
-CI 在 PR 和 `main` / `dev` 推送时执行 Ruff 与 pytest，覆盖 Ubuntu（Python 3.10 / 3.13）和 Windows（Python 3.13）。
+CI 在 PR 和 `main` / `beta` / `dev` 推送时执行 Ruff 与 pytest，覆盖 Ubuntu（Python 3.10 / 3.13）和 Windows（Python 3.13），并在独立浏览器中验证维护页交互。
 源码目录与测试注意事项见[开发说明](docs/operations.md#开发说明)。
 
 ## 许可与鸣谢

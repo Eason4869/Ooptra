@@ -52,7 +52,7 @@ If delaySeconds > 0 Then WScript.Sleep delaySeconds * 1000
 ' Window style 0 = hidden. cmd /c is only here to capture stray
 ' stdout/stderr; the bot's own logging still goes to logs\oopz_bot.log.
 shell.CurrentDirectory = baseDir
-cmd = "cmd /c " & Q(Q(pythonExe) & " main.py > " & Q(stdoutLog) & " 2>&1")
+cmd = "cmd /c " & Q(Q(pythonExe) & " launcher.py > " & Q(stdoutLog) & " 2>&1")
 shell.Run cmd, 0, False
 
 

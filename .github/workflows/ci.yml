@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main, beta, dev]
   pull_request:
 
 jobs:
@@ -37,9 +37,29 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - name: 安装依赖
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
       - name: pytest
         run: pytest -v -o faulthandler_timeout=60
+
+  updater-browser:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install isolated browser test dependencies
+        run: |
+          npm install --prefix .browser-ci --no-audit --no-fund playwright@1.63.0
+          .browser-ci/node_modules/.bin/playwright install --with-deps chromium
+      - name: Updater browser interactions
+        env:
+          OOPTRA_PLAYWRIGHT_MODULE: ${{ github.workspace }}/.browser-ci/node_modules/playwright
+        run: node tests/browser/maintenance.cjs

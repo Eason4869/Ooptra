@@ -52,11 +52,15 @@ class WebUIConsole:
         *,
         config: dict[str, Any] | None = None,
         voice_runtime: Any = None,
+        shutdown: Any = None,
     ) -> None:
         self._state = state
         self._controller = controller
         self._config = config if isinstance(config, dict) else getattr(runtime_config, "WEBUI_CONFIG", {}) or {}
         self._voice_runtime = voice_runtime
+        self._shutdown = shutdown
+        self._bootstrap_ready = False
+        self._maintenance = None
         self._tailer = LogTailer(LOGS_DIR)
         self._login = OopzLoginService(controller, state)
         self._token = ""
@@ -68,6 +72,14 @@ class WebUIConsole:
     # ------------------------------------------------------------------
     # 生命周期
     # ------------------------------------------------------------------
+
+    @property
+    def bootstrap_ready(self) -> bool:
+        return self._bootstrap_ready
+
+    def set_bootstrap_ready(self, ready: bool) -> None:
+        """The entrypoint marks local initialization complete, independently of remote links."""
+        self._bootstrap_ready = bool(ready)
 
     @property
     def base_url(self) -> str:
@@ -95,7 +107,14 @@ class WebUIConsole:
                 self._host,
             )
 
-        app = web.Application(middlewares=[self._auth_middleware])
+        app = web.Application(middlewares=[self._auth_middleware], client_max_size=3 * 1024 * 1024)
+        from webui.maintenance import MaintenanceService, mount_maintenance_routes
+
+        self._maintenance = MaintenanceService(PROJECT_ROOT, shutdown=self._shutdown,
+                                               port=self._port, host=self._host, token=self._token,
+                                               runtime_status=self._controller.snapshot,
+                                               bootstrap_ready=lambda: self.bootstrap_ready)
+        mount_maintenance_routes(app, self._maintenance)
         app.add_routes(
             [
                 web.get("/", self._handle_index),
@@ -145,6 +164,9 @@ class WebUIConsole:
         logger.info("Web 控制台已启动：%s%s", self.base_url, suffix)
 
     async def stop(self) -> None:
+        self.set_bootstrap_ready(False)
+        if self._maintenance is not None:
+            await self._maintenance.close()
         await self._login.shutdown()
         if self._runner is not None:
             with contextlib.suppress(Exception):
@@ -162,6 +184,8 @@ class WebUIConsole:
         protected = path.startswith("/api/") or path.startswith(
             ("/voice/", "/health", "/oopz/", "/persona", "/memory")
         )
+        if path.startswith("/api/maintenance") and not self._token and not _is_loopback(request.remote or ""):
+            return web.json_response({"ok": False, "error": "远程维护需要先配置 WebUI 访问令牌"}, status=403)
         if not self._token or not protected:
             return await handler(request)
 
@@ -212,56 +236,60 @@ class WebUIConsole:
     async def _handle_status(self, _request: web.Request) -> web.StreamResponse:
         oopz_cfg = getattr(runtime_config, "OOPZ_CONFIG", {}) or {}
         onebot_cfg = getattr(runtime_config, "ONEBOT_V11_CONFIG", {}) or {}
-        return web.json_response(
-            {
-                "ok": True,
-                "bridge": self._controller.snapshot(),
-                "process": {
-                    "version": __version__,
-                    "pid": os.getpid(),
-                    "python": platform.python_version(),
-                    "executable": sys.executable,
-                    "platform": platform.platform(),
-                    "project_root": PROJECT_ROOT,
-                    "log_file": os.path.join(LOGS_DIR, "oopz_bot.log"),
+        payload = {
+            "ok": True,
+            "bridge": self._controller.snapshot(),
+            "process": {
+                "version": __version__,
+                "pid": os.getpid(),
+                "update_id": os.environ.get("OOPTRA_UPDATE_ID", ""),
+                "python": platform.python_version(),
+                "executable": sys.executable,
+                "bootstrap_ready": self.bootstrap_ready,
+                "platform": platform.platform(),
+                "project_root": PROJECT_ROOT,
+                "log_file": os.path.join(LOGS_DIR, "oopz_bot.log"),
+            },
+            "config": {
+                "webui": {
+                    "host": self._host,
+                    "port": self._port,
+                    "token_required": bool(self._token),
                 },
-                "config": {
-                    "webui": {
-                        "host": self._host,
-                        "port": self._port,
-                        "token_required": bool(self._token),
-                    },
-                    "oopz": {
-                        "default_area": str(oopz_cfg.get("default_area") or ""),
-                        "default_channel": str(oopz_cfg.get("default_channel") or ""),
-                        "proxy": str(oopz_cfg.get("proxy") or ""),
-                    },
-                    "voice": self._voice_payload(),
-                    "onebot": {
-                        "enabled": bool(onebot_cfg.get("enabled", False)),
-                        "enable_ws_reverse": bool(onebot_cfg.get("enable_ws_reverse", False)),
-                        "ws_reverse_url": str(onebot_cfg.get("ws_reverse_url") or ""),
-                        "ws_reverse_targets": [
-                            str(onebot_cfg.get(key) or "")
-                            for key in (
-                                "ws_reverse_url",
-                                "ws_reverse_api_url",
-                                "ws_reverse_event_url",
-                            )
-                            if str(onebot_cfg.get(key) or "").strip()
-                        ],
-                        "local_server": {
-                            "enabled": bool(
-                                onebot_cfg.get("enable_http") or onebot_cfg.get("enable_ws")
-                            ),
-                            "host": str(onebot_cfg.get("host") or ""),
-                            "port": int(onebot_cfg.get("port") or 0),
-                        },
-                        "db_path": str(onebot_cfg.get("db_path") or ""),
-                    },
+                "oopz": {
+                    "default_area": str(oopz_cfg.get("default_area") or ""),
+                    "default_channel": str(oopz_cfg.get("default_channel") or ""),
+                    "proxy": str(oopz_cfg.get("proxy") or ""),
                 },
-            }
-        )
+                "voice": self._voice_payload(),
+                "onebot": {
+                    "enabled": bool(onebot_cfg.get("enabled", False)),
+                    "enable_ws_reverse": bool(onebot_cfg.get("enable_ws_reverse", False)),
+                    "ws_reverse_url": str(onebot_cfg.get("ws_reverse_url") or ""),
+                    "ws_reverse_targets": [
+                        str(onebot_cfg.get(key) or "")
+                        for key in (
+                            "ws_reverse_url",
+                            "ws_reverse_api_url",
+                            "ws_reverse_event_url",
+                        )
+                        if str(onebot_cfg.get(key) or "").strip()
+                    ],
+                    "local_server": {
+                        "enabled": bool(
+                            onebot_cfg.get("enable_http") or onebot_cfg.get("enable_ws")
+                        ),
+                        "host": str(onebot_cfg.get("host") or ""),
+                        "port": int(onebot_cfg.get("port") or 0),
+                    },
+                    "db_path": str(onebot_cfg.get("db_path") or ""),
+                },
+            },
+        }
+        from webui.maintenance_worker import runtime_health
+
+        payload["health"] = runtime_health(payload)
+        return web.json_response(payload)
 
     def _voice_payload(self) -> dict[str, Any]:
         runtime = self._voice_runtime

@@ -5,6 +5,7 @@ import contextlib
 import os
 import signal
 import sys
+import threading
 
 if sys.platform == "win32":
     os.system("chcp 65001 >nul 2>&1")
@@ -42,6 +43,20 @@ def _install_signal_handlers(stop_event: asyncio.Event) -> None:
             signal.signal(sig, lambda *_args: loop.call_soon_threadsafe(stop_event.set))
 
 
+def _install_managed_control(stop_event: asyncio.Event) -> None:
+    if os.environ.get("OOPTRA_MANAGED") != "1":
+        return
+    loop = asyncio.get_running_loop()
+
+    def listen():
+        for line in sys.stdin:
+            if line.strip() == "OOPTRA_STOP":
+                loop.call_soon_threadsafe(stop_event.set)
+                return
+
+    threading.Thread(target=listen, name="managed-stop", daemon=True).start()
+
+
 async def run() -> None:
     from config import WEBUI_CONFIG
 
@@ -54,10 +69,11 @@ async def run() -> None:
         voice_runtime = get_voice_runtime()
     except Exception:
         voice_runtime = None
-    console = WebUIConsole(state, controller, config=WEBUI_CONFIG, voice_runtime=voice_runtime)
-
     stop_event = asyncio.Event()
+    console = WebUIConsole(state, controller, config=WEBUI_CONFIG, voice_runtime=voice_runtime,
+                           shutdown=stop_event.set)
     _install_signal_handlers(stop_event)
+    _install_managed_control(stop_event)
 
     logger.info("=" * 56)
     logger.info("Ooptra v%s · Oopz <-> OneBot v11 反向 WebSocket 桥接", __version__)
@@ -84,8 +100,10 @@ async def run() -> None:
         logger.exception("语音 Agent 启动失败，不影响文字桥接")
 
     try:
+        console.set_bootstrap_ready(True)
         await stop_event.wait()
     finally:
+        console.set_bootstrap_ready(False)
         if voice_runtime is not None:
             try:
                 await voice_runtime.stop()
