@@ -106,6 +106,14 @@ async function main() {
     await page.setViewportSize({width: 390, height: 844});
     const overflow = await page.evaluate(() => [...document.querySelectorAll('*')].filter(node => node.getBoundingClientRect().right > innerWidth + 1).map(node => [node.id || node.className, node.getBoundingClientRect().right]).slice(0, 15));
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false, JSON.stringify(overflow));
+    // Reproduce a maintenance response covering the mobile header until it expires.
+    await page.evaluate(() => {
+      document.querySelector('#toasts').replaceChildren();
+      toast('维护操作反馈', 'fixture offline '.repeat(20), 'err');
+      toast('维护操作反馈', 'fixture offline '.repeat(20), 'err');
+    });
+    // Error feedback lasts six seconds; wait for its DOM removal before testing the header.
+    await page.waitForFunction(() => !document.querySelector('#toasts').children.length, undefined, {timeout: 10000});
     await page.locator('#screen-app [data-theme-toggle]').first().click();
     assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'dark');
     assert.deepEqual(errors, []);
