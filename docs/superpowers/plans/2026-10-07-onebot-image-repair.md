@@ -16,7 +16,7 @@ AstrBot 4.28.2 的 aiocqhttp 发送器把图片转换为 `base64://…`。Ooptra
 - [x] 统一转换并通过 19 项图片回归，验证上传字节、附件宽高与发送结果。
 - [x] 核对用户指出的历史 CI 失败日志与已存在修复。
 - [x] 完整 pytest、Ruff 与独立代码审查。
-- [ ] 推送 dev 并确认新提交 CI 全部通过。
+- [x] 推送 dev 并确认新提交 CI 全部通过。
 
 ## 历史 CI
 
@@ -28,3 +28,5 @@ AstrBot 4.28.2 的 aiocqhttp 发送器把图片转换为 `base64://…`。Ooptra
 ## 本地验证
 
 Python 3.10 与 3.12 完整测试各 558 项通过，Ruff 通过。独立审查无必改项；已采纳错误路径建议，断言无效 Base64 不上传、不发送消息。真实 Oopz 服务上传与客户端显示仍需部署后复测。
+
+代码提交 `7a068fb` 已发布到 dev，[CI 37585745271](https://github.com/Eason4869/Ooptra/actions/runs/37585745271) 的 Ruff、Ubuntu Python 3.10／3.13、Windows Python 3.13 全部通过。main 保持 `c34d3d5`。
