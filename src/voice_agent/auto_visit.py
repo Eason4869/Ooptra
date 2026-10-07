@@ -47,6 +47,7 @@ class AutoVisitController:
         self._visit_task: asyncio.Task | None = None
         self._wake, self._visit_wake = asyncio.Event(), asyncio.Event()
         self._check_lock, self._finish_lock = asyncio.Lock(), asyncio.Lock()
+        self._empty_check_lock = asyncio.Lock()
         self._epoch = 0
         self._next_check: float | None = None
         self._leave_at: float | None = None
@@ -293,8 +294,12 @@ class AutoVisitController:
         return ""
 
     async def _run_loop(self) -> None:
-        while True:
+        task = asyncio.current_task()
+        while self._loop is task:
             await self._check_empty_room()
+            # Python 3.10 wait_for can consume cancellation as a query completes.
+            if self._loop is not task:
+                return
             snapshot = self._snapshot()
             blocked = self._blocked(snapshot)
             if blocked:
@@ -504,24 +509,25 @@ class AutoVisitController:
         return self._empty_since is not None and self.clock.monotonic() - self._empty_since >= 30
 
     async def _check_empty_room(self) -> None:
-        key = self._room_key()
-        if not await self._room_empty_confirmed() or key != self._room_key():
-            return
-        try:
-            source = "auto" if self.agent.status().get("join_source") == "auto" else "manual"
-            # Empty-room exits bypass farewell waits and short retries, regardless of ownership.
-            result = await self.agent.leave(source=source, expected_operation_epoch=key[1])
-            if not result.get("ok", False):
-                raise RuntimeError(result.get("error", "无人退房未成功"))
-            if source == "auto":
-                await self._cooldown_after_auto_exit(key[2])
-            self._last_action = "房间只剩 bot 持续 30 秒，已静默退出"
-        except Exception as exc:
-            self._last_error = str(exc)
-            logger.warning("empty room leave failed: %s", exc)
-        finally:
-            # A failed leave retains the room and waits another confirmed interval to retry.
-            self._empty_since = None
+        async with self._empty_check_lock:
+            key = self._room_key()
+            if not await self._room_empty_confirmed() or key != self._room_key():
+                return
+            try:
+                source = "auto" if self.agent.status().get("join_source") == "auto" else "manual"
+                # Empty exits bypass farewell waits and short retries, regardless of ownership.
+                result = await self.agent.leave(source=source, expected_operation_epoch=key[1])
+                if not result.get("ok", False):
+                    raise RuntimeError(result.get("error", "无人退房未成功"))
+                if source == "auto":
+                    await self._cooldown_after_auto_exit(key[2])
+                self._last_action = "房间只剩 bot 持续 30 秒，已静默退出"
+            except Exception as exc:
+                self._last_error = str(exc)
+                logger.warning("empty room leave failed: %s", exc)
+            finally:
+                # A failed leave waits another confirmed interval before retrying.
+                self._empty_since = None
 
     async def _cooldown_after_auto_exit(self, area: str) -> None:
         seconds = self.rng.uniform(*effective_area(self.config, area)["auto_cooldown_minutes"]) * 60

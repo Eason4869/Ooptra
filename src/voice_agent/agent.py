@@ -771,8 +771,8 @@ class VoiceAgent:
         if source == "system":
             self._voice_suspended = True
         self._operation_epoch += 1
-        await self._cancel_reply_tasks()
         await self._stop_round_worker()
+        await self._cancel_reply_tasks()
         self._discard_live_audio = True
         self._speaking = False
         self._reply_generating = False
@@ -851,8 +851,8 @@ class VoiceAgent:
     async def _stop_reply_locked(self, *, restart: bool) -> None:
         self._operation_epoch += 1
         self._discard_live_audio = True
-        await self._cancel_reply_tasks()
         await self._stop_round_worker()
+        await self._cancel_reply_tasks()
         if self.live_mode:
             await asyncio.wait_for(self.backend.aclose(), 3.0)
         async with self._live_output_lock:
@@ -1044,7 +1044,10 @@ class VoiceAgent:
 
     async def _round_worker(self) -> None:
         """单槽信箱的消费端：并行度恒为 1，且每回合之间夹一段冷却。"""
-        while True:
+        task = asyncio.current_task()
+        # Python 3.10 wait_for can consume cancellation as a backend query
+        # completes. A detached worker must still stop before waiting again.
+        while self._round_task is task:
             await self._pending_event.wait()
             self._pending_event.clear()
             item, self._pending = self._pending, None

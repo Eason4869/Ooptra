@@ -520,6 +520,32 @@ def test_manual_empty_monitor_runs_when_auto_visits_are_off_and_paused(tmp_path)
     asyncio.run(run())
 
 
+def test_stop_during_completed_member_query_does_not_restart_monitor_wait(tmp_path):
+    async def run():
+        ctrl, agent, _, _, _ = scenario(tmp_path)
+        entered = asyncio.Event()
+        tasks = {}
+
+        async def members(area):
+            if not tasks:
+                tasks["loop"] = ctrl._loop
+                # Stop is scheduled immediately before wait_for observes the completed query.
+                tasks["stop"] = asyncio.create_task(ctrl.stop())
+                entered.set()
+            return {"channelMembers": {"one": [{"uid": "bot"}, {"uid": "human"}]}}
+
+        agent._bot.channels.get_voice_channel_members = members
+        await agent.join("a", "one")
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        try:
+            done, _ = await asyncio.wait([tasks["stop"]], timeout=0.2)
+            assert done, "stopped monitor must not enter another wait after query completion"
+        finally:
+            tasks["loop"].cancel()
+            await asyncio.gather(tasks["loop"], tasks["stop"], return_exceptions=True)
+    asyncio.run(run())
+
+
 def test_same_room_rejoin_starts_a_fresh_empty_countdown(tmp_path):
     async def run():
         ctrl, agent, clock, _, _ = scenario(tmp_path)

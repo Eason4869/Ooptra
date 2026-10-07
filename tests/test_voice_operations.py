@@ -48,6 +48,47 @@ def make_agent(tmp_path):
     return agent
 
 
+@pytest.mark.parametrize("operation", ["leave", "stop_current_reply"])
+def test_stop_reply_when_backend_query_completes_does_not_wait_forever(tmp_path, monkeypatch, operation):
+    from voice_agent.backends.base import VoiceReply
+
+    async def run():
+        agent = make_agent(tmp_path)
+        await agent.join("a", "c")
+        worker = agent._round_task
+        tasks = []
+
+        async def completed_query():
+            asyncio.get_running_loop().call_soon(
+                lambda: tasks.append(asyncio.create_task(getattr(agent, operation)()))
+            )
+            return VoiceReply()
+
+        async def handle(*args, **kwargs):
+            return await asyncio.wait_for(completed_query(), 1)
+
+        monkeypatch.setattr(agent.backend, "handle_utterance", handle)
+        agent._offer_utterance("member", b"\x00\x00", 16000)
+        try:
+            while not tasks:
+                await asyncio.sleep(0)
+            done, _ = await asyncio.wait(tasks, timeout=.2)
+            assert done, "room operation waited forever for a cancelled reply worker"
+            assert tasks[0].exception() is None
+            if operation == "leave":
+                assert not agent.status()["joined"]
+            else:
+                assert agent._round_task is not worker
+                assert agent.status()["joined"]
+        finally:
+            if not worker.done():
+                worker.cancel()
+            await asyncio.gather(worker, *tasks, return_exceptions=True)
+            await agent.leave()
+
+    asyncio.run(run())
+
+
 def test_events_are_outside_lock_and_duplicate_leave_is_silent(tmp_path):
     async def run():
         agent = make_agent(tmp_path)
