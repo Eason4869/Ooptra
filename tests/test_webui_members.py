@@ -17,17 +17,17 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-APP_JS = ROOT / "src" / "webui" / "assets" / "app.js"
+VOICE_JS = ROOT / "src" / "webui" / "assets" / "voice.js"
 
 
 def _js() -> str:
-    return APP_JS.read_text(encoding="utf-8")
+    return VOICE_JS.read_text(encoding="utf-8")
 
 
 def _fn(source: str, name: str) -> str:
     """按大括号配对截出 ``[async] function <name>(...) {...}``。"""
     match = re.search(rf"function\s+{re.escape(name)}\s*\(", source)
-    assert match, f"app.js 里找不到 function {name}"
+    assert match, f"voice.js 里找不到 function {name}"
     start = source.index("{", match.end())
     depth = 0
     for i in range(start, len(source)):

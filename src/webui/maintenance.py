@@ -16,7 +16,10 @@ import time
 import uuid
 from pathlib import Path
 
+from core.version import __version__
+from webui.maintenance_cleanup import delete_items, inventory
 from webui.maintenance_storage import BackupStore, atomic_json, restored_endpoint
+from webui.maintenance_worker import runtime_health
 
 OFFICIAL_REMOTES = {
     "https://github.com/eason4869/ooptra", "https://github.com/eason4869/ooptra.git",
@@ -36,7 +39,7 @@ def run_command(root: Path, args: list[str], timeout: int = 30, env=None) -> str
 
 
 class MaintenanceService:
-    def __init__(self, root, *, shutdown=None, managed=None, venv=None, port=3090, host="127.0.0.1", token=""):
+    def __init__(self, root, *, shutdown=None, managed=None, venv=None, port=3090, host="127.0.0.1", token="", runtime_status=None):
         self.root = Path(root).resolve()
         self.backups = BackupStore(self.root)
         self.job_file = self.root / "data/maintenance/job.json"
@@ -49,6 +52,9 @@ class MaintenanceService:
         self._task = None
         self._busy = False
         self._check = None
+        self._cleanup = None
+        self._storage_cache = None
+        self.runtime_status = runtime_status
         previous = self.read_job()
         if (previous and previous.get("phase") in ACTIVE_PHASES and previous.get("service_pid") != os.getpid()
                 and os.environ.get("OOPTRA_UPDATE_ID", "") != previous.get("id")):
@@ -64,6 +70,22 @@ class MaintenanceService:
     def write_job(self, value):
         value["updated_at"] = time.time()
         atomic_json(self.job_file, value)
+        self._storage_cache = None
+
+    def storage_status(self, backups, job):
+        # Status runs in a worker thread. Repeated page polling must not walk
+        # large venv/browser trees every three seconds; destructive operations
+        # always call inventory afresh and never consume these cached totals.
+        cached = self._storage_cache
+        if cached and time.monotonic() - cached[0] < 30:
+            return cached[1]
+        try:
+            storage, _ = inventory(self.root, backups, job)
+        except ValueError as exc:
+            storage = {"error": str(exc), "backups_count": len(backups), "backups_bytes": sum(row["size"] for row in backups)}
+        storage["sampled_at"] = time.time()
+        self._storage_cache = (time.monotonic(), storage)
+        return storage
 
     def preflight(self):
         checks = []
@@ -91,14 +113,65 @@ class MaintenanceService:
             check("writable", False, "部署目录不可写")
         return {"supported": all(c["passed"] for c in checks), "checks": checks}
 
-    def status(self):
+    def status(self, page=1, page_size=50):
+        if isinstance(page, bool) or isinstance(page_size, bool) or not isinstance(page, int) or not isinstance(page_size, int) or page < 1 or not 1 <= page_size <= 50:
+            raise ValueError("备份分页参数无效")
         job = self.read_job()
+        backups = self.backups.list(limit=None)
+        pages = max(1, (len(backups) + page_size - 1) // page_size)
+        page = min(page, pages)
+        preflight = self.preflight()
+        try:
+            current_sha = run_command(self.root, ["git", "rev-parse", "HEAD"])
+            branch = run_command(self.root, ["git", "branch", "--show-current"])
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            current_sha, branch = "", ""
+        channel = branch if branch in {"main", "dev"} else "dev" if re.search(r"-(?:dev|beta)$", __version__) else "main"
+        if (branch not in {"main", "dev"} and isinstance(job, dict)
+                and job.get("action") == "update" and job.get("phase") == "complete"
+                and job.get("target_sha") == current_sha and job.get("channel") in {"main", "dev"}):
+            channel = job["channel"]
+        update = {"channel": channel, "current_sha": current_sha,
+                  "target_sha": None, "available": False, "version": __version__, **(self._check or {}),
+                  "supported": preflight["supported"]}
+        storage = self.storage_status(backups, job)
+        bridge = self.runtime_status() if self.runtime_status else {}
         return {
-            "ok": True, "preflight": self.preflight(), "backups": self.backups.list(),
+            "ok": True, "preflight": preflight, "backups": backups[(page - 1) * page_size:page * page_size],
+            "backup_page": {"page": page, "page_size": page_size, "total": len(backups), "pages": pages},
+            "storage": storage, "update": update,
+            "health": runtime_health({"ok": True, "process": {"pid": os.getpid()}, "bridge": bridge}),
             "job": {k: v for k, v in job.items() if k in PUBLIC_JOB_FIELDS} if isinstance(job, dict) else None,
             "check": self._check, "busy": self._busy,
             "restore_supported": bool(self.managed and self.shutdown),
         }
+
+    def preview_cleanup(self):
+        if self._busy or (self.read_job() or {}).get("phase") in ACTIVE_PHASES:
+            raise ValueError("维护任务进行中，暂不能清理")
+        _, items = inventory(self.root, self.backups.list(limit=None), self.read_job())
+        self._cleanup = {"token": uuid.uuid4().hex, "items": items, "expires_at": time.time() + 300}
+        return {"ok": True, "token": self._cleanup["token"], "expires_at": self._cleanup["expires_at"],
+                "items": [{k: v for k, v in item.items() if k != "fingerprint"} for item in items],
+                "total_bytes": sum(item["size"] for item in items)}
+
+    async def apply_cleanup(self, token):
+        self._claim()
+        try:
+            preview = self._cleanup
+            self._cleanup = None
+            if not preview or token != preview["token"] or time.time() > preview["expires_at"]:
+                raise ValueError("清理预览已失效，请重新预览并确认")
+            def apply():
+                _, current = inventory(self.root, self.backups.list(limit=None), self.read_job())
+                if current != preview["items"]:
+                    raise ValueError("清理对象或运行环境已变化，请重新预览")
+                delete_items(self.root, current)
+                return {"ok": True, "removed": len(current), "removed_bytes": sum(item["size"] for item in current)}
+            return await asyncio.to_thread(apply)
+        finally:
+            self._busy = False
+            self._storage_cache = None
 
     async def check_update(self, channel):
         if channel not in {"main", "dev"}:
@@ -130,6 +203,7 @@ class MaintenanceService:
             return await asyncio.to_thread(self.backups.create)
         finally:
             self._busy = False
+            self._storage_cache = None
 
     async def start_update(self, channel, target_sha):
         if channel not in {"main", "dev"} or not re.fullmatch(r"[a-f0-9]{40}", str(target_sha)):
@@ -253,7 +327,12 @@ def mount_maintenance_routes(app, service):
         return value
 
     async def status(request):
-        return web.json_response(await asyncio.to_thread(service.status))
+        try:
+            page = int(request.query.get("page", "1"))
+            page_size = int(request.query.get("page_size", "50"))
+            return web.json_response(await asyncio.to_thread(service.status, page, page_size))
+        except ValueError as exc:
+            return web.json_response({"ok": False, "error": str(exc)}, status=400)
 
     async def download(request):
         try:
@@ -270,7 +349,11 @@ def mount_maintenance_routes(app, service):
                 value = await body(request)
                 if action == "check":
                     return web.json_response(await service.check_update(value.get("channel", "main")))
-                if action == "backup":
+                if action == "cleanup_preview":
+                    result = await asyncio.to_thread(service.preview_cleanup)
+                elif action == "cleanup_apply":
+                    result = await service.apply_cleanup(value.get("token", ""))
+                elif action == "backup":
                     result = await service.create_backup()
                 elif action == "restore":
                     result = await service.start_restore(value.get("backup_id", ""))
@@ -287,4 +370,6 @@ def mount_maintenance_routes(app, service):
         web.post("/api/maintenance/backups", handler("backup")),
         web.post("/api/maintenance/restore", handler("restore")),
         web.post("/api/maintenance/update", handler("update")),
+        web.post("/api/maintenance/cleanup/preview", handler("cleanup_preview")),
+        web.post("/api/maintenance/cleanup/apply", handler("cleanup_apply")),
     ])

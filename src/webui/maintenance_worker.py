@@ -50,6 +50,33 @@ def stop_owned(process):
             process.wait(timeout=5)
 
 
+def runtime_health(status, *, expected_pid=None, update_id=None, expected_python=None):
+    """Process identity gates a switch; remote connections only describe degradation."""
+    status = status if isinstance(status, dict) else {}
+    actual = status.get("process") if isinstance(status.get("process"), dict) else {}
+    process_ok = bool(status.get("ok") and actual.get("pid"))
+    if expected_pid is not None:
+        process_ok = process_ok and actual.get("pid") == expected_pid
+    if update_id is not None:
+        process_ok = process_ok and actual.get("update_id") == update_id
+    if expected_python is not None:
+        executable = actual.get("executable")
+        # A venv's Python can link to the same base as another environment.
+        # Preserve the invoked path instead of resolving those links away.
+        process_ok = process_ok and isinstance(executable, str) and bool(executable) and os.path.normcase(os.path.abspath(executable)) == os.path.normcase(os.path.abspath(expected_python))
+    checks = [{"id": "process", "title": "服务进程", "state": "pass" if process_ok else "fail",
+               "detail": "服务已响应，进程身份校验通过" if process_ok else "服务未响应或进程身份不匹配"}]
+    for key, title in [("oopz", "Oopz 连接"), ("onebot", "OneBot 连接")]:
+        bridge = status.get("bridge") if isinstance(status.get("bridge"), dict) else {}
+        link = bridge.get(key) if isinstance(bridge.get(key), dict) else {}
+        connected = bool(link.get("connected"))
+        checks.append({"id": key, "title": title, "state": "pass" if connected else "degraded",
+                       "detail": "已连接" if connected else "连接暂不可用；服务继续运行，不因此回滚"})
+    layers = {row["id"]: {"state": "healthy" if row["state"] == "pass" else "failed" if row["state"] == "fail" else "degraded",
+                           "detail": row["detail"]} for row in checks}
+    return {"process_ok": bool(process_ok), "state": "failed" if not process_ok else "degraded" if any(row["state"] == "degraded" for row in checks) else "healthy", "checks": checks, **layers}
+
+
 def healthy(process, job, timeout=45):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline and process.poll() is None:
@@ -61,9 +88,8 @@ def healthy(process, job, timeout=45):
                 request.add_header("Authorization", "Bearer " + job["health_token"])
             with build_opener(ProxyHandler({})).open(request, timeout=2) as response:
                 status = json.load(response)
-            actual = status.get("process", {})
-            owned = actual.get("pid") == process.pid
-            if status.get("ok") and owned and actual.get("update_id") == job["id"]:
+            health = runtime_health(status, expected_pid=process.pid, update_id=job["id"], expected_python=job.get("health_python"))
+            if health["process_ok"]:
                 return True
         except (OSError, ValueError, KeyError):
             pass

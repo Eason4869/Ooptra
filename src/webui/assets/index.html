@@ -268,6 +268,7 @@
             <button class="btn ghost sm" id="voice-set-default" title="把当前选中的域/频道写入配置，作为插件 /进语音 的默认目标">设为默认</button>
             <button class="btn primary sm" id="voice-join">进房</button>
             <button class="btn ghost sm" id="voice-leave">退房</button>
+            <button class="btn ghost sm" id="voice-stop" type="button">停止回复</button>
           </header>
           <p class="hint" id="default-target-hint">默认目标：未设置。插件不带参数进房时用它；一个 QQ 群绑了多个域时也按默认域查询。</p>
 
@@ -344,6 +345,7 @@
             <ul class="feed" id="voice-transcript"></ul>
           </section>
         </div>
+        <details class="tool-details voice-observation"><summary>回复决策与耗时</summary><p class="hint">只显示原因和耗时，不保存原始音频。实时语音的阶段可能重叠。</p><ul class="check-list" id="voice-decision-list"><li class="empty">暂无决策记录</li></ul></details>
       </div>
 
       <!-- 自动串门：全局默认与域覆盖独立保存 -->
@@ -403,6 +405,7 @@
             <header class="card-head"><h3>语音自检</h3><button class="btn primary sm" id="diagnostic-run" type="button">开始自检</button></header>
             <p class="hint">检查环境、连接与配置，不会进入语音房。网络检查会请求模型，可能产生少量费用。</p>
             <label class="switch"><input type="checkbox" id="diagnostic-network" /><span>同时检查模型网络连接</span></label>
+            <label class="field"><span>短句音频样本（可选）</span><input class="control" id="diagnostic-audio" type="file" accept=".wav,audio/wav" /><small class="hint">WAV，最长 10 秒、最大 2 MB。独立检查识别、意图和合成；不进房、不写记忆。</small></label>
             <ul class="check-list" id="diagnostic-results" aria-live="polite"><li class="empty">进房或回复异常时，先运行一次自检。</li></ul>
           </section>
           <section class="card">
@@ -485,6 +488,8 @@
           <header class="card-head"><h3>版本更新</h3><span class="chip" id="maintenance-version">—</span></header>
           <label class="field"><span>更新来源</span><select class="control" id="maintenance-channel"><option value="dev">dev · 测试版本</option><option value="main">main · 正式版本</option></select></label>
           <p class="hint" id="maintenance-check-detail">先检查更新，再确认安装。</p>
+          <p class="hint" id="maintenance-update-metadata"></p>
+          <ul class="check-list" id="maintenance-health" aria-label="分层运行状态"></ul>
           <div class="btn-row"><button class="btn ghost" id="maintenance-check" type="button">检查更新</button><button class="btn primary" id="maintenance-update" type="button" disabled>备份并升级</button></div>
           <div class="maintenance-job" id="maintenance-job" hidden role="status"><b id="maintenance-phase"></b><p id="maintenance-detail"></p></div>
           <details class="tool-details"><summary>部署预检查与手动更新</summary><ul class="check-list" id="maintenance-checks"></ul><p class="hint">自动升级需要官方 Git 仓库、虚拟环境、干净的代码和可写目录，并通过 <code>python launcher.py</code> 启动。其他部署方式可下载备份后，按 README 手动更新。</p></details>
@@ -493,6 +498,8 @@
           <header class="card-head"><h3>本地备份</h3><button class="btn primary sm" id="maintenance-backup" type="button">创建备份</button></header>
           <p class="hint">保存配置、凭据和用户数据。备份包含密钥，请妥善保管；恢复前会再创建一份安全备份，并重启服务。</p>
           <ul class="backup-list" id="maintenance-backups"><li class="empty">正在读取备份…</li></ul>
+          <div class="btn-row"><button class="btn ghost sm" id="maintenance-prev" type="button">上一页</button><p class="hint" id="maintenance-pagination"></p><button class="btn ghost sm" id="maintenance-next" type="button">下一页</button></div>
+          <details class="tool-details"><summary>存储与清理</summary><p class="hint" id="maintenance-storage"></p><p class="hint">先查看可清理项目，再确认删除。运行环境和回滚材料受保护。</p><button class="btn ghost" id="maintenance-cleanup-preview" type="button">预览可清理项目</button><ul class="check-list" id="maintenance-cleanup-result"></ul><button class="btn warn" id="maintenance-cleanup-apply" type="button" hidden disabled>确认清理</button></details>
           <p class="hint" id="maintenance-feedback" role="status"></p>
         </section>
       </div>
@@ -505,6 +512,7 @@
         <span id="config-status"></span>
       </div>
       <div class="config-groups" id="config-groups"></div>
+      <p class="hint config-summary" id="config-summary" hidden aria-live="polite"></p>
       <div class="savebar" id="savebar" hidden>
         <span id="savebar-text">有未保存的改动</span>
         <button class="btn subtle" id="config-discard">放弃</button>
@@ -557,6 +565,8 @@
 </div>
 
 <script src="/assets/app.js"></script>
+<script src="/assets/config.js"></script>
+<script src="/assets/voice.js"></script>
 <script src="/assets/maintenance.js"></script>
 </body>
 </html>

@@ -7,13 +7,12 @@
 </p>
 
 <p align="center">
-  <img src="./assets/readme/hero.svg" width="100%" alt="Ooptra 261007-beta：语音对话、自检试听、自动串门与更新备份" />
+  <img src="./assets/readme/hero.svg" width="100%" alt="Ooptra 261007-dev：语音对话、自检试听、自动串门与更新备份" />
 </p>
 
 <p align="center">
-  <a href="CHANGELOG.md"><img alt="当前版本 261007-beta" src="https://img.shields.io/badge/version-261007--beta-315DDC?style=flat-square"></a>
+  <a href="CHANGELOG.md"><img alt="当前版本 261007-dev" src="https://img.shields.io/badge/version-261007--dev-315DDC?style=flat-square"></a>
   <a href="https://github.com/Eason4869/Ooptra/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/Eason4869/Ooptra?style=flat-square"></a>
-  <a href="https://hits.sh/github.com/Eason4869/Ooptra/"><img alt="README 累计访问次数" src="https://hits.sh/github.com/Eason4869/Ooptra.svg?style=flat-square&amp;label=README%20views&amp;color=315ddc"></a>
   <a href="https://github.com/Eason4869/Ooptra/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Eason4869/Ooptra/ci.yml?style=flat-square&amp;label=CI"></a>
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-3776ab?style=flat-square&amp;logo=python&amp;logoColor=white">
   <a href="LICENSE"><img alt="许可" src="https://img.shields.io/badge/license-MIT-3ddc97?style=flat-square"></a>
@@ -38,14 +37,16 @@ Ooptra 将 Oopz 消息接入 **OneBot v11**，通过反向 WebSocket 对接机�
 | Web 控制台 | 状态、日志、配置、登录与语音管理；支持手机访问和暗色模式 |
 | AI 语音 | Gemini Live / MiMo 级联；支持抢话、回复概率、强制关键词与语音退房 |
 | 自动串门 | 按域开启，随机进有人的房间；限时退出、进退房台词、冷却与每日上限 |
-| 语音工具 | 连续追问、自检、无人倒计时与独立浏览器试听 |
-| 更新与备份 | 检查 main / dev 提交、配置数据备份；Git + 虚拟环境支持自动升级与失败回滚 |
+| 语音工具 | 连续追问、回复决策与耗时、自检、短句 WAV 分阶段验证、无人倒计时与独立浏览器试听 |
+| 更新与备份 | 统一检查 main / dev 提交、备份分页与存储清理预览；Git + 虚拟环境支持升级、分层健康检查及失败回滚 |
 | 插件对接 | HTTP API 提供语音控制、人格与记忆管理，支持外部插件调用 |
+
+README 顶部只保留一套累计访问计数展示，不能据此判断独立访客数。仓库拥有者可在 [Insights → Traffic](https://github.com/Eason4869/Ooptra/graphs/traffic) 查看最近 14 天的访客、克隆和来源。
 
 文字消息指令与插件由对端机器人框架处理。Ooptra 是第三方工具，与 Oopz 官方无隶属关系。
 
 <p align="center">
-  <img src="./assets/readme/runtime-map.svg" width="100%" alt="Ooptra 261007-beta 消息与语音链路" />
+  <img src="./assets/readme/runtime-map.svg" width="100%" alt="Ooptra 261007-dev 消息与语音链路" />
 </p>
 
 ## 快速开始
@@ -121,10 +122,10 @@ Ooptra 主动连接，对端需开启 **OneBot v11 反向 WebSocket 服务端**�
 | 语音台 | 会话控制、自动串门、房间成员、人格与记忆 |
 | 更新与备份 | 检查分支提交、创建和下载备份、升级与恢复进度 |
 
-右上角可切换暗色模式，选择保存在当前浏览器。侧栏「维护与账号」提供重连、检查更新和退出登录。
+右上角可切换暗色模式，选择保存在当前浏览器。配置草稿在页面与分组切换时保留；离开、放弃和保存提供确认与改动摘要。侧栏「维护与账号」提供重连、检查更新和退出登录。
 「更新与备份」检查 main / dev 的最新提交；符合预检查条件时可一键备份并升级，失败时尝试恢复原版本和数据。
 自动升级需 **官方 Git 仓库 + 虚拟环境 + `python launcher.py`**；局域网维护还需设置访问令牌。
-原有侧栏「检查更新」仍查询 Release / 标签。详细支持条件与恢复方法见[配置与维护](docs/operations.md)。
+侧栏「检查更新」统一进入更新与备份中心。旧 Release / 标签查询 API 保留兼容。详细支持条件与恢复方法见[配置与维护](docs/operations.md)。
 
 局域网访问：将 `WEBUI_CONFIG.host` 设为 `0.0.0.0`，**同时设置 `token`**，然后打开
 `http://<部署机器的 IP>:3090/?token=<token>`。默认 `127.0.0.1` 仅允许本机访问。
@@ -189,7 +190,7 @@ pytest -q
 pyright  # 可选：类型检查
 ```
 
-CI 在 PR 和 `main` / `dev` 推送时执行 Ruff 与 pytest，覆盖 Ubuntu（Python 3.10 / 3.13）和 Windows（Python 3.13）。
+CI 在 PR 和 `main` / `dev` 推送时执行 Ruff、pytest 与真实浏览器交互测试；Python 覆盖 Ubuntu（3.10 / 3.13）和 Windows（3.13），浏览器任务独立安装 Node／Playwright，不增加运行部署依赖。
 源码目录与测试注意事项见[开发说明](docs/operations.md#开发说明)。
 
 ## 许可与鸣谢
@@ -199,5 +200,3 @@ CI 在 PR 和 `main` / `dev` 推送时执行 Ruff 与 pytest，覆盖 Ubuntu（P
 
 [提交问题](https://github.com/Eason4869/Ooptra/issues) · [OneBot v11 协议](https://github.com/botuniverse/onebot-11) ·
 [SnowLuma](https://github.com/SnowLuma/SnowLuma)（文档与产品形态参考，无隶属关系）
-
-访问计数仅作曝光参考，不代表独立访客；维护者可在 [GitHub Traffic](https://github.com/Eason4869/Ooptra/graphs/traffic) 查看近 14 天访问与克隆统计。

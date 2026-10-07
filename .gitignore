@@ -31,6 +31,7 @@ build/
 *.egg
 .learnings
 .superpowers/
+.browser-ci/
 
 # === IDE ===
 .vscode/
