@@ -19,6 +19,7 @@ from core.config_file_store import config_file_write_lock, replace_text_files_at
 from core.logger_config import get_logger
 from core.paths import PROJECT_ROOT
 from voice_agent.auto_visit_settings import merge_auto_visit_patch
+from webui.maintenance_network import validate_network_field
 
 logger = get_logger("WebUIConfig")
 
@@ -526,6 +527,16 @@ FIELD_SPECS: dict[str, dict[str, dict[str, Any]]] = {
         },
     },
     "webui": {
+        "update_proxy": {
+            "type": "str", "label": "更新 Git 代理", "sensitive": True,
+            "tier": "adv", "section": "更新网络", "default": "",
+            "hint": "部署服务器的 Git 更新出口：留空=系统环境代理，direct=直连，或完整 HTTP/HTTPS/SOCKS 代理 URL；保存后生效",
+        },
+        "update_mirror": {
+            "type": "str", "label": "更新 Git 备用镜像", "tier": "adv",
+            "section": "更新网络", "default": "",
+            "hint": "完整 HTTPS Git 仓库 URL（支持 Git smart HTTP），留空仅官方源；备用下载必须核对官方提交，不影响 pip/浏览器依赖",
+        },
         "host": {
             "type": "str",
             "label": "监听地址",
@@ -553,7 +564,7 @@ FIELD_SPECS: dict[str, dict[str, dict[str, Any]]] = {
     },
 }
 
-_RESTART_FREE_FIELDS = {("webui", "log_lines")}
+_RESTART_FREE_FIELDS = {("webui", "log_lines"), ("webui", "update_proxy"), ("webui", "update_mirror")}
 
 # 这些组保存后由 server._hot_reload_voice 在事件循环上真正应用到 VoiceRuntime，
 # 故不再标记 restart_required（voice_api 的 host/port 例外，socket 已绑定，
@@ -721,7 +732,10 @@ def _normalize_updates(updates: Any) -> dict[str, dict[str, Any]]:
                 raise ValueError(f"{group}.{field} 是只读项，请通过「Oopz 登录」修改")
             if value is None and meta.get("sensitive"):
                 continue
-            target[field] = _coerce(meta, value, f"{group}.{field}")
+            if group == "webui" and field in {"update_proxy", "update_mirror"}:
+                target[field] = validate_network_field(field, value)
+            else:
+                target[field] = _coerce(meta, value, f"{group}.{field}")
         if target:
             normalized[group] = target
     if not normalized:

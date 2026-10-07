@@ -1,8 +1,7 @@
-/* Updater and backup UI; no framework or remote assets. */
+/* Independent voice tools and maintenance UI; no framework or remote assets. */
 'use strict';
 
 (() => {
- const maintenanceApi = (path, opts = {}) => api(path, {...opts, timeout: 90000});
  function initializeMaintenance() {
   let current = null;
   let refreshing = false;
@@ -12,6 +11,15 @@
   let page = 1;
   let cleanup = null;
   let selectedSource = false;
+  const sections = {preflight: {loading: false, readAt: 0, value: null, error: ''}, storage: {loading: false, readAt: 0, value: null, error: ''}};
+  let networkLoading = false;
+  let networkLoaded = false;
+  let networkDirty = false;
+  let networkSaving = false;
+  let networkReadAt = 0;
+  let discardCheck = false;
+  let checkingUpdate = false;
+  const safeError = err => String(err?.message || err || '读取失败').replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, '$1[隐藏凭据]@').replace(/([?&](?:token|key|password|api_key)=)[^\s&]+/gi, '$1[隐藏]');
   const channels = {main: '正式版', beta: '测试版', dev: '预览版'};
   const channelName = channel => channels[channel] ? channels[channel] + '（' + channel + '）' : channel || '未知';
   const currentChannel = data => data?.current_channel || data?.update?.current_channel || data?.update?.channel;
@@ -39,17 +47,20 @@
   }
 
   function renderMaintenance(data) {
+    data = {...data, preflight: sections.preflight.value || data.preflight, storage: sections.storage.value || data.storage};
+    if (discardCheck) data.check = null;
     current = data;
-    const supported = !!data.preflight?.supported;
+    const supported = !!data.preflight?.supported && !data.preflight?.pending && !sections.preflight.error;
     const busy = operating || data.busy || activePhases.has(data.job?.phase);
     const installed = currentChannel(data);
     if (!selectedSource && channels[installed]) { $('maintenance-channel').value = installed; selectedSource = true; }
     const selected = $('maintenance-channel').value;
     const check = data.check;
-    text('maintenance-capability', supported ? '支持自动升级' : '查看部署预检查');
+    text('maintenance-capability', supported ? '支持自动升级' : data.preflight?.pending ? '部署预检查待完成' : '查看部署预检查');
     text('maintenance-version', '当前 v' + (data.update?.version || state?.process?.version || '—'));
     busyControls(!!busy);
     $('maintenance-checks').innerHTML = checksHTML(data.preflight?.checks || []);
+    text('maintenance-preflight-status', sections.preflight.error || data.preflight?.error || (data.preflight?.pending ? data.preflight.detail || '部署预检查尚未完成；可先检查更新和查看备份。' : data.preflight?.detail || ''));
     const checked = check?.channel === selected;
     const compatible = check?.compatible !== false && check?.compatibility?.supported !== false;
     const switching = switchingChannel(check) || !!(installed && installed !== check?.channel);
@@ -62,13 +73,14 @@
     text('maintenance-update-metadata', '当前频道 ' + channelName(installed) + ' · 目标 ' + channelName(selected) + ' · 当前提交 ' + (update.current_sha?.slice(0, 12) || '未知') + ' · 目标提交 ' + (checked ? check.target_sha?.slice(0, 12) || '待检查' : '待检查') + (checked && check.target_version ? ' · 目标 v' + check.target_version : '') + ' · ' + (supported && compatible ? '可自动更新' : '需手动更新'));
     if ($('maintenance-health')) $('maintenance-health').innerHTML = checksHTML(data.health?.checks || []);
     const storage = data.storage || {};
-    text('maintenance-storage', storage.error || ('维护材料合计 ' + megabytes(storage.total_bytes) + ' · 备份 ' + megabytes(storage.backups_bytes) + '（' + (storage.backups_count || 0) + ' 份） · 环境 ' + megabytes(storage.environments_bytes) + ' · 浏览器 ' + megabytes(storage.browsers_bytes) + ' · 临时准备 ' + megabytes(storage.staging_bytes)));
+    text('maintenance-storage', sections.storage.error || storage.error || (storage.pending ? (storage.detail || '完整空间统计尚未完成') + ' · 备份 ' + megabytes(storage.backups_bytes) + '（' + (storage.backups_count || 0) + ' 份）；可稍后重试。' : '维护材料合计 ' + megabytes(storage.total_bytes) + ' · 备份 ' + megabytes(storage.backups_bytes) + '（' + (storage.backups_count || 0) + ' 份） · 环境 ' + megabytes(storage.environments_bytes) + ' · 浏览器 ' + megabytes(storage.browsers_bytes) + ' · 临时准备 ' + megabytes(storage.staging_bytes)));
     const pagination = data.backup_page || {page: 1, pages: 1, total: data.backups?.length || 0};
     page = pagination.page;
     text('maintenance-pagination', '第 ' + pagination.page + ' / ' + pagination.pages + ' 页 · 共 ' + pagination.total + ' 份');
     if ($('maintenance-prev')) $('maintenance-prev').disabled = !!busy || page <= 1;
     if ($('maintenance-next')) $('maintenance-next').disabled = !!busy || page >= pagination.pages;
-    if (checked) {
+    if (checkingUpdate && data.check_stage) text('maintenance-check-detail', safeError(data.check_stage));
+    else if (checked) {
       if (!compatible) text('maintenance-check-detail', '目标不支持自动更新，请手动安装。' + (check.compatibility_detail || check.compatibility?.detail || ''));
       else if (!check.available || check.action === 'current') text('maintenance-check-detail', '已是' + channelName(selected) + '的最新提交，无需更新。');
       else text('maintenance-check-detail', (switching ? '将切换到' + channelName(selected) + '，可能降级或改变功能。' : '发现' + channelName(selected) + '更新。') + '目标提交 ' + (check.target_sha?.slice(0, 12) || '未知') + '，确认后准备并安装。');
@@ -112,40 +124,144 @@
     if (!data.backups?.length) $('maintenance-backups').innerHTML = '<li class="empty">还没有备份。更新前也会自动创建。</li>';
   }
 
+  async function loadSection(name, force = false) {
+    const section = sections[name];
+    if (section.loading || (!force && Date.now() - section.readAt < 30000)) return;
+    section.loading = true;
+    const retry = $('maintenance-' + name + '-retry');
+    if (retry) retry.disabled = true;
+    try {
+      const result = await api('/api/maintenance/' + name, {timeout: 20000});
+      if (result[name]) section.value = result[name];
+      section.error = '';
+    } catch (err) { section.error = '读取失败：' + safeError(err) + '。可重试此项。'; }
+    finally {
+      section.loading = false;
+      section.readAt = Date.now();
+      if (retry) retry.disabled = false;
+      if (current) renderMaintenance(current);
+      else if (section.error) text(name === 'preflight' ? 'maintenance-preflight-status' : 'maintenance-storage', section.error);
+    }
+  }
+
+  async function loadNetwork() {
+    if (networkLoading || networkLoaded || networkDirty || Date.now() - networkReadAt < 30000 || !$('maintenance-network-save')) return;
+    networkLoading = true;
+    $('maintenance-network-save').disabled = true;
+    try {
+      const result = await api('/api/config', {timeout: 15000});
+      const fields = result.groups?.webui?.fields;
+      if (!fields?.update_proxy || !fields?.update_mirror) throw new Error('当前服务未提供更新网络配置，请刷新服务后重试');
+      if (!networkDirty) {
+        $('maintenance-network-proxy').value = '';
+        $('maintenance-network-proxy').placeholder = fields.update_proxy.is_set ? '已配置，留空保留原代理' : '留空使用部署机器的环境代理；direct 表示直连';
+        $('maintenance-network-mirror').value = fields.update_mirror.value || '';
+        $('maintenance-network-clear-proxy').checked = false;
+      }
+      networkLoaded = true;
+      text('maintenance-network-status', '官方 GitHub 优先；失败时自动尝试直连和已配置的镜像。');
+    } catch (err) { text('maintenance-network-status', '更新网络配置读取失败：' + safeError(err)); }
+    finally { networkLoading = false; networkReadAt = Date.now(); $('maintenance-network-save').disabled = !networkLoaded; }
+  }
+  for (const id of ['maintenance-network-proxy', 'maintenance-network-mirror']) if ($(id)) $(id).addEventListener('input', () => { networkDirty = true; });
+  if ($('maintenance-network-clear-proxy')) $('maintenance-network-clear-proxy').addEventListener('change', () => {
+    networkDirty = true;
+    $('maintenance-network-proxy').disabled = $('maintenance-network-clear-proxy').checked;
+  });
+  if ($('maintenance-network-retry')) $('maintenance-network-retry').addEventListener('click', () => {
+    if (networkDirty) {
+      text('maintenance-network-status', '有未保存修改，请先保存更新网络设置，再重新读取。');
+      return;
+    }
+    networkLoaded = false;
+    networkReadAt = 0;
+    void loadNetwork();
+  });
+  if ($('maintenance-network-save')) $('maintenance-network-save').addEventListener('click', async () => {
+    if (!networkLoaded || networkSaving) return;
+    const updates = {update_mirror: $('maintenance-network-mirror').value.trim()};
+    const proxy = $('maintenance-network-proxy').value.trim();
+    if ($('maintenance-network-clear-proxy').checked) updates.update_proxy = '';
+    else if (proxy) updates.update_proxy = proxy;
+    networkSaving = true;
+    $('maintenance-network-save').disabled = true;
+    for (const id of ['maintenance-network-proxy', 'maintenance-network-mirror', 'maintenance-network-clear-proxy', 'maintenance-network-retry']) $(id).disabled = true;
+    text('maintenance-network-status', '正在保存更新网络配置…');
+    try {
+      await api('/api/config', {method: 'POST', body: {updates: {webui: updates}}, timeout: 15000});
+      networkDirty = false;
+      $('maintenance-network-proxy').value = '';
+      if ('update_proxy' in updates) $('maintenance-network-proxy').placeholder = updates.update_proxy ? '已配置，留空保留原代理' : '留空使用部署机器的环境代理；direct 表示直连';
+      $('maintenance-network-clear-proxy').checked = false;
+      $('maintenance-network-proxy').disabled = false;
+      text('maintenance-network-status', '更新网络配置已保存，下次检查更新生效。');
+    } catch (err) { text('maintenance-network-status', '保存失败：' + safeError(err)); }
+    finally {
+      networkSaving = false;
+      $('maintenance-network-save').disabled = false;
+      for (const id of ['maintenance-network-mirror', 'maintenance-network-clear-proxy', 'maintenance-network-retry']) $(id).disabled = false;
+      $('maintenance-network-proxy').disabled = $('maintenance-network-clear-proxy').checked;
+    }
+  });
+
   window.refreshMaintenance = async function(force = false) {
+    void loadSection('preflight');
+    void loadSection('storage');
+    void loadNetwork();
     if (refreshing || (!force && Date.now() - lastRefresh < 2500)) return;
     refreshing = true;
+    if ($('maintenance-status-retry')) $('maintenance-status-retry').disabled = true;
     try {
-      renderMaintenance(await maintenanceApi('/api/maintenance?page=' + page + '&page_size=10'));
+      renderMaintenance(await api('/api/maintenance?page=' + page + '&page_size=10', {timeout: 15000}));
       lastRefresh = Date.now();
+      text('maintenance-status', '');
       text('maintenance-feedback', feedback);
     } catch (err) {
-      text('maintenance-feedback', current?.job && activePhases.has(current.job.phase) ? '服务正在重启，页面会自动重新连接。' : err.message);
-    } finally { refreshing = false; }
+      text('maintenance-status', current?.job && activePhases.has(current.job.phase) ? '服务正在重启，页面会自动重新连接。' : '版本与备份读取失败：' + safeError(err) + '。请重试。');
+      if (!current) {
+        text('maintenance-capability', '部署状态尚未读取');
+        text('maintenance-version', state?.process?.version ? '当前 v' + state.process.version : '版本暂不可用');
+        $('maintenance-backups').innerHTML = '<li class="empty">备份读取失败，请点击重试版本与备份。</li>';
+      }
+    } finally { refreshing = false; if ($('maintenance-status-retry')) $('maintenance-status-retry').disabled = false; }
   };
 
   async function operation(path, body, message, progress = '正在准备维护操作…') {
     if (operating) return;
     operating = true;
+    if (path === '/api/maintenance/check') { checkingUpdate = true; discardCheck = true; if (current) current = {...current, check: null}; }
     feedback = progress;
     text('maintenance-feedback', feedback);
     busyControls(true);
     if (current) renderMaintenance(current);
     try {
-      const result = await maintenanceApi(path, {method: 'POST', body});
+      const result = await api(path, {method: 'POST', body, timeout: path === '/api/maintenance/check' ? 65000 : 90000});
+      if (path === '/api/maintenance/check') {
+        discardCheck = false;
+        if (result?.channel && result?.target_sha && current) current = {...current, check: result};
+      }
+      if (['/api/maintenance/backups', '/api/maintenance/cleanup/apply'].includes(path)) {
+        sections.storage.value = null;
+        sections.storage.readAt = 0;
+      }
       feedback = message;
       toast(message, '详情会在本页持续更新。', 'ok');
       return result;
-    } catch (err) { feedback = '维护操作未完成：' + err.message; toast('维护操作未完成', err.message, 'err'); }
+    } catch (err) { feedback = '维护操作未完成：' + safeError(err); toast('维护操作未完成', safeError(err), 'err'); }
     finally {
       operating = false;
+      checkingUpdate = false;
       busyControls(false);
-      await window.refreshMaintenance(true);
+      if (current) renderMaintenance(current);
+      else $('maintenance-update').disabled = true;
       text('maintenance-feedback', feedback);
+      void window.refreshMaintenance(true);
     }
   }
 
-  window.checkMaintenanceUpdate = () => operation('/api/maintenance/check', selectedSource ? {channel: $('maintenance-channel').value} : {}, '检查完成', '正在检查更新，最长等待 60 秒…');
+  window.checkMaintenanceUpdate = () => operation('/api/maintenance/check', selectedSource ? {channel: $('maintenance-channel').value} : {}, '检查完成', '正在由部署机器检查更新，最长等待 65 秒…');
+  if ($('maintenance-status-retry')) $('maintenance-status-retry').addEventListener('click', () => window.refreshMaintenance(true));
+  for (const name of ['preflight', 'storage']) if ($('maintenance-' + name + '-retry')) $('maintenance-' + name + '-retry').addEventListener('click', () => { void loadSection(name, true); });
   $('maintenance-check').addEventListener('click', window.checkMaintenanceUpdate);
   $('maintenance-channel').addEventListener('change', () => {
     selectedSource = true;

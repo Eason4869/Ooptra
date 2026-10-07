@@ -28,6 +28,9 @@ const server = http.createServer(async (req, res) => {
   }
   let data = {ok: true};
   if (endpoint === '/api/status') data = {process: {version: '3.1.0'}, bridge: {runtime: {running: true, supervisor_alive: true}, oopz: {connected: true}, onebot: {connected: false}, traffic: {}, recent_events: [], recent_actions: []}};
+  if (endpoint === '/api/config') data = req.method === 'POST' ? {ok: true, changed: body.updates} : {groups: {webui: {fields: {update_proxy: {value: null, is_set: true}, update_mirror: {value: 'https://mirror.example/Ooptra.git'}}}}};
+  if (endpoint === '/api/maintenance/preflight') data = {ok: true, preflight: {supported: true, checks: [], pending: false}};
+  if (endpoint === '/api/maintenance/storage') data = {ok: true, storage: {total_bytes: 524, backups_count: 11, backups_bytes: 524, pending: false}};
   if (endpoint === '/api/credentials') data = {credentials: {has_password: true, has_private_key: true}};
   if (endpoint === '/api/maintenance/check') {
     checked = {channel: body.channel, current_channel: 'beta', current_sha: 'a'.repeat(40), target_sha: 'b'.repeat(40), available: true, compatible: true, action: body.channel === 'beta' ? 'update' : 'switch', requires_confirmation: body.channel !== 'beta'};
@@ -67,6 +70,16 @@ async function main() {
     await page.locator('#dialog-yes').click();
     await page.waitForFunction(() => !document.querySelector('#maintenance-check').disabled);
     assert(requests.some(row => row.endpoint === '/api/maintenance/update' && row.body.channel === 'main' && row.body.confirm_channel_switch === true));
+    await page.getByText('更新网络设置', {exact: true}).click();
+    await page.waitForFunction(() => !document.querySelector('#maintenance-network-save').disabled);
+    assert.equal(await page.locator('#maintenance-network-proxy').inputValue(), '');
+    await page.locator('#maintenance-network-mirror').fill('https://mirror.example/Ooptra.git');
+    await page.locator('#maintenance-network-save').click();
+    await page.waitForFunction(() => document.querySelector('#maintenance-network-status').textContent.includes('已保存'));
+    const networkSave = requests.filter(row => row.endpoint === '/api/config').at(-1);
+    assert(!Object.hasOwn(networkSave.body.updates.webui, 'update_proxy'), 'blank proxy retains stored credential');
+    assert.equal(networkSave.body.updates.webui.update_mirror, 'https://mirror.example/Ooptra.git');
+    await page.getByText('更新网络设置', {exact: true}).click();
     slow = true;
     await page.locator('#maintenance-backup').click();
     assert(await page.locator('#maintenance-backup').isDisabled());
@@ -81,11 +94,14 @@ async function main() {
     failed = false; slow = false;
     job = {phase: 'checking', detail: '服务重启中'};
     await page.evaluate(() => window.refreshMaintenance(true));
+    await page.waitForFunction(() => document.querySelector('#maintenance-detail').textContent.includes('服务重启中'));
     failed = true;
     await page.evaluate(() => window.refreshMaintenance(true));
-    assert.match(await page.locator('#maintenance-feedback').textContent(), /重新连接|重启/);
+    await page.waitForFunction(() => /重新连接|重启/.test(document.querySelector('#maintenance-status').textContent));
+    assert.match(await page.locator('#maintenance-status').textContent(), /重新连接|重启/);
     failed = false; job = {phase: 'complete', detail: '服务重新就绪'};
     await page.evaluate(() => window.refreshMaintenance(true));
+    await page.waitForFunction(() => document.querySelector('#maintenance-detail').textContent.includes('重新就绪'));
     assert.match(await page.locator('#maintenance-detail').textContent(), /重新就绪/);
     await page.locator('#maintenance-next').click();
     await page.waitForFunction(() => document.querySelector('#maintenance-pagination').textContent.includes('第 2'));

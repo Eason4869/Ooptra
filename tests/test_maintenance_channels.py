@@ -29,6 +29,10 @@ def remote(monkeypatch, sha):
         return original(root, args, timeout, env)
 
     monkeypatch.setattr(maintenance, "run_command", run)
+    from webui import maintenance_network
+    def unavailable_api(*args):
+        raise ValueError("offline test fixture")
+    monkeypatch.setattr(maintenance_network, "_api_sha", unavailable_api)
 
 
 def test_beta_is_a_distinct_installed_channel(repo):
