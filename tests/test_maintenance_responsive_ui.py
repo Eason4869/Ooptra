@@ -1,4 +1,5 @@
 """Regressions for independently loading maintenance sections and visible failures."""
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -6,8 +7,7 @@ from pathlib import Path
 import pytest
 
 
-@pytest.mark.parametrize("scenario", ["immediate_error", "independent_sections", "status_failure", "pending_preflight", "poll_preserves_error", "singleflight", "retry_section", "network_save", "network_clear", "network_redaction", "check_stage", "network_dirty_retry"])
-def test_responsive_maintenance_sections(scenario):
+def _run_scenario(scenario, scenario_timeout_ms=10000, replay_original_await=False):
     node = shutil.which("node")
     if not node:
         pytest.skip("Node is required for maintenance runtime regressions")
@@ -18,6 +18,12 @@ const nodes={}; const element=()=>({value:'dev',textContent:'',innerHTML:'',disa
  listeners:{},addEventListener(name,fn){this.listeners[name]=fn;},replaceChildren(){this.innerHTML='';},append(){},add(){}});
 const $=id=>nodes[id] ||= element();
 const scenario=process.argv[2],requests=[];
+console.log(JSON.stringify({scenario,ready:true}));
+// Bound the scenario after Node starts, independently of cold process startup.
+const watchdog=setTimeout(()=>{
+ console.error('maintenance scenario did not complete: '+scenario);
+ process.exitCode=1;
+},Number(process.argv[3]));
 let resolveStatus,resolvePreflight,resolveStorage;
 let rejectCheck;
 let status={update:{version:'261007-dev',current_channel:'dev'},preflight:{supported:false,checks:[],pending:true},
@@ -49,9 +55,12 @@ const context={console,Date,Set,Option:function(){},window:{},state:{process:{}}
   }
   return {};
  }};
-vm.createContext(context);vm.runInContext(fs.readFileSync(process.argv[1],'utf8'),context);
+let source=fs.readFileSync(process.argv[1],'utf8');
+if(process.argv[4]==='original-await') source=source.replace('void window.refreshMaintenance(true);','await window.refreshMaintenance(true);');
+vm.createContext(context);vm.runInContext(source,context);
 const tick=()=>new Promise(r=>setImmediate(r));
 (async()=>{
+ if(scenario==='harness_unfinished') await new Promise(()=>{});
  const initial=context.window.refreshMaintenance(true);await tick();
  if(scenario==='immediate_error') {
   const pending=context.window.checkMaintenanceUpdate();await tick();
@@ -121,7 +130,38 @@ const tick=()=>new Promise(r=>setImmediate(r));
  await context.window.checkMaintenanceUpdate();
  await context.window.refreshMaintenance(true);
  assert.match($('maintenance-feedback').textContent,/GitHub source unavailable/,'poll must preserve operation error');
-})().catch(e=>{console.error(e);process.exitCode=1;});
+})().then(async()=>{
+ // Settle intentionally blocked API fixtures only after all scenario assertions.
+ resolveStatus?.(status);
+ resolvePreflight?.({preflight:{supported:false,checks:[],pending:false}});
+ resolveStorage?.({storage:{pending:false,total_bytes:0}});
+ await tick();
+ clearTimeout(watchdog);
+ console.log(JSON.stringify({scenario,done:true}));
+}).catch(e=>{clearTimeout(watchdog);console.error(e);process.exitCode=1;});
 """
-    result = subprocess.run([node, "-e", runner, str(script), scenario], capture_output=True, text=True, encoding="utf-8", timeout=10)
+    # This outer limit protects process startup and pipe teardown. The Node
+    # watchdog still permits at most ten seconds for the actual scenario.
+    return subprocess.run([node, "-e", runner, str(script), scenario, str(scenario_timeout_ms), "original-await" if replay_original_await else ""], capture_output=True, text=True, encoding="utf-8", timeout=30)
+
+
+@pytest.mark.parametrize("scenario", ["immediate_error", "independent_sections", "status_failure", "pending_preflight", "poll_preserves_error", "singleflight", "retry_section", "network_save", "network_clear", "network_redaction", "check_stage", "network_dirty_retry"])
+def test_responsive_maintenance_sections(scenario):
+    result = _run_scenario(scenario)
     assert result.returncode == 0, result.stderr
+    assert [json.loads(line) for line in result.stdout.splitlines()] == [{"scenario": scenario, "ready": True}, {"scenario": scenario, "done": True}], "scenario must reach its final assertions"
+
+
+def test_maintenance_harness_rejects_unfinished_scenario():
+    result = _run_scenario("harness_unfinished", scenario_timeout_ms=50)
+    assert result.returncode != 0, "an unresolved scenario must not silently pass when Node exits"
+    assert "scenario did not complete" in result.stderr
+    assert [json.loads(line) for line in result.stdout.splitlines()] == [{"scenario": "harness_unfinished", "ready": True}]
+
+
+def test_maintenance_harness_still_rejects_waiting_for_post_operation_status():
+    """Replay the original await bug without changing the production script."""
+    result = _run_scenario("immediate_error", replay_original_await=True)
+    assert result.returncode != 0, "fixture cleanup must not make the original await regression pass"
+    assert "operation must complete before post-operation status finishes" in result.stderr
+    assert [json.loads(line) for line in result.stdout.splitlines()] == [{"scenario": "immediate_error", "ready": True}]
