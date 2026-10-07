@@ -35,7 +35,10 @@ const context={console,Date,Set,Option:function(){},window:{},state:{process:{}}
  api:async(path,opts={})=>{
   requests.push({path,opts});
   if(path==='/api/config') {
-   if(opts.method==='POST') return {changed:{webui:Object.keys(opts.body.updates.webui)}};
+   if(opts.method==='POST') {
+    if(scenario==='proxy_failure') throw Error('save offline');
+    return {changed:{webui:Object.keys(opts.body.updates.webui)}};
+   }
    if(scenario==='network_redaction') throw Error('proxy socks5://name:secret@proxy.example failed');
    return {groups:{webui:{fields:{update_proxy:{value:null,is_set:true,sensitive:true},update_mirror:{value:'https://mirror.example/repository.git'}}}}};
   }
@@ -49,6 +52,11 @@ const context={console,Date,Set,Option:function(){},window:{},state:{process:{}}
   }
   if(path==='/api/maintenance/storage') return await new Promise(r=>resolveStorage=r);
   if(path.startsWith('/api/maintenance?')) {
+   if(scenario==='pagination_queued'||scenario==='page_supplement') {
+    const count=requests.filter(r=>r.path.startsWith('/api/maintenance?')).length;
+    if(count===2) return await new Promise(r=>resolveStatus=r);
+    return {...status,backup_page:{page:path.includes('page=2&')?2:1,pages:2,total:11}};
+   }
    if(scenario==='status_failure') throw Error('status offline');
    if(scenario==='singleflight' || (scenario==='immediate_error' && requests.filter(r=>r.path.startsWith('/api/maintenance?')).length>1)) return await new Promise(r=>resolveStatus=r);
    return status;
@@ -56,7 +64,7 @@ const context={console,Date,Set,Option:function(){},window:{},state:{process:{}}
   return {};
  }};
 let source=fs.readFileSync(process.argv[1],'utf8');
-if(process.argv[4]==='original-await') source=source.replace('void window.refreshMaintenance(true);','await window.refreshMaintenance(true);');
+if(process.argv[4]==='original-await') source=source.replace("text('maintenance-feedback', feedback);\n      void window.refreshMaintenance(true);", "text('maintenance-feedback', feedback);\n      await window.refreshMaintenance(true);");
 vm.createContext(context);vm.runInContext(source,context);
 const tick=()=>new Promise(r=>setImmediate(r));
 (async()=>{
@@ -74,6 +82,41 @@ const tick=()=>new Promise(r=>setImmediate(r));
   assert.equal(requests.filter(r=>r.path==='/api/maintenance/preflight').length,1,'only one supplemental request at a time');return;
  }
  await initial;
+ if(scenario==='pagination_queued') {
+  const pending=context.window.refreshMaintenance(true);await tick();
+  $('maintenance-next').listeners.click();await tick();
+  resolveStatus({...status,backup_page:{page:1,pages:2,total:11}});await pending;await tick();
+  assert(requests.filter(r=>r.path.startsWith('/api/maintenance?')).at(-1).path.includes('page=2&'),'queued navigation must preserve requested page');
+  assert.match($('maintenance-pagination').textContent,/第 2/);return;
+ }
+ if(scenario==='page_supplement') {
+  $('maintenance-next').listeners.click();await tick();
+  resolvePreflight({preflight:{supported:true,checks:[],pending:false}});await tick();
+  resolveStatus({...status,backup_page:{page:2,pages:2,total:11}});await tick();await tick();
+  assert.equal(requests.filter(r=>r.path.startsWith('/api/maintenance?')).length,2,'supplemental rendering must not discard the requested page');
+  assert.match($('maintenance-pagination').textContent,/第 2/);return;
+ }
+ if(scenario==='proxy_failure') {
+  $('maintenance-proxy-mode').value='direct';$('maintenance-proxy-mode').listeners.change();
+  await $('maintenance-network-save').listeners.click();
+  assert.match($('maintenance-network-status').textContent,/save offline/);
+  assert.equal($('maintenance-proxy-mode').value,'direct');
+  assert.equal($('maintenance-network-proxy').disabled,true,'failed save must retain direct-mode input state');return;
+ }
+ if(scenario==='proxy_explicit_blank') {
+  $('maintenance-network-proxy').value='';$('maintenance-network-proxy').listeners.input();
+  await $('maintenance-network-save').listeners.click();
+  const update=requests.find(r=>r.path==='/api/config'&&r.opts.method==='POST').opts.body.updates.webui;
+  assert.equal(update.update_proxy,'direct','explicitly cleared proxy must bypass environment proxies');return;
+ }
+ if(scenario==='proxy_keep') {
+  $('maintenance-proxy-mode').value='manual';$('maintenance-proxy-mode').listeners.change();
+  $('maintenance-network-proxy').value='http://new.example:7890';$('maintenance-network-proxy').listeners.input();
+  $('maintenance-proxy-mode').value='keep';$('maintenance-proxy-mode').listeners.change();
+  await $('maintenance-network-save').listeners.click();
+  const update=requests.find(r=>r.path==='/api/config'&&r.opts.method==='POST').opts.body.updates.webui;
+  assert(!Object.hasOwn(update,'update_proxy'),'returning to keep must preserve hidden credentials');return;
+ }
  if(scenario==='check_stage') {
   const pending=context.window.checkMaintenanceUpdate();await tick();
   status.check_stage='查询官方 GitHub，尝试 1/2';await context.window.refreshMaintenance(true);
@@ -145,7 +188,7 @@ const tick=()=>new Promise(r=>setImmediate(r));
     return subprocess.run([node, "-e", runner, str(script), scenario, str(scenario_timeout_ms), "original-await" if replay_original_await else ""], capture_output=True, text=True, encoding="utf-8", timeout=30)
 
 
-@pytest.mark.parametrize("scenario", ["immediate_error", "independent_sections", "status_failure", "pending_preflight", "poll_preserves_error", "singleflight", "retry_section", "network_save", "network_clear", "network_redaction", "check_stage", "network_dirty_retry"])
+@pytest.mark.parametrize("scenario", ["immediate_error", "independent_sections", "status_failure", "pending_preflight", "poll_preserves_error", "singleflight", "retry_section", "network_save", "network_clear", "network_redaction", "check_stage", "network_dirty_retry", "pagination_queued", "proxy_failure", "proxy_explicit_blank", "page_supplement", "proxy_keep"])
 def test_responsive_maintenance_sections(scenario):
     result = _run_scenario(scenario)
     assert result.returncode == 0, result.stderr

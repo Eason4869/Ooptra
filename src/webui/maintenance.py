@@ -19,7 +19,7 @@ from pathlib import Path
 
 from core.version import __version__
 from webui.maintenance_cleanup import delete_items, inventory
-from webui.maintenance_network import fetch_verified, lookup_official_sha
+from webui.maintenance_network import fetch_verified, lookup_official_sha, test_mirror_connection
 from webui.maintenance_storage import BackupStore, atomic_json, restored_endpoint
 from webui.maintenance_worker import runtime_health
 
@@ -88,7 +88,8 @@ class MaintenanceService:
 
     def read_job(self):
         try:
-            return json.loads(self.job_file.read_text(encoding="utf-8"))
+            value = json.loads(self.job_file.read_text(encoding="utf-8"))
+            return value if isinstance(value, dict) else None
         except (OSError, ValueError):
             return None
 
@@ -278,6 +279,11 @@ class MaintenanceService:
             raise ValueError("备份分页参数无效")
         job = self.read_job()
         backups = self.backups.list(limit=None)
+        record_error = job is None and self.job_file.exists()
+        references = {job.get(key) for key in ("backup_id", "safety_backup_id") if isinstance(job.get(key), str)} if job else set()
+        for row in backups:
+            reason = "维护记录无法读取，请修复后再删除" if record_error else "更新、恢复或回滚任务引用的备份" if row["id"] in references else ""
+            row.update(can_delete=not reason, delete_reason=reason)
         self._backup_totals = {"backups_count": len(backups), "backups_bytes": sum(row["size"] for row in backups)}
         pages = max(1, (len(backups) + page_size - 1) // page_size)
         page = min(page, pages)
@@ -307,6 +313,24 @@ class MaintenanceService:
         return {"ok": True, "token": self._cleanup["token"], "expires_at": self._cleanup["expires_at"],
                 "items": [{k: v for k, v in item.items() if k != "fingerprint"} for item in items],
                 "total_bytes": sum(item["size"] for item in items)}
+
+    async def delete_backup(self, backup_id):
+        self._claim()
+        try:
+            def remove():
+                job = self.read_job()
+                if job is None and self.job_file.exists():
+                    raise ValueError("维护记录无法读取，请修复后再删除")
+                if job and any(job.get(key) == backup_id for key in ("backup_id", "safety_backup_id")):
+                    raise ValueError("这份备份被更新、恢复或回滚任务引用，暂不能删除")
+                self.backups.delete(backup_id)
+                return {"deleted_id": backup_id}
+            result = await asyncio.to_thread(remove)
+            self._cleanup = None
+            return result
+        finally:
+            self._busy = False
+            self._invalidate_reads()
 
     async def apply_cleanup(self, token):
         self._claim()
@@ -570,6 +594,11 @@ def mount_maintenance_routes(app, service):
                     result = await service.apply_cleanup(value.get("token", ""))
                 elif action == "backup":
                     result = await service.create_backup()
+                elif action == "delete_backup":
+                    result = await service.delete_backup(request.match_info["id"])
+                elif action == "network_test":
+                    options = {"proxy": value["proxy"]} if "proxy" in value else {}
+                    result = await asyncio.to_thread(test_mirror_connection, value.get("mirror", ""), value.get("channel", "main"), run_command, **options)
                 elif action == "restore":
                     result = await service.start_restore(value.get("backup_id", ""))
                 else:
@@ -586,6 +615,8 @@ def mount_maintenance_routes(app, service):
         web.get("/api/maintenance/storage", storage_status),
         web.post("/api/maintenance/check", handler("check")),
         web.post("/api/maintenance/backups", handler("backup")),
+        web.delete("/api/maintenance/backups/{id}", handler("delete_backup")),
+        web.post("/api/maintenance/network/test", handler("network_test")),
         web.post("/api/maintenance/restore", handler("restore")),
         web.post("/api/maintenance/update", handler("update")),
         web.post("/api/maintenance/cleanup/preview", handler("cleanup_preview")),

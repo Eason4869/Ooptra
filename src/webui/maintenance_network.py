@@ -72,6 +72,31 @@ def load_network_settings():
     return NetworkSettings(WEBUI_CONFIG.get("update_proxy", ""), WEBUI_CONFIG.get("update_mirror", ""))
 
 
+def test_mirror_connection(mirror, channel, run_command, *, proxy=None):
+    """Probe Git protocol on the deployment host, without saving or fetching code."""
+    _validate_channel(channel)
+    url = validate_network_field("update_mirror", mirror) or OFFICIAL_URL
+    proxy = load_network_settings().proxy if proxy is None else validate_network_field("update_proxy", proxy)
+    started = time.monotonic()
+    try:
+        with tempfile.TemporaryDirectory(prefix="ooptra-network-test-") as directory:
+            env = _git_environment(proxy, url, isolated=True)
+            # Some accelerators redirect Git's initial discovery request.
+            for index in range(int(env["GIT_CONFIG_COUNT"])):
+                if env[f"GIT_CONFIG_KEY_{index}"].endswith("followRedirects"):
+                    env[f"GIT_CONFIG_VALUE_{index}"] = "initial"
+            output = run_command(Path(directory), ["git", "ls-remote", "--", url, f"refs/heads/{channel}"], 15, env=env)
+        rows = [row.split() for row in output.splitlines()]
+        if not any(len(row) == 2 and _valid_sha(row[0]) and row[1] == f"refs/heads/{channel}" for row in rows):
+            raise ValueError("加速地址未返回该频道的有效 Git 分支；可能仅支持文件下载")
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ValueError("Git 连通性测试失败或超过 15 秒，请更换地址后重试") from exc
+    except ValueError:
+        raise ValueError("Git 连通性测试失败：未读取到有效分支，请检查地址或切换节点") from None
+    return {"ok": True, "elapsed_ms": round((time.monotonic() - started) * 1000),
+            "detail": "Git 分支读取成功；安装时仍核对官方提交，连通不代表下载全程可用"}
+
+
 def _git_environment(proxy, url=OFFICIAL_URL, *, isolated=False):
     env = dict(os.environ)
     for key in list(env):
@@ -180,7 +205,9 @@ def fetch_verified(root, channel, trusted_sha, deadline, run_command, *, setting
     if settings.proxy != "direct":
         sources.append((OFFICIAL_URL, "direct", "官方 GitHub 直连"))
     if settings.mirror:
-        sources.append((settings.mirror, "direct", "配置镜像（已核对官方提交）"))
+        sources.append((settings.mirror, settings.proxy, "配置镜像（已核对官方提交）"))
+        if settings.proxy != "direct":
+            sources.append((settings.mirror, "direct", "配置镜像直连（已核对官方提交）"))
     for index, (url, proxy, label) in enumerate(sources):
         timeout = _timeout(deadline, len(sources) - index, 60)
         if progress:
