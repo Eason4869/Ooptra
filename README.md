@@ -7,11 +7,11 @@
 </p>
 
 <p align="center">
-  <img src="./assets/readme/hero.svg" width="100%" alt="Ooptra 3.1.0：消息桥接、语音对话、自动串门与支持暗色模式的 WebUI" />
+  <img src="./assets/readme/hero.svg" width="100%" alt="Ooptra 261007-beta：语音对话、自检试听、自动串门与更新备份" />
 </p>
 
 <p align="center">
-  <a href="CHANGELOG.md"><img alt="当前版本 3.1.0" src="https://img.shields.io/badge/version-3.1.0-315DDC?style=flat-square"></a>
+  <a href="CHANGELOG.md"><img alt="当前版本 261007-beta" src="https://img.shields.io/badge/version-261007--beta-315DDC?style=flat-square"></a>
   <a href="https://github.com/Eason4869/Ooptra/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/Eason4869/Ooptra?style=flat-square"></a>
   <a href="https://hits.sh/github.com/Eason4869/Ooptra/"><img alt="README 累计访问次数" src="https://hits.sh/github.com/Eason4869/Ooptra.svg?style=flat-square&amp;label=README%20views&amp;color=315ddc"></a>
   <a href="https://github.com/Eason4869/Ooptra/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Eason4869/Ooptra/ci.yml?style=flat-square&amp;label=CI"></a>
@@ -38,12 +38,14 @@ Ooptra 将 Oopz 消息接入 **OneBot v11**，通过反向 WebSocket 对接机�
 | Web 控制台 | 状态、日志、配置、登录与语音管理；支持手机访问和暗色模式 |
 | AI 语音 | Gemini Live / MiMo 级联；支持抢话、回复概率、强制关键词与语音退房 |
 | 自动串门 | 按域开启，随机进有人的房间；限时退出、进退房台词、冷却与每日上限 |
+| 语音工具 | 连续追问、自检、无人倒计时与独立浏览器试听 |
+| 更新与备份 | 检查 main / dev 提交、配置数据备份；Git + 虚拟环境支持自动升级与失败回滚 |
 | 插件对接 | HTTP API 提供语音控制、人格与记忆管理，支持外部插件调用 |
 
 文字消息指令与插件由对端机器人框架处理。Ooptra 是第三方工具，与 Oopz 官方无隶属关系。
 
 <p align="center">
-  <img src="./assets/readme/runtime-map.svg" width="100%" alt="Ooptra 3.1.0 消息与语音链路" />
+  <img src="./assets/readme/runtime-map.svg" width="100%" alt="Ooptra 261007-beta 消息与语音链路" />
 </p>
 
 ## 快速开始
@@ -55,6 +57,7 @@ Ooptra 将 Oopz 消息接入 **OneBot v11**，通过反向 WebSocket 对接机�
 ```bash
 git clone https://github.com/Eason4869/Ooptra.git
 cd Ooptra
+git switch dev
 python -m venv .venv
 ```
 
@@ -87,7 +90,7 @@ python -m playwright install chromium
 ### 3. 启动并连接
 
 ```bash
-python main.py
+python launcher.py
 ```
 
 打开 **`http://127.0.0.1:3090`**，在「配置 → 连接」填写对端反向 WS 地址，点击「保存并重新连接」。
@@ -116,9 +119,12 @@ Ooptra 主动连接，对端需开启 **OneBot v11 反向 WebSocket 服务端**�
 | 配置 | 连接、语音模型、系统设置；不常用项位于「高级选项」 |
 | 账号 | 凭据状态、账号密码登录、网页版登录 |
 | 语音台 | 会话控制、自动串门、房间成员、人格与记忆 |
+| 更新与备份 | 检查分支提交、创建和下载备份、升级与恢复进度 |
 
 右上角可切换暗色模式，选择保存在当前浏览器。侧栏「维护与账号」提供重连、检查更新和退出登录。
-**检查更新只查询 GitHub Release / 标签，不会自动下载、安装，也不会检测仅推送到 main 的代码更新。**
+「更新与备份」检查 main / dev 的最新提交；符合预检查条件时可一键备份并升级，失败时尝试恢复原版本和数据。
+自动升级需 **官方 Git 仓库 + 虚拟环境 + `python launcher.py`**；局域网维护还需设置访问令牌。
+原有侧栏「检查更新」仍查询 Release / 标签。详细支持条件与恢复方法见[配置与维护](docs/operations.md)。
 
 局域网访问：将 `WEBUI_CONFIG.host` 设为 `0.0.0.0`，**同时设置 `token`**，然后打开
 `http://<部署机器的 IP>:3090/?token=<token>`。默认 `127.0.0.1` 仅允许本机访问。
@@ -132,6 +138,7 @@ Ooptra 主动连接，对端需开启 **OneBot v11 反向 WebSocket 服务端**�
 | --- | --- |
 | 语音回复频率 | 默认 **30%**，可设 `0～100%`；按概率接话，手动开口和进退房台词不受限制 |
 | 强制回复关键词 | 默认空列表；转写包含关键词即绕过概率，忽略大小写、全半角、空格和标点；同音别名可自行添加 |
+| 连续对话窗口 | 默认开启 **30 秒**；命中关键词后，同一成员的连续追问绕过概率，每次追问延长窗口；需先配置关键词 |
 | 语音控制退语音 | 默认开启；AI 识别当前监听成员的退房请求，先说离场语再退出；`0%` 回复概率也可触发 |
 | 抢话与监听范围 | 默认允许抢话；可调打断门限，或用 `listen_only_uids` 限定监听成员 |
 | 人格与记忆 | 在「语音台 → 人格与记忆」管理，记忆保存在本地 |
@@ -139,6 +146,7 @@ Ooptra 主动连接，对端需开启 **OneBot v11 反向 WebSocket 服务端**�
 
 降低回复频率不保证减少 Gemini 用量；语音退房依赖 ASR / AI 判定，首次启用请实际验证。
 后端差异、离场语、手动开口及 API 详见[语音与 API 指南](docs/voice-guide.md)。
+「语音台 → 自检与试听」可检查环境，并在当前浏览器试听音色或 AI 改写的进退房台词；不会打扰语音房，模型请求可能产生费用。
 
 ### 自动串门
 
