@@ -13,7 +13,7 @@
 <p align="center">
   <a href="CHANGELOG.md"><img alt="当前版本 261007-dev" src="https://img.shields.io/badge/version-261007--dev-315DDC?style=flat-square"></a>
   <a href="https://github.com/Eason4869/Ooptra/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/Eason4869/Ooptra?style=flat-square"></a>
-  <a href="https://github.com/Eason4869/Ooptra/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Eason4869/Ooptra/ci.yml?style=flat-square&amp;label=CI"></a>
+  <a href="https://github.com/Eason4869/Ooptra/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Eason4869/Ooptra/ci.yml?style=flat-square&amp;label=CI&amp;branch=dev"></a>
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-3776ab?style=flat-square&amp;logo=python&amp;logoColor=white">
   <a href="LICENSE"><img alt="许可" src="https://img.shields.io/badge/license-MIT-3ddc97?style=flat-square"></a>
 </p>
@@ -55,21 +55,21 @@ README 顶部只保留一套累计访问计数展示，不能据此判断独立�
 
 ### 1. 获取代码
 
-选择一个频道执行对应的克隆命令：
+本 README 对应 **dev · 261007-dev**。三个频道当前功能一致，新安装建议选择正式版。选择一个频道执行对应的克隆命令：
 
-正式版（`main`）：
+正式版（`main`，`3.2.0`）：
 
 ```bash
 git clone -b main https://github.com/Eason4869/Ooptra.git
 ```
 
-测试版（`beta`）：
+测试版（`beta`，`261007-beta`）：
 
 ```bash
 git clone -b beta https://github.com/Eason4869/Ooptra.git
 ```
 
-预览版（`dev`，本 README 对应 `261007-dev`）：
+预览版（`dev`，`261007-dev`）：
 
 ```bash
 git clone -b dev https://github.com/Eason4869/Ooptra.git
