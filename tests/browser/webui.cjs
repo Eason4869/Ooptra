@@ -7,6 +7,9 @@ const {chromium} = require(process.env.OOPTRA_PLAYWRIGHT_MODULE || 'playwright')
 
 const assets = path.resolve(__dirname, '../../src/webui/assets');
 const requests = [];
+const sessions = new Set();
+let loginSequence = 0;
+let sharedPassword = 'fixture-password';
 let failures = new Set();
 let job = null;
 let slowMaintenance = false;
@@ -16,7 +19,7 @@ let stallCheckBody = false;
 let installedChannel = 'beta';
 let deletableBackup = true;
 let updateCheck = {channel: 'beta', current_channel: 'beta', target_sha: 'b'.repeat(40), available: true, action: 'update', requires_confirmation: false, compatible: true};
-let schema = {oopz: {fields: {default_area: {type: 'str', value: 'original', label: '默认域'}}}, voice: {fields: {backend: {type: 'select', value: 'mimo_cascade', label: '后端', options: ['mimo_cascade', 'gemini_live']}}}, webui: {fields: {port: {type: 'int', value: 8080, label: '端口'}, update_proxy: {type: 'str', value: null, is_set: true, sensitive: true, label: '更新代理', adv: true}, update_mirror: {type: 'str', value: '', label: '更新镜像', adv: true}}}};
+let schema = {oopz: {fields: {default_area: {type: 'str', value: 'original', label: '默认域'}}}, voice: {fields: {backend: {type: 'select', value: 'mimo_cascade', label: '后端', options: ['mimo_cascade', 'gemini_live']}}}, webui: {fields: {token: {type: 'str', value: null, is_set: true, sensitive: true, label: '控制台密码 / 插件 API Token'}, port: {type: 'int', value: 8080, label: '端口'}, update_proxy: {type: 'str', value: null, is_set: true, sensitive: true, label: '更新代理', adv: true}, update_mirror: {type: 'str', value: '', label: '更新镜像', adv: true}}}};
 const wav = Buffer.alloc(524);
 wav.write('RIFF'); wav.writeUInt32LE(516, 4); wav.write('WAVEfmt ', 8); wav.writeUInt32LE(16, 16);
 wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22); wav.writeUInt32LE(24000, 24);
@@ -34,6 +37,16 @@ const server = http.createServer(async (req, res) => {
   const body = chunks.length ? JSON.parse(Buffer.concat(chunks)) : {};
   if (['POST', 'DELETE'].includes(req.method)) requests.push({endpoint, body, method: req.method});
   res.setHeader('Content-Type', 'application/json');
+  const session = (req.headers.cookie || '').match(/ooptra_session=([^;]+)/)?.[1];
+  if (endpoint === '/api/auth/status') return res.end(JSON.stringify({ok: true, configured: true, authenticated: sessions.has(session)}));
+  if (endpoint === '/api/auth/login') {
+    if (body.password !== sharedPassword) {res.statusCode = 401; return res.end(JSON.stringify({error: '控制台密码不正确'}));}
+    const sid = 'fixture-session-' + (++loginSequence);
+    sessions.add(sid); res.setHeader('Set-Cookie', 'ooptra_session=' + sid + '; Path=/; HttpOnly; SameSite=Lax');
+    return res.end('{"ok":true}');
+  }
+  if (endpoint === '/api/auth/logout') {sessions.delete(session); res.setHeader('Set-Cookie', 'ooptra_session=; Path=/; Max-Age=0'); return res.end('{"ok":true}');}
+  if (!sessions.has(session)) {res.statusCode = 401; return res.end('{"error":"请登录控制台"}');}
   if (stallCheckBody && endpoint === '/api/maintenance/check') {
     res.write('{"ok":');
     await new Promise(resolve => setTimeout(resolve, 500));
@@ -58,6 +71,7 @@ const server = http.createServer(async (req, res) => {
         }
       }
       data = {changed};
+      if (body.updates.webui?.token) {sharedPassword = body.updates.webui.token; sessions.clear(); data.reauth_required = true; data.bridge_restart_requested = body.restart_after === true;}
     } else data = {groups: schema, path: 'fixture/config.py'};
   }
   if (endpoint === '/api/oopz/areas') data = {areas: [{id: 'qa', name: '验收域'}], default_area: 'qa', default_channel: 'room'};
@@ -82,12 +96,49 @@ const server = http.createServer(async (req, res) => {
 async function main() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const browser = await chromium.launch({headless: true, ...(process.env.OOPTRA_BROWSER_EXECUTABLE ? {executablePath: process.env.OOPTRA_BROWSER_EXECUTABLE} : {})});
-  const page = await browser.newPage({viewport: {width: 1440, height: 1000}});
+  const context = await browser.newContext({viewport: {width: 1440, height: 1000}});
+  const page = await context.newPage();
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   const nav = name => page.locator('.nav-item[data-page="' + name + '"]').first().click();
   try {
-    await page.goto('http://127.0.0.1:' + server.address().port);
+    await page.goto('http://127.0.0.1:' + server.address().port + '/?token=fixture-password');
+    await page.locator('#screen-login').waitFor({state: 'visible'});
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false);
+    if (process.env.OOPTRA_BROWSER_ARTIFACTS) {
+      fs.mkdirSync(process.env.OOPTRA_BROWSER_ARTIFACTS, {recursive: true});
+      await page.screenshot({path: path.join(process.env.OOPTRA_BROWSER_ARTIFACTS, 'login-light.png'), fullPage: true});
+      await page.locator('#screen-login [data-theme-toggle]').click();
+      await page.screenshot({path: path.join(process.env.OOPTRA_BROWSER_ARTIFACTS, 'login-dark.png'), fullPage: true});
+      await page.setViewportSize({width: 390, height: 844});
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false, 'mobile login must fit');
+      await page.screenshot({path: path.join(process.env.OOPTRA_BROWSER_ARTIFACTS, 'login-mobile.png'), fullPage: true});
+      await page.locator('#screen-login [data-theme-toggle]').click();
+      await page.setViewportSize({width: 1440, height: 1000});
+    }
+    await page.locator('#login-token').fill('wrong-password');
+    await page.locator('#login-submit').click();
+    await page.waitForFunction(() => document.querySelector('#login-msg').textContent.includes('不正确'));
+    await page.locator('#login-token').fill('fixture-password');
+    await page.locator('#login-submit').click();
+    await page.locator('#screen-app').waitFor({state: 'visible'});
+    assert(!page.url().includes('token='), 'shared password must be stripped from URLs');
+    assert.equal(await page.evaluate(() => localStorage.getItem('oopz.webui.token')), null);
+    const secondTab = await page.context().newPage();
+    await secondTab.goto('http://127.0.0.1:' + server.address().port);
+    await secondTab.locator('#screen-app').waitFor({state: 'visible'});
+    await page.locator('.rail-utilities > summary').click();
+    await page.locator('#btn-logout').click();
+    await page.locator('#dialog-yes').click();
+    await page.locator('#screen-login').waitFor({state: 'visible'});
+    await secondTab.locator('#screen-login').waitFor({state: 'visible'});
+    await secondTab.close();
+    await page.reload();
+    await page.locator('#screen-login').waitFor({state: 'visible'});
+    assert.equal(await page.locator('#login-token').inputValue(), '');
+    assert.equal(await page.evaluate(async () => (await fetch('/api/status')).status), 401);
+    await page.locator('#login-token').fill('fixture-password');
+    await page.locator('#login-submit').click();
     await page.locator('#screen-app').waitFor({state: 'visible'});
     await nav('maintenance');
     await page.waitForFunction(() => document.querySelector('#maintenance-channel').value === 'beta');
@@ -335,6 +386,20 @@ async function main() {
       }
     }
     assert.deepEqual(errors, [], 'page scripts must load without errors');
+    await nav('config');
+    await page.locator('#config-tabs [data-tab="system"]').click();
+    const sharedField = page.locator('.cfg-field[data-group="webui"][data-field="token"] input');
+    assert.equal(await sharedField.count(), 1);
+    await sharedField.fill('rotated-fixture-password');
+    await page.locator('#config-save-restart').click();
+    await page.locator('#screen-login').waitFor({state: 'visible'});
+    assert.equal(requests.filter(row => row.endpoint === '/api/config').at(-1).body.restart_after, true, 'save and reconnect survives credential rotation');
+    await page.locator('#login-token').fill('fixture-password');
+    await page.locator('#login-submit').click();
+    await page.waitForFunction(() => document.querySelector('#login-msg').textContent.includes('不正确'));
+    await page.locator('#login-token').fill('rotated-fixture-password');
+    await page.locator('#login-submit').click();
+    await page.locator('#screen-app').waitFor({state: 'visible'});
     console.log('PASS webui browser acceptance: drafts, maintenance clicks/errors/reconnect, decisions, WAV diagnostics, preview, theme, mobile');
   } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }
 }

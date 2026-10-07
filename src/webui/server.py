@@ -20,12 +20,12 @@ from core.logger_config import get_logger
 from core.paths import LOGS_DIR, PROJECT_ROOT
 from core.version import __version__
 from webui import config_editor
+from webui.auth import AUTH_PATHS, ConsoleAuth
 from webui.log_tail import LogTailer
 from webui.oopz_login import OopzLoginService, credentials_summary
 
 logger = get_logger("WebUI")
 
-COOKIE_NAME = "oopz_webui_token"
 ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 3090
@@ -64,6 +64,7 @@ class WebUIConsole:
         self._tailer = LogTailer(LOGS_DIR)
         self._login = OopzLoginService(controller, state)
         self._token = ""
+        self._auth = ConsoleAuth(lambda: self._token, self._setup_password)
         self._host = DEFAULT_HOST
         self._port = DEFAULT_PORT
         self._runner: web.AppRunner | None = None
@@ -103,11 +104,12 @@ class WebUIConsole:
 
         if not self._token and not _is_loopback(self._host):
             logger.warning(
-                "Web 控制台绑定在 %s 且 token 为空：局域网内任何人都能打开，请自行确认网络环境",
+                "Web 控制台尚未设置密码，请从部署机器本机打开 %s 设置首次密码",
                 self._host,
             )
 
         app = web.Application(middlewares=[self._auth_middleware], client_max_size=3 * 1024 * 1024)
+        self._auth.mount(app)
         from webui.maintenance import MaintenanceService, mount_maintenance_routes
 
         self._maintenance = MaintenanceService(PROJECT_ROOT, shutdown=self._shutdown,
@@ -160,7 +162,7 @@ class WebUIConsole:
 
         self._runner = runner
         self._site = site
-        suffix = "（已设置访问令牌，用 ?token=... 打开）" if self._token else ""
+        suffix = "（请使用控制台密码登录）" if self._token else "（请先在本机设置密码）"
         logger.info("Web 控制台已启动：%s%s", self.base_url, suffix)
 
     async def stop(self) -> None:
@@ -173,6 +175,7 @@ class WebUIConsole:
                 await self._runner.cleanup()
         self._runner = None
         self._site = None
+        self._auth.invalidate()
 
     # ------------------------------------------------------------------
     # 鉴权
@@ -184,29 +187,37 @@ class WebUIConsole:
         protected = path.startswith("/api/") or path.startswith(
             ("/voice/", "/health", "/oopz/", "/persona", "/memory")
         )
-        if path.startswith("/api/maintenance") and not self._token and not _is_loopback(request.remote or ""):
-            return web.json_response({"ok": False, "error": "远程维护需要先配置 WebUI 访问令牌"}, status=403)
-        if not self._token or not protected:
-            return await handler(request)
+        browser_session = self._auth.authenticated(request)
+        if (path == "/api/status" and request.method in {"GET", "HEAD"} and not self._token
+                and self._auth.setup_allowed(request)):
+            # Old update workers probe this URL without credentials. Keep only local
+            # readiness/identity available while the installation awaits first setup.
+            bridge = self._controller.snapshot()
+            return web.json_response({"ok": True, "process": self._process_identity(),
+                                      "bridge": {"runtime": {"supervisor_alive": bool(
+                                          (bridge.get("runtime") or {}).get("supervisor_alive"))}}},
+                                     headers={"Cache-Control": "no-store"})
+        if (request.method not in {"GET", "HEAD", "OPTIONS"} and (browser_session or path in AUTH_PATHS)
+                and not self._auth.same_origin(request)):
+            return web.json_response({"ok": False, "error": "请从本控制台页面提交操作"}, status=403)
+        if (protected and path not in AUTH_PATHS and not browser_session
+                and not self._auth.plugin_authenticated(request)):
+            return web.json_response({"ok": False, "error": "请登录控制台"}, status=401)
+        return await handler(request)
 
-        provided = (
-            request.query.get("token")
-            or request.cookies.get(COOKIE_NAME)
-            or str(request.headers.get("Authorization") or "").removeprefix("Bearer ").strip()
-        )
-        if provided != self._token:
-            return web.json_response({"ok": False, "error": "访问令牌无效"}, status=401)
+    async def _setup_password(self, password: str) -> None:
+        result = await asyncio.to_thread(config_editor.apply_updates, {"webui": {"token": password}})
+        self._change_password(password)
+        await self._hot_reload_voice(result)
 
-        response = await handler(request)
-        if request.query.get("token") and isinstance(response, web.Response):
-            response.set_cookie(
-                COOKIE_NAME,
-                self._token,
-                httponly=True,
-                samesite="Lax",
-                max_age=30 * 86400,
-            )
-        return response
+    def _change_password(self, password: str) -> None:
+        self._token = password.strip()
+        self._auth.invalidate()
+        if self._voice_runtime is not None:
+            # Credential rotation must not depend on successful model/session reload.
+            self._voice_runtime.api_settings.token = self._token
+        if self._maintenance is not None:
+            self._maintenance.token = self._token
 
     # ------------------------------------------------------------------
     # 静态资源
@@ -233,6 +244,10 @@ class WebUIConsole:
     # 状态 / 凭据
     # ------------------------------------------------------------------
 
+    def _process_identity(self) -> dict[str, Any]:
+        return {"pid": os.getpid(), "update_id": os.environ.get("OOPTRA_UPDATE_ID", ""),
+                "executable": sys.executable, "bootstrap_ready": self.bootstrap_ready}
+
     async def _handle_status(self, _request: web.Request) -> web.StreamResponse:
         oopz_cfg = getattr(runtime_config, "OOPZ_CONFIG", {}) or {}
         onebot_cfg = getattr(runtime_config, "ONEBOT_V11_CONFIG", {}) or {}
@@ -241,11 +256,8 @@ class WebUIConsole:
             "bridge": self._controller.snapshot(),
             "process": {
                 "version": __version__,
-                "pid": os.getpid(),
-                "update_id": os.environ.get("OOPTRA_UPDATE_ID", ""),
+                **self._process_identity(),
                 "python": platform.python_version(),
-                "executable": sys.executable,
-                "bootstrap_ready": self.bootstrap_ready,
                 "platform": platform.platform(),
                 "project_root": PROJECT_ROOT,
                 "log_file": os.path.join(LOGS_DIR, "oopz_bot.log"),
@@ -376,6 +388,8 @@ class WebUIConsole:
         await response.prepare(request)
         try:
             async for chunk in self._tailer.stream(name, first_lines=first_lines):
+                if not self._auth.authenticated(request) and not self._auth.plugin_authenticated(request):
+                    break
                 await response.write(chunk.encode("utf-8"))
         except (asyncio.CancelledError, ConnectionResetError):
             pass
@@ -411,7 +425,22 @@ class WebUIConsole:
 
         # 语音配置必须回到主事件循环上热重载：reload_settings 会创建 asyncio 任务
         # （重建 Live 会话），在 to_thread 的工作线程里跑会绑到错误的 loop 上。
+        if "token" in (result.get("changed") or {}).get("webui", []):
+            self._change_password(str(payload["updates"]["webui"]["token"]))
+            result["reauth_required"] = True
+            result.setdefault("notes", []).append("控制台密码与插件 API Token 已同步，请重新登录；插件请使用新 Token")
         await self._hot_reload_voice(result)
+
+        if result.get("reauth_required") and payload.get("restart_after") is True:
+            # This request was authorized before rotating the password. Complete the
+            # explicitly requested reconnect here, without another expired-cookie call.
+            try:
+                await self._controller.restart("WebUI 保存配置并重连")
+                result["bridge_restart_requested"] = True
+            except Exception:
+                logger.exception("配置已保存，但桥接重连失败")
+                result["bridge_restart_error"] = True
+                result.setdefault("notes", []).append("桥接重连失败，请重新登录后手动重连")
 
         message = "已写入 config.py"
         notes = result.get("notes") or []
@@ -424,12 +453,14 @@ class WebUIConsole:
     async def _hot_reload_voice(self, result: dict) -> None:
         """把刚保存的语音配置应用到运行中的 VoiceRuntime。"""
         changed = result.get("changed") or {}
-        if not ({"voice", "voice_api", "auto_visit"} & set(changed)):
+        if not ({"voice", "voice_api", "auto_visit"} & set(changed)) and "token" not in changed.get("webui", []):
+            return
+        if self._voice_runtime is None and "token" in changed.get("webui", []):
             return
         try:
             from voice_agent.runtime import get_voice_runtime
 
-            applied = await get_voice_runtime().reload_settings()
+            applied = await (self._voice_runtime or get_voice_runtime()).reload_settings()
         except Exception as exc:
             logger.exception("语音配置热重载失败")
             result.setdefault("notes", []).append(f"语音配置热重载失败：{exc}")

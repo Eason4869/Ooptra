@@ -155,7 +155,7 @@ def load_voice_agent_settings() -> tuple[VoiceAgentSettings, VoiceApiSettings]:
         enabled=bool(_get(api_raw, "enabled", False)),
         host=str(_get(api_raw, "host", "127.0.0.1") or "127.0.0.1"),
         port=int(_get(api_raw, "port", 3091)),
-        token=_env("VOICE_API_TOKEN", str(api_raw.get("token", "") or "")),
+        token=str((getattr(runtime_config, "WEBUI_CONFIG", None) or {}).get("token", "") or "").strip(),
     )
     return agent, api
 

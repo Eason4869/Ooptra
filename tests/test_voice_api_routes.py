@@ -122,7 +122,7 @@ def _build_apps(agent: FakeAgent) -> tuple[web.Application, web.Application]:
     webui_app = web.Application()
     mount_voice_routes(webui_app, runtime)
 
-    api = VoiceApiServer(runtime, VoiceApiSettings(enabled=True, token=""))
+    api = VoiceApiServer(runtime, VoiceApiSettings(enabled=True, token="fixture-api"))
     standalone_app = web.Application()
     standalone_app.add_routes(build_voice_routes(runtime, wrap=api._wrap))
     return webui_app, standalone_app
@@ -146,6 +146,7 @@ def _run(app: web.Application, calls: list[tuple[str, str, dict]]) -> list[tuple
         out: list[tuple[int, str]] = []
         async with TestClient(TestServer(app)) as client:
             for method, path, kwargs in calls:
+                kwargs = {"headers": {"Authorization": "Bearer fixture-api"}, **kwargs}
                 resp = await client.request(method, path, **kwargs)
                 out.append((resp.status, await resp.text()))
         return out
@@ -331,6 +332,35 @@ def test_route_handlers_follow_runtime_agent_swap() -> None:
     assert payload["persona"] == "换过的人格"
 
 
+def test_persona_save_persists_before_applying_and_survives_settings_reload(monkeypatch, tmp_path):
+    import config
+    from voice_agent.settings import load_voice_agent_settings
+    from webui import config_editor
+    path = tmp_path / "config.py"
+    path.write_text('VOICE_AGENT_CONFIG = {"persona": "original"}\n', encoding="utf-8")
+    monkeypatch.setattr(config_editor, "CONFIG_PATH", str(path))
+    monkeypatch.setattr(config, "VOICE_AGENT_CONFIG", {"persona": "original"})
+    agent = FakeAgent()
+    app, _ = _build_apps(agent)
+    [(status, payload)] = _run(app, [("PUT", "/api/persona", {"json": {"persona": "新的自然聊天人格"}})])
+    assert status == 200, payload
+    assert "新的自然聊天人格" in path.read_text(encoding="utf-8")
+    assert load_voice_agent_settings()[0].persona == "新的自然聊天人格"
+    assert agent.settings.persona == "新的自然聊天人格"
+
+
+def test_persona_write_failure_keeps_running_persona(monkeypatch):
+    from webui import config_editor
+    def fail(_updates):
+        raise OSError("read only")
+    monkeypatch.setattr(config_editor, "apply_updates", fail)
+    agent = FakeAgent()
+    app, _ = _build_apps(agent)
+    [(status, payload)] = _run(app, [("PUT", "/api/persona", {"json": {"persona": "new"}})])
+    assert status == 500 and payload["ok"] is False
+    assert agent.settings.persona == "测试人格"
+
+
 def test_standalone_with_token_rejects_missing_token() -> None:
     """独立端口配了 token 就必须校验（未配置时才是开放的）。"""
     agent = FakeAgent()
@@ -348,6 +378,14 @@ def test_standalone_with_token_rejects_missing_token() -> None:
     )
     assert results[0][0] == 401
     assert results[1][0] == 200
+
+
+def test_standalone_without_shared_password_is_closed():
+    runtime = FakeRuntime(FakeAgent())
+    api = VoiceApiServer(runtime, VoiceApiSettings(enabled=True, token=""))
+    app = web.Application()
+    app.add_routes(build_voice_routes(runtime, wrap=api._wrap))
+    assert _run(app, [("GET", "/voice/status", {})])[0][0] == 401
 
 
 # ----------------------------------------------------------------------

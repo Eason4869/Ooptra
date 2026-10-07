@@ -102,8 +102,9 @@ WEBUI_CONFIG = {
     "enabled": True,
     "host": "127.0.0.1",   # 监听地址：127.0.0.1 仅本机；0.0.0.0 允许局域网访问
     "port": 3090,
-    # 访问令牌：留空表示不校验；填入后需用 ?token=... 访问。
-    # 语音 HTTP API 默认挂在此端口，外部插件（如 astrbot_plugin_ooptra）的令牌也填这一项。
+    # 唯一共享密码：WebUI 登录与插件 API Token 都使用这一项。
+    # 首次留空时需在部署机器本机打开 WebUI 设置密码；未设置时 API 拒绝访问。
+    # 后续仅在「配置 → 系统」修改；保存立即生效，浏览器重新登录，插件同步新 Token。
     "token": "",
     "log_lines": 300,
     # 更新器的 Git 出口属于部署服务器，不是打开网页的手机/电脑。
@@ -212,13 +213,11 @@ VOICE_AUTO_VISIT_CONFIG = {
 # 语音 HTTP API —— 已合并到 WebUI（http://127.0.0.1:3090/voice/* 与 /api/voice/*）。
 # 外部插件（astrbot_plugin_ooptra）请直接用 3090，令牌填 WEBUI_CONFIG.token。
 # 下面这个独立端口是与 3090 **完全等价**的副本（同一套路由），一般无需开启；
-# 只在「不想把语音 API 暴露在 WebUI 端口上」时才打开，并务必填 token——
-# token 留空时该端口不做任何校验。
+# 仅需要独立监听端口时打开；密码仍统一使用 WEBUI_CONFIG.token。
 VOICE_API_CONFIG = {
     "enabled": False,
     "host": "127.0.0.1",
     "port": 3091,
-    "token": "",
 }
 
 # 名称映射表（手工补充 ID -> 名称；运行时会自动发现新 ID 并写入 data/names.json）
