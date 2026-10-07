@@ -812,6 +812,7 @@ class VoiceAgent:
 
     def status(self) -> dict[str, Any]:
         return {
+            "voice_observation": self.backend.observation.snapshot() if hasattr(self.backend, "observation") else {"recent_decisions": [], "limit": 40},
             "enabled": self.settings.enabled,
             "model_connection": self.backend.connection_status() if hasattr(self.backend, "connection_status") else None,
             "conversation_window_seconds": self.settings.conversation_window_seconds if self.settings.conversation_window_enabled else 0,
