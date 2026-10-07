@@ -8,16 +8,17 @@ def test_detached_updated_install_retains_its_verified_source(tmp_path, monkeypa
 
     monkeypatch.setattr("webui.maintenance.__version__", "261007-dev")
     current = "a" * 40
-    branch = ""
-    def git_output(root, args, *extra, **kwargs):
-        return current if args == ["git", "rev-parse", "HEAD"] else branch if args == ["git", "branch", "--show-current"] else ""
-    monkeypatch.setattr("webui.maintenance.run_command", git_output)
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    (git_dir / "HEAD").write_text(current, encoding="utf-8")
     service = MaintenanceService(tmp_path)
     service.write_job({"action": "update", "phase": "complete", "channel": "main", "target_sha": current})
     assert service.status()["update"]["channel"] == "main"
-    branch = "dev"
+    (git_dir / "refs/heads").mkdir(parents=True)
+    (git_dir / "refs/heads/dev").write_text(current, encoding="utf-8")
+    (git_dir / "HEAD").write_text("ref: refs/heads/dev", encoding="utf-8")
     assert service.status()["update"]["channel"] == "dev"
-    branch = ""
+    (git_dir / "HEAD").write_text(current, encoding="utf-8")
     service.write_job({"action": "update", "phase": "complete", "channel": "main", "target_sha": "b" * 40})
     assert service.status()["update"]["channel"] == "dev"
 

@@ -40,7 +40,8 @@ function withToken(path) {
 
 async function api(path, opts = {}) {
   const controller = new AbortController();
-  const deadline = setTimeout(() => controller.abort(), 90000);
+  const timeout = opts.timeout || 90000;
+  const deadline = setTimeout(() => controller.abort(), timeout);
   try {
     const res = await fetch(withToken(path), {
       method: opts.method || 'GET',
@@ -57,7 +58,7 @@ async function api(path, opts = {}) {
     if (!res.ok) throw new Error((payload && payload.error) || ('HTTP ' + res.status));
     return payload || {};
   } catch (err) {
-    if (controller.signal.aborted) throw new Error('请求超过 90 秒，请检查连接后重试');
+    if (controller.signal.aborted) throw new Error('请求超过 ' + Math.ceil(timeout / 1000) + ' 秒，请检查连接后重试');
     throw err;
   } finally { clearTimeout(deadline); }
 }

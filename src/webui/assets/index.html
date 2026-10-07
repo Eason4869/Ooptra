@@ -492,14 +492,24 @@
           <ul class="check-list" id="maintenance-health" aria-label="分层运行状态"></ul>
           <div class="btn-row"><button class="btn ghost" id="maintenance-check" type="button">检查更新</button><button class="btn primary" id="maintenance-update" type="button" disabled>备份并更新</button></div>
           <div class="maintenance-job" id="maintenance-job" hidden role="status"><b id="maintenance-phase"></b><p id="maintenance-detail"></p></div>
-          <details class="tool-details"><summary>部署预检查与手动更新</summary><ul class="check-list" id="maintenance-checks"></ul><p class="hint">自动升级需要官方 Git 仓库、虚拟环境、干净的代码和可写目录，并通过 <code>python launcher.py</code> 启动。其他部署方式可下载备份后，按 README 手动更新。</p></details>
+          <details class="tool-details"><summary>部署预检查与手动更新</summary><p class="hint" id="maintenance-preflight-status" role="status">部署预检查尚未完成；可先检查更新和查看备份。</p><ul class="check-list" id="maintenance-checks"></ul><button class="btn ghost sm" id="maintenance-preflight-retry" type="button">重试部署预检查</button><p class="hint">自动升级需要官方 Git 仓库、虚拟环境、干净的代码和可写目录，并通过 <code>python launcher.py</code> 启动。其他部署方式可下载备份后，按 README 手动更新。</p></details>
+          <details class="tool-details"><summary>更新网络设置</summary>
+            <p class="hint">更新请求由运行 Ooptra 的部署机器发出。浏览器能打开 GitHub，不代表部署机器可访问。默认优先使用官方 GitHub；失败时自动尝试直连和已配置的镜像，目标提交仍由官方确认。</p>
+            <label class="field"><span>更新专用代理</span><input class="control" id="maintenance-network-proxy" type="password" autocomplete="new-password" placeholder="留空保留原代理；direct 表示直连"></label>
+            <label class="check-row"><input id="maintenance-network-clear-proxy" type="checkbox"><span>清除已保存代理，使用部署机器的环境代理</span></label>
+            <label class="field"><span>备用仓库镜像</span><input class="control" id="maintenance-network-mirror" type="url" placeholder="https://镜像站/仓库路径.git"></label>
+            <p class="hint">代理支持 HTTP、HTTPS、SOCKS URL；已有代理凭据不会回显。镜像必须是可供 Git 下载的完整 HTTPS 仓库地址，留空关闭。仅影响更新仓库访问，Python 依赖和浏览器下载仍使用各自网络设置。</p>
+            <div class="btn-row"><button class="btn primary sm" id="maintenance-network-save" type="button" disabled>保存更新网络设置</button><button class="btn ghost sm" id="maintenance-network-retry" type="button">重新读取</button></div>
+            <p class="hint" id="maintenance-network-status" role="status">尚未读取更新网络配置。</p>
+          </details>
         </section>
         <section class="card">
           <header class="card-head"><h3>本地备份</h3><button class="btn primary sm" id="maintenance-backup" type="button">创建备份</button></header>
           <p class="hint">保存配置、凭据和用户数据。备份包含密钥，请妥善保管；恢复前会再创建一份安全备份，并重启服务。</p>
           <ul class="backup-list" id="maintenance-backups"><li class="empty">正在读取备份…</li></ul>
           <div class="btn-row"><button class="btn ghost sm" id="maintenance-prev" type="button">上一页</button><p class="hint" id="maintenance-pagination"></p><button class="btn ghost sm" id="maintenance-next" type="button">下一页</button></div>
-          <details class="tool-details"><summary>存储与清理</summary><p class="hint" id="maintenance-storage"></p><p class="hint">先查看可清理项目，再确认删除。运行环境和回滚材料受保护。</p><button class="btn ghost" id="maintenance-cleanup-preview" type="button">预览可清理项目</button><ul class="check-list" id="maintenance-cleanup-result"></ul><button class="btn warn" id="maintenance-cleanup-apply" type="button" hidden disabled>确认清理</button></details>
+          <details class="tool-details"><summary>存储与清理</summary><p class="hint" id="maintenance-storage" role="status">完整空间统计尚未完成。</p><button class="btn ghost sm" id="maintenance-storage-retry" type="button">重试空间统计</button><p class="hint">先查看可清理项目，再确认删除。运行环境和回滚材料受保护。</p><button class="btn ghost" id="maintenance-cleanup-preview" type="button">预览可清理项目</button><ul class="check-list" id="maintenance-cleanup-result"></ul><button class="btn warn" id="maintenance-cleanup-apply" type="button" hidden disabled>确认清理</button></details>
+          <p class="hint" id="maintenance-status" role="status">正在读取版本与备份，最长等待 15 秒…</p><button class="btn ghost sm" id="maintenance-status-retry" type="button">重试版本与备份</button>
           <p class="hint" id="maintenance-feedback" role="status"></p>
         </section>
       </div>

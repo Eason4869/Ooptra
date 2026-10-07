@@ -106,6 +106,14 @@ WEBUI_CONFIG = {
     # 语音 HTTP API 默认挂在此端口，外部插件（如 astrbot_plugin_ooptra）的令牌也填这一项。
     "token": "",
     "log_lines": 300,
+    # 更新器的 Git 出口属于部署服务器，不是打开网页的手机/电脑。
+    # 留空跟随服务进程的系统环境代理；direct 忽略代理；可填 HTTP/HTTPS/SOCKS URL。
+    # 官方查询隔离 Git 全局配置，避免 URL 重写；全局 Git 代理请显式填到这一项。
+    "update_proxy": "",
+    # 可选备用下载：完整 HTTPS Git 仓库 URL，需支持 Git smart HTTP。
+    # 默认仅官方源，不内置第三方；安装前必须与官方提交 SHA 完全一致。
+    # 这两个字段只影响 Git，不改变 pip 或 Playwright 的下载源。
+    "update_mirror": "",
 }
 
 # 语音实时对话（Voice Agent）—— Web 控制台「配置」页可改

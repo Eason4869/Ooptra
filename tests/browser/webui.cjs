@@ -10,11 +10,12 @@ const requests = [];
 let failures = new Set();
 let job = null;
 let slowMaintenance = false;
+let stallMaintenanceStatus = false;
 let configReadDelay = 0;
 let stallCheckBody = false;
 let installedChannel = 'beta';
 let updateCheck = {channel: 'beta', current_channel: 'beta', target_sha: 'b'.repeat(40), available: true, action: 'update', requires_confirmation: false, compatible: true};
-let schema = {oopz: {fields: {default_area: {type: 'str', value: 'original', label: '默认域'}}}, voice: {fields: {backend: {type: 'select', value: 'mimo_cascade', label: '后端', options: ['mimo_cascade', 'gemini_live']}}}, webui: {fields: {port: {type: 'int', value: 8080, label: '端口'}}}};
+let schema = {oopz: {fields: {default_area: {type: 'str', value: 'original', label: '默认域'}}}, voice: {fields: {backend: {type: 'select', value: 'mimo_cascade', label: '后端', options: ['mimo_cascade', 'gemini_live']}}}, webui: {fields: {port: {type: 'int', value: 8080, label: '端口'}, update_proxy: {type: 'str', value: null, is_set: true, sensitive: true, label: '更新代理', adv: true}, update_mirror: {type: 'str', value: '', label: '更新镜像', adv: true}}}};
 const wav = Buffer.alloc(524);
 wav.write('RIFF'); wav.writeUInt32LE(516, 4); wav.write('WAVEfmt ', 8); wav.writeUInt32LE(16, 16);
 wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22); wav.writeUInt32LE(24000, 24);
@@ -38,6 +39,7 @@ const server = http.createServer(async (req, res) => {
     return res.end('true}');
   }
   if (endpoint === '/api/config' && req.method === 'GET' && configReadDelay) await new Promise(resolve => setTimeout(resolve, configReadDelay));
+  if (stallMaintenanceStatus && endpoint === '/api/maintenance') await new Promise(resolve => setTimeout(resolve, 2000));
   if (slowMaintenance && ['/api/maintenance/check', '/api/maintenance/backups'].includes(endpoint)) await new Promise(resolve => setTimeout(resolve, 500));
   if (failures.has(endpoint)) { res.statusCode = 503; return res.end(JSON.stringify({error: 'fixture offline'})); }
   let data = {ok: true};
@@ -48,7 +50,11 @@ const server = http.createServer(async (req, res) => {
       const changed = {};
       for (const [group, fields] of Object.entries(body.updates)) {
         changed[group] = Object.keys(fields);
-        for (const [field, value] of Object.entries(fields)) schema[group].fields[field].value = value;
+        for (const [field, value] of Object.entries(fields)) {
+          const meta = schema[group].fields[field];
+          meta.value = meta.sensitive ? null : value;
+          if (meta.sensitive) meta.is_set = !!value;
+        }
       }
       data = {changed};
     } else data = {groups: schema, path: 'fixture/config.py'};
@@ -64,6 +70,8 @@ const server = http.createServer(async (req, res) => {
     data = updateCheck;
   }
   if (endpoint === '/api/maintenance') data = {preflight: {supported: true, checks: []}, restore_supported: true, health: {checks: [{id: 'process', title: '进程', state: 'pass', detail: '控制台在线'}, {id: 'onebot', title: 'OneBot', state: 'warn', detail: '未接入，桥接降级'}]}, backups: [{id: 'a'.repeat(32), created_at: 1, size: 524}], backup_page: {page: Number(url.searchParams.get('page') || 1), pages: 2, total: 11, page_size: 10}, storage: {total_bytes: 524, backups_count: 11, backups_bytes: 524}, update: {channel: 'dev', current_channel: installedChannel, current_sha: 'a'.repeat(40), target_sha: 'b'.repeat(40)}, check: updateCheck, job};
+  if (endpoint === '/api/maintenance/preflight') data = {ok: true, preflight: {supported: true, checks: [], pending: false}};
+  if (endpoint === '/api/maintenance/storage') data = {ok: true, storage: {total_bytes: 524, backups_count: 11, backups_bytes: 524, pending: false}};
   if (endpoint === '/api/maintenance/cleanup/preview') data = {token: 'fixture-cleanup', items: [{id: 'old-env', path: 'old-env', kind: 'environment', size: 524}], total_bytes: 524};
   res.end(JSON.stringify(data));
 });
@@ -80,6 +88,16 @@ async function main() {
     await page.locator('#screen-app').waitFor({state: 'visible'});
     await nav('maintenance');
     await page.waitForFunction(() => document.querySelector('#maintenance-channel').value === 'beta');
+    await page.getByText('更新网络设置', {exact: true}).click();
+    await page.waitForFunction(() => !document.querySelector('#maintenance-network-save').disabled);
+    assert.equal(await page.locator('#maintenance-network-proxy').inputValue(), '', 'saved proxy credentials are never echoed');
+    await page.locator('#maintenance-network-mirror').fill('https://mirror.example/ooptra.git');
+    await page.locator('#maintenance-network-save').click();
+    await page.waitForFunction(() => document.querySelector('#maintenance-network-status').textContent.includes('已保存'));
+    const networkSave = requests.find(item => item.endpoint === '/api/config' && item.body.updates.webui?.update_mirror);
+    assert.equal(networkSave.body.updates.webui.update_mirror, 'https://mirror.example/ooptra.git');
+    assert(!Object.hasOwn(networkSave.body.updates.webui, 'update_proxy'), 'blank untouched proxy preserves stored credentials');
+    await page.getByText('更新网络设置', {exact: true}).click();
     assert.deepEqual(await page.locator('#maintenance-channel option').evaluateAll(options => options.map(option => [option.value, option.textContent])), [['main', 'main · 正式版'], ['beta', 'beta · 测试版'], ['dev', 'dev · 预览版']]);
     await page.selectOption('#maintenance-channel', 'main');
     await page.evaluate(() => window.refreshMaintenance(true));
@@ -150,7 +168,7 @@ async function main() {
     await nav('maintenance');
     slowMaintenance = true;
     await page.locator('#maintenance-check').click();
-    assert.match(await page.locator('#maintenance-feedback').textContent(), /正在检查更新/);
+    assert.match(await page.locator('#maintenance-feedback').textContent(), /正在.*检查更新/);
     assert(await page.locator('#maintenance-check').isDisabled());
     await page.waitForFunction(() => !document.querySelector('#maintenance-check').disabled);
     await page.locator('#maintenance-backup').click();
@@ -163,13 +181,23 @@ async function main() {
     stallCheckBody = true;
     await page.evaluate(() => {
       window.browserTestTimeout = window.setTimeout;
-      window.setTimeout = (callback, delay, ...args) => window.browserTestTimeout(callback, delay === 90000 ? 100 : delay, ...args);
+      window.setTimeout = (callback, delay, ...args) => window.browserTestTimeout(callback, delay === 65000 ? 100 : delay, ...args);
     });
     await page.locator('#maintenance-check').click();
     await page.waitForFunction(() => !document.querySelector('#maintenance-check').disabled);
-    assert.match(await page.locator('#maintenance-feedback').textContent(), /请求超过 90 秒/, 'a timeout while reading the response must report failure');
+    assert.match(await page.locator('#maintenance-feedback').textContent(), /请求超过 65 秒/, 'a timeout while reading the response must report failure');
     await page.evaluate(() => { window.setTimeout = window.browserTestTimeout; delete window.browserTestTimeout; });
     stallCheckBody = false;
+    stallMaintenanceStatus = true;
+    failures.add('/api/maintenance/check');
+    await page.locator('#maintenance-check').click();
+    await page.waitForFunction(() => document.querySelector('#maintenance-feedback').textContent.includes('fixture offline'), null, {timeout: 1000});
+    assert(await page.locator('#maintenance-check').isEnabled(), 'check failure restores controls before slow status finishes');
+    assert(await page.locator('#maintenance-update').isDisabled(), 'failed recheck must invalidate the previous install target');
+    stallMaintenanceStatus = false;
+    failures.clear();
+    await page.waitForTimeout(2100);
+    assert.match(await page.locator('#maintenance-feedback').textContent(), /fixture offline/, 'later polling retains operation error');
     assert.match(await page.locator('#maintenance-health').textContent(), /桥接降级/);
     await page.locator('#maintenance-next').click();
     await page.waitForFunction(() => document.querySelector('#maintenance-pagination').textContent.includes('第 2'));
@@ -201,7 +229,8 @@ async function main() {
     await page.evaluate(() => window.refreshMaintenance(true));
     failures.add('/api/maintenance');
     await page.evaluate(() => window.refreshMaintenance(true));
-    assert.match(await page.locator('#maintenance-feedback').textContent(), /重新连接|重启/);
+    assert.match(await page.locator('#maintenance-status').textContent(), /重新连接|重启/);
+    assert.match(await page.locator('#maintenance-feedback').textContent(), /fixture offline/, 'reconnection status must not erase the operation failure');
     failures.clear(); job = {phase: 'complete', detail: '恢复连接'};
     await page.evaluate(() => window.refreshMaintenance(true));
     assert.match(await page.locator('#maintenance-detail').textContent(), /恢复连接/);
