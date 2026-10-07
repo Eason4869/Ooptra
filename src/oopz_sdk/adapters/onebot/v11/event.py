@@ -5,6 +5,7 @@ from typing import Any
 
 from oopz_sdk import OopzBot
 from oopz_sdk.config.constants import EVENT_PRIVATE_MESSAGE_DELETE
+from oopz_sdk.exceptions import OopzApiError, OopzConnectionError
 from oopz_sdk.models.event import Event, MessageDeleteEvent, MessageEvent, FriendRequestEvent
 
 from .message import to_v11_message
@@ -66,7 +67,15 @@ async def _message_event(event: MessageEvent, *, self_id: str | int, ids: IdStor
             message_id=msg.message_id,
         )
     ).number
-    userinfo = await bot.person.get_person_info(msg.sender_id)
+    try:
+        userinfo = await bot.person.get_person_info(msg.sender_id)
+    except OopzConnectionError:
+        userinfo = None
+    except OopzApiError as exc:
+        if exc.status_code not in {408, 429, 500, 502, 503, 504}:
+            raise
+        userinfo = None
+    nickname = userinfo.name if userinfo is not None else ""
     if event.is_private:
         return {
             "time": parse_oopz_timestamp(msg.timestamp),
@@ -81,7 +90,7 @@ async def _message_event(event: MessageEvent, *, self_id: str | int, ids: IdStor
             "font": 0,
             "sender": {
                 "user_id": user_ob_id,
-                "nickname": userinfo.name,
+                "nickname": nickname,
             },
             "extra": {
                 "oopz_user_id": msg.sender_id,
@@ -93,7 +102,6 @@ async def _message_event(event: MessageEvent, *, self_id: str | int, ids: IdStor
     group_ob_id = ids.createId(
         make_group_source(area=msg.area, channel=msg.channel or msg.area)
     ).number
-    userinfo = await bot.person.get_person_info(msg.sender_id)
     return {
         "time": parse_oopz_timestamp(msg.timestamp),
         "self_id": self_ob_id,
@@ -108,7 +116,7 @@ async def _message_event(event: MessageEvent, *, self_id: str | int, ids: IdStor
         "font": 0,
         "sender": {
             "user_id": user_ob_id,
-            "nickname": userinfo.name,
+            "nickname": nickname,
         },
         "extra": {
             "oopz_area_id": msg.area,

@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
-import importlib
 import json
 import os
-import re
+import sys
 from collections.abc import Mapping
 from typing import Any
 
@@ -44,24 +44,82 @@ def _read_config_template() -> str:
     raise OopzPasswordLoginError("config.py 不存在，且未找到 config.example.py")
 
 
-def _replace_config_value(content: str, key: str, value: Any) -> tuple[str, bool]:
-    if value is None or str(value) == "":
-        return content, False
-    pattern = re.compile(rf'("{re.escape(key)}"\s*:\s*)"[^"]*"')
-    replacement = json.dumps(str(value), ensure_ascii=False)
-    content, count = pattern.subn(lambda match: f"{match.group(1)}{replacement}", content, count=1)
-    return content, count > 0
+def _has_additional_config_binding(tree: ast.AST) -> bool:
+    """Recognize bindings stored as strings rather than ast.Name nodes."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.alias):
+            # A dotted import binds its first component unless it has an alias.
+            if node.name == "*" or (node.asname or node.name.split(".")[0]) == "OOPZ_CONFIG":
+                return True
+        elif isinstance(node, ast.arg):
+            if node.arg == "OOPZ_CONFIG":
+                return True
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            if "OOPZ_CONFIG" in node.names:
+                return True
+        elif any(getattr(node, field, None) == "OOPZ_CONFIG" for field in ("name", "rest")):
+            # Function/class, exception handler, match captures (including **rest)
+            # and generic type parameters all carry their binding as a string.
+            return True
+    return False
 
 
 def _updated_config_content(credentials: Mapping[str, Any]) -> str:
     content = _read_config_template()
-    replaced = False
-    for key in OOPZ_CONFIG_CREDENTIAL_FIELDS:
-        content, changed = _replace_config_value(content, key, credentials.get(key))
-        replaced = replaced or changed
-    if not replaced:
-        raise OopzPasswordLoginError("未能在 config.py 中定位 OOPZ_CONFIG 凭据字段")
-    return content
+    try:
+        tree = ast.parse(content)
+        definitions = [
+            node for node in ast.walk(tree)
+            if isinstance(node, (ast.Assign, ast.AnnAssign))
+            and any(isinstance(target, ast.Name) and target.id == "OOPZ_CONFIG"
+                    for target in (node.targets if isinstance(node, ast.Assign) else [node.target]))
+        ]
+        if len(definitions) != 1 or definitions[0] not in tree.body:
+            raise ValueError("OOPZ_CONFIG 必须是唯一顶层定义")
+        definition = definitions[0]
+        targets = definition.targets if isinstance(definition, ast.Assign) else [definition.target]
+        references = [
+            name for name in ast.walk(tree)
+            if isinstance(name, ast.Name) and name.id == "OOPZ_CONFIG"
+        ]
+        # Only a standalone static definition is supported. Further references
+        # can mutate the dictionary directly or pass an alias to arbitrary code;
+        # reject them rather than attempt to evaluate/control user code.
+        if (
+            len(targets) != 1 or len(references) != 1 or references[0] is not targets[0]
+            or _has_additional_config_binding(tree)
+        ):
+            raise ValueError("OOPZ_CONFIG 包含无法安全更新的动态引用或绑定")
+        node = definitions[0].value
+        if not isinstance(node, ast.Dict):
+            raise ValueError("OOPZ_CONFIG 必须是字典字面量")
+        # Never execute user configuration, including calls and dictionary unpacking.
+        ast.literal_eval(node)
+        fields = {}
+        for key, value in zip(node.keys, node.values, strict=True):
+            if not isinstance(key, ast.Constant) or not isinstance(key.value, str) or key.value in fields:
+                raise ValueError("OOPZ_CONFIG 包含不安全或重复的键")
+            fields[key.value] = value
+        lines = content.splitlines(keepends=True)
+        encoded = content.encode("utf-8")
+        offsets = [0]
+        for line in lines:
+            offsets.append(offsets[-1] + len(line.encode("utf-8")))
+        edits = []
+        for key in OOPZ_CONFIG_CREDENTIAL_FIELDS:
+            value = credentials.get(key)
+            if key not in fields or value is None or str(value) == "":
+                raise ValueError(f"缺少凭据字段 {key}")
+            old = fields[key]
+            start = offsets[old.lineno - 1] + old.col_offset
+            end = offsets[old.end_lineno - 1] + old.end_col_offset
+            replacement = json.dumps(str(value), ensure_ascii=False).encode("utf-8")
+            edits.append((start, end, replacement))
+        for start, end, replacement in sorted(edits, reverse=True):
+            encoded = encoded[:start] + replacement + encoded[end:]
+        return encoded.decode("utf-8")
+    except (SyntaxError, ValueError, TypeError) as exc:
+        raise OopzPasswordLoginError("无法安全更新 OOPZ_CONFIG 凭据字段") from exc
 
 
 def _private_key_module_content(pem: str) -> str:
@@ -86,7 +144,7 @@ def _apply_runtime(credentials: Mapping[str, Any]) -> None:
         if credentials.get(key)
     }
     try:
-        module = importlib.import_module("config")
+        module = sys.modules.get("config")
         target = getattr(module, "OOPZ_CONFIG", None)
         if isinstance(target, dict):
             target.update(updates)

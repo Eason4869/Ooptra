@@ -21,6 +21,7 @@ class VoiceDuplex:
         self._pcm_queue: asyncio.Queue[tuple[str, bytes, int]] = asyncio.Queue(maxsize=200)
         self._handler: RemotePcmHandler | None = None
         self._pump_task: asyncio.Task | None = None
+        self._owner_loop: asyncio.AbstractEventLoop | None = None
 
     @property
     def transport(self) -> Any:
@@ -30,6 +31,19 @@ class VoiceDuplex:
         self._handler = handler
 
     def enqueue_remote_pcm(self, uid: str, pcm: bytes, sample_rate: int) -> None:
+        loop = self._owner_loop
+        if loop is None or loop.is_closed():
+            return
+        try:
+            loop.call_soon_threadsafe(self._enqueue_on_owner, loop, uid, pcm, sample_rate)
+        except RuntimeError:
+            logger.debug("remote pcm owner loop closed, drop chunk")
+
+    def _enqueue_on_owner(
+        self, loop: asyncio.AbstractEventLoop, uid: str, pcm: bytes, sample_rate: int,
+    ) -> None:
+        if self._owner_loop is not loop:
+            return
         try:
             self._pcm_queue.put_nowait((uid, pcm, sample_rate))
         except asyncio.QueueFull:
@@ -37,11 +51,14 @@ class VoiceDuplex:
 
     async def start(self) -> None:
         await self._transport.start()
+        self._owner_loop = asyncio.get_running_loop()
         self._transport.set_remote_pcm_callback(self.enqueue_remote_pcm)
         if self._pump_task is None or self._pump_task.done():
             self._pump_task = asyncio.create_task(self._pump(), name="voice-duplex-pump")
 
     async def close(self) -> None:
+        self._owner_loop = None
+        self._transport.set_remote_pcm_callback(None)
         task = self._pump_task
         self._pump_task = None
         if task is not None:

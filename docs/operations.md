@@ -5,6 +5,7 @@
 ## 配置文件
 
 首次使用将 `config.example.py` 复制为 `config.py`。WebUI 保存配置时只改写白名单字段，保留其他内容与注释。
+配置组应保留模板的独立字典定义；动态赋值、解包、别名或后续修改无法可靠定位时，保存／凭据更新会明确拒绝，不执行或覆盖用户配置。此类自定义配置请手动维护。
 常用设置位于「配置」页，心跳、重连、本地接入、域语义映射、采样率与静音判定等位于「高级选项」。
 切换配置分组或主题会保留草稿；离开配置页及放弃修改需确认。保存前可核对修改摘要，保存失败不会清空输入。
 
@@ -115,6 +116,8 @@ Git 镜像仅加速代码传输，Python 依赖与 Chromium 下载仍取决于�
 
 ## 开发说明
 
+修改 WebUI 页面、样式、脚本、品牌资源或配置白名单后，运行 `python scripts/build_webui_preview.py`，提交同步生成的 `webui_preview.html`。该单文件复用正式界面，模拟登录、语音与维护；密码为 `demo`，刷新重置演示配置和会话，偏好存储与正式控制台隔离。下载、账号登录和模型试听需在实际部署中操作，预览会明确提示。CI 校验预览与源文件一致，并验证无需后端的浏览器交互。
+
 ```text
 Ooptra/
 ├─ main.py                  桥接与 WebUI 入口
@@ -123,6 +126,8 @@ Ooptra/
 ├─ start_silent.vbs         Windows 后台启动
 ├─ assets/readme/           README 插图
 ├─ docs/                    使用指南与设计记录
+├─ scripts/                 独立 WebUI 预览生成与演示数据
+├─ webui_preview.html       当前界面的离线交互预览（生成文件）
 ├─ src/
 │  ├─ bridge/               桥接内核与运行状态
 │  ├─ core/                 配置、日志、路径、代理与版本
@@ -131,7 +136,7 @@ Ooptra/
 │  ├─ oopz_sdk/             内置 SDK
 │  ├─ voice_agent/          语音编排、记忆与模型后端
 │  └─ webui/                控制台与 HTTP API
-└─ tests/                   pytest 用例
+└─ tests/                   pytest 用例及浏览器交互验证
 ```
 
 检查命令见 [README](../README.md#开发与测试)，CI 配置见 [ci.yml](../.github/workflows/ci.yml)。

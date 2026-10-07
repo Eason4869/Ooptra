@@ -9,6 +9,7 @@ from typing import Any, Awaitable, Callable, Mapping, TYPE_CHECKING
 
 from oopz_sdk.adapters.onebot.v12.types import MessageRecord, MessageStore
 from oopz_sdk.models.event import HeartbeatEvent, ServerIdEvent
+from oopz_sdk.models.message import MentionInfo
 from oopz_sdk.models.segment import Mention
 
 from .event import to_v11_event
@@ -269,7 +270,7 @@ class OneBotV11Adapter:
         result = await self.oopz_bot.messages.send_private_message(
             *send_parts.parts,
             target=target,
-            mention_list=send_parts.mention_list,
+            mention_list=[MentionInfo(person=uid, offset=-1) for uid in send_parts.mention_list],
             is_mention_all=send_parts.is_mention_all,
         )
 

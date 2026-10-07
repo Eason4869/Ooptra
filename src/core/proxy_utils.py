@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from urllib.parse import unquote, urlparse
+from urllib.parse import quote, unquote, urlparse
 
 _DIRECT_VALUES = {"0", "false", "no", "none", "off", "direct"}
 
@@ -44,6 +44,8 @@ def _build_proxy_aliases() -> dict[str, str]:
     except Exception:
         pass
 
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
     http = f"http://{host}:{http_port}"
     socks = f"socks5://{host}:{socks_port}"
     return {
@@ -135,12 +137,13 @@ def _parse_proxy_url(proxy_url: str) -> ProxySettings:
     port = parsed.port or _DEFAULT_PORTS[scheme]
     username = unquote(parsed.username) if parsed.username else None
     password = unquote(parsed.password) if parsed.password else None
-    server = f"{scheme}://{parsed.hostname}:{port}"
+    host = f"[{parsed.hostname}]" if ":" in parsed.hostname else parsed.hostname
+    server = f"{scheme}://{host}:{port}"
     if username:
-        auth = username
+        auth = quote(username, safe="")
         if password is not None:
-            auth = f"{auth}:{password}"
-        server = f"{scheme}://{auth}@{parsed.hostname}:{port}"
+            auth = f"{auth}:{quote(password, safe='')}"
+        server = f"{scheme}://{auth}@{host}:{port}"
 
     return ProxySettings(
         mode="explicit",

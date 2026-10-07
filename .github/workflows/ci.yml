@@ -19,6 +19,8 @@ jobs:
           pip install -r requirements-dev.txt
       - name: ruff
         run: ruff check .
+      - name: Verify standalone WebUI preview is current
+        run: python scripts/build_webui_preview.py --check
 
   test:
     timeout-minutes: 10
@@ -59,4 +61,6 @@ jobs:
       - name: Real browser interaction checks
         env:
           OOPTRA_PLAYWRIGHT_MODULE: ${{ github.workspace }}/.browser-ci/node_modules/playwright
-        run: node tests/browser/webui.cjs
+        run: |
+          node tests/browser/webui.cjs
+          node tests/browser/preview.cjs

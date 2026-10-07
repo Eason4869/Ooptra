@@ -81,6 +81,8 @@ def test_cancelled_explicit_send_does_not_force_the_next_automatic_reply(tmp_pat
     async def run():
         agent = make_agent(tmp_path)
         agent.settings.reply_probability_percent = 0
+        agent._joined = True
+        agent._connection_ready = True
         await agent._wire_live()
         await agent.backend.start_session()
         original_send = agent.backend._send
@@ -183,6 +185,8 @@ def test_live_explicit_speech_bypasses_zero_probability(tmp_path, monkeypatch, o
     async def run():
         agent = make_agent(tmp_path)
         agent.settings.reply_probability_percent = 0
+        agent._joined = True
+        agent._connection_ready = True
         await agent._wire_live()
         await agent.backend.start_session()
         try:
