@@ -268,6 +268,7 @@
             <button class="btn ghost sm" id="voice-set-default" title="把当前选中的域/频道写入配置，作为插件 /进语音 的默认目标">设为默认</button>
             <button class="btn primary sm" id="voice-join">进房</button>
             <button class="btn ghost sm" id="voice-leave">退房</button>
+            <button class="btn ghost sm" id="voice-stop" type="button">停止回复</button>
           </header>
           <p class="hint" id="default-target-hint">默认目标：未设置。插件不带参数进房时用它；一个 QQ 群绑了多个域时也按默认域查询。</p>
 
@@ -344,6 +345,7 @@
             <ul class="feed" id="voice-transcript"></ul>
           </section>
         </div>
+        <details class="tool-details voice-observation"><summary>回复决策与耗时</summary><p class="hint">只显示原因和耗时，不保存原始音频。实时语音的阶段可能重叠。</p><ul class="check-list" id="voice-decision-list"><li class="empty">暂无决策记录</li></ul></details>
       </div>
 
       <!-- 自动串门：全局默认与域覆盖独立保存 -->
@@ -403,6 +405,7 @@
             <header class="card-head"><h3>语音自检</h3><button class="btn primary sm" id="diagnostic-run" type="button">开始自检</button></header>
             <p class="hint">检查环境、连接与配置，不会进入语音房。网络检查会请求模型，可能产生少量费用。</p>
             <label class="switch"><input type="checkbox" id="diagnostic-network" /><span>同时检查模型网络连接</span></label>
+            <label class="field"><span>短句音频样本（可选）</span><input class="control" id="diagnostic-audio" type="file" accept=".wav,audio/wav" /><small class="hint">WAV，最长 10 秒、最大 2 MB。独立检查识别、意图和合成；不进房、不写记忆。</small></label>
             <ul class="check-list" id="diagnostic-results" aria-live="polite"><li class="empty">进房或回复异常时，先运行一次自检。</li></ul>
           </section>
           <section class="card">
@@ -540,6 +543,7 @@
         <span id="config-status"></span>
       </div>
       <div class="config-groups" id="config-groups"></div>
+      <p class="hint config-summary" id="config-summary" hidden aria-live="polite"></p>
       <div class="savebar" id="savebar" hidden>
         <span id="savebar-text">有未保存的改动</span>
         <button class="btn subtle" id="config-discard">放弃</button>
@@ -592,6 +596,8 @@
 </div>
 
 <script src="/assets/app.js"></script>
+<script src="/assets/config.js"></script>
+<script src="/assets/voice.js"></script>
 <script src="/assets/maintenance.js"></script>
 </body>
 </html>

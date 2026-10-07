@@ -107,7 +107,7 @@ class WebUIConsole:
                 self._host,
             )
 
-        app = web.Application(middlewares=[self._auth_middleware])
+        app = web.Application(middlewares=[self._auth_middleware], client_max_size=3 * 1024 * 1024)
         from webui.maintenance import MaintenanceService, mount_maintenance_routes
 
         self._maintenance = MaintenanceService(PROJECT_ROOT, shutdown=self._shutdown,

@@ -116,7 +116,7 @@ class VoiceApiServer:
                 webui[1],
             )
             return
-        app = web.Application()
+        app = web.Application(client_max_size=3 * 1024 * 1024)
         app.add_routes(build_voice_routes(self.runtime, wrap=self._wrap))
         runner = web.AppRunner(app, access_log=None)
         await runner.setup()

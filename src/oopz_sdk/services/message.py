@@ -230,6 +230,9 @@ class Message(BaseService):
             # 目前仅 Image 需要特殊处理，其他类型直接原样添加到 resolved 列表中
             if isinstance(seg, Image):
                 if seg.is_uploaded:
+                    if (seg.width <= 0 or seg.height <= 0) and seg.url.startswith(("http://", "https://")):
+                        resolved.append(await self._upload_image_segment(Image.from_file(seg.url)))
+                        continue
                     resolved.append(seg)
                     continue
 
@@ -323,7 +326,11 @@ class Message(BaseService):
         if seg.file is None:
             raise ValueError("Image segment has no file for upload")
 
-        payload, filename = await asyncio.to_thread(read_image_bytes, seg.file)
+        if isinstance(seg.file, str) and seg.file.startswith(("http://", "https://")):
+            from oopz_sdk.utils.remote_image import download_image
+            payload, filename = await download_image(seg.file)
+        else:
+            payload, filename = await asyncio.to_thread(read_image_bytes, seg.file)
 
         width = seg.width
         height = seg.height

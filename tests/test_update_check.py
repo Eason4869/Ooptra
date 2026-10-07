@@ -51,3 +51,12 @@ def test_date_betas_compare_by_date():
     assert update_check._is_newer("261002-beta", "261001-beta") is True
     assert update_check._is_newer("261001-beta", "261001-beta") is False
     assert update_check._is_newer("260930-beta", "261001-beta") is False
+
+
+def test_date_dev_compares_stable_updates_against_release_base(monkeypatch):
+    monkeypatch.setattr(update_check, "RELEASE_BASE_VERSION", "3.1.0")
+    assert update_check._is_newer("3.1.1", "261007-dev") is True
+    assert update_check._is_newer("3.1.0", "261007-dev") is False
+    assert update_check._is_newer("3.0.2", "261007-dev") is False
+    assert update_check._is_newer("261008-dev", "261007-dev") is True
+    assert update_check._is_newer("261006-beta", "261007-dev") is False

@@ -13,8 +13,7 @@
 <p align="center">
   <a href="CHANGELOG.md"><img alt="当前版本 261007-beta" src="https://img.shields.io/badge/version-261007--beta-315DDC?style=flat-square"></a>
   <a href="https://github.com/Eason4869/Ooptra/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/Eason4869/Ooptra?style=flat-square"></a>
-  <a href="https://hits.sh/github.com/Eason4869/Ooptra/"><img alt="README 累计访问次数" src="https://hits.sh/github.com/Eason4869/Ooptra.svg?style=flat-square&amp;label=README%20views&amp;color=315ddc"></a>
-  <a href="https://github.com/Eason4869/Ooptra/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Eason4869/Ooptra/ci.yml?style=flat-square&amp;label=CI"></a>
+  <a href="https://github.com/Eason4869/Ooptra/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/Eason4869/Ooptra/ci.yml?style=flat-square&amp;label=CI&amp;branch=beta"></a>
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-3776ab?style=flat-square&amp;logo=python&amp;logoColor=white">
   <a href="LICENSE"><img alt="许可" src="https://img.shields.io/badge/license-MIT-3ddc97?style=flat-square"></a>
 </p>
@@ -38,9 +37,11 @@ Ooptra 将 Oopz 消息接入 **OneBot v11**，通过反向 WebSocket 对接机�
 | Web 控制台 | 状态、日志、配置、登录与语音管理；支持手机访问和暗色模式 |
 | AI 语音 | Gemini Live / MiMo 级联；支持抢话、回复概率、强制关键词与语音退房 |
 | 自动串门 | 按域开启，随机进有人的房间；限时退出、进退房台词、冷却与每日上限 |
-| 语音工具 | 连续追问、自检、无人倒计时与独立浏览器试听 |
-| 更新与备份 | 检查 main 正式版 / beta 测试版 / dev 预览版提交、配置数据备份；Git + 虚拟环境支持自动升级与失败回滚 |
+| 语音工具 | 连续追问、回复决策与耗时、自检、短句 WAV 分阶段验证、无人倒计时与独立浏览器试听 |
+| 更新与备份 | 检查 main 正式版 / beta 测试版 / dev 预览版提交、备份分页与存储清理预览；Git + 虚拟环境支持更新、分层健康检查及失败回滚 |
 | 插件对接 | HTTP API 提供语音控制、人格与记忆管理，支持外部插件调用 |
+
+README 顶部只保留一套累计访问计数展示，不能据此判断独立访客数。仓库拥有者可在 [Insights → Traffic](https://github.com/Eason4869/Ooptra/graphs/traffic) 查看最近 14 天的访客、克隆和来源。
 
 文字消息指令与插件由对端机器人框架处理。Ooptra 是第三方工具，与 Oopz 官方无隶属关系。
 
@@ -54,21 +55,21 @@ Ooptra 将 Oopz 消息接入 **OneBot v11**，通过反向 WebSocket 对接机�
 
 ### 1. 获取代码
 
-选择一个频道执行对应的克隆命令：
+本 README 对应 **beta · 261007-beta**。三个频道当前功能一致，新安装建议选择正式版。选择一个频道执行对应的克隆命令：
 
-正式版（`main`）：
+正式版（`main`，`3.2.0`）：
 
 ```bash
 git clone -b main https://github.com/Eason4869/Ooptra.git
 ```
 
-测试版（`beta`，本 README 对应 `261007-beta`）：
+测试版（`beta`，`261007-beta`）：
 
 ```bash
 git clone -b beta https://github.com/Eason4869/Ooptra.git
 ```
 
-预览版（`dev`）：
+预览版（`dev`，`261007-dev`）：
 
 ```bash
 git clone -b dev https://github.com/Eason4869/Ooptra.git
@@ -113,6 +114,8 @@ python -m playwright install chromium
 python launcher.py
 ```
 
+请在上一步激活的虚拟环境内启动。`launcher.py` 管理更新后的重启和失败回滚。`python main.py` 可直接运行，但自动部署需要先通过启动器重启一次。
+
 打开 **`http://127.0.0.1:3090`**，在「配置 → 连接」填写对端反向 WS 地址，点击「保存并重新连接」。
 概览页显示「OneBot v11 反向 WS」已接入，即连接成功。
 
@@ -141,10 +144,10 @@ Ooptra 主动连接，对端需开启 **OneBot v11 反向 WebSocket 服务端**�
 | 语音台 | 会话控制、自动串门、房间成员、人格与记忆 |
 | 更新与备份 | 检查分支提交、创建和下载备份、升级与恢复进度 |
 
-右上角可切换暗色模式，选择保存在当前浏览器。侧栏「维护与账号」提供重连、检查更新和退出登录。
-「更新与备份」默认跟随当前安装渠道，可选择 main 正式版、beta 测试版或 dev 预览版；跨渠道安装可能降级或改变功能，需要确认。预检查通过后可一键备份并更新，启动失败时尝试恢复原版本和数据。
-自动部署需 **官方 Git 仓库 + 虚拟环境 + `python launcher.py`**；此前通过 `python main.py` 启动的实例需先手动重启一次。局域网浏览器只发起请求，安装和重启在部署机器上执行；服务账户须能写入部署目录、维护目录和 Git 元数据，远程维护还需设置访问令牌。
-侧栏「检查更新」统一进入「更新与备份」，旧 Release / 标签查询 API 保留兼容。详细支持条件与恢复方法见[配置与维护](docs/operations.md)。
+右上角可切换暗色模式，选择保存在当前浏览器。配置草稿在页面与分组切换时保留；离开、放弃和保存提供确认与改动摘要。侧栏「维护与账号」提供重连、检查更新和退出登录。
+「更新与备份」提供 **main 正式版、beta 测试版、dev 预览版**，默认选择当前安装频道，也可手动切换后重新检查。当前提交已是所选频道最新时无需安装；跨频道安装会明确要求确认，可能降级或改变功能。
+自动更新需 **官方 Git 仓库 + 虚拟环境 + `python launcher.py`**，还需代码无未提交改动、部署目录可写，目标版本支持自动更新。符合预检查条件时可先备份再安装，失败时尝试恢复原版本和数据；目标不兼容时按页面提示手动更新。局域网维护还需设置访问令牌。
+侧栏「检查更新」统一进入更新与备份中心。旧 Release / 标签查询 API 保留兼容。详细支持条件与恢复方法见[配置与维护](docs/operations.md)。
 备份列表、部署预检查和存储统计独立加载；更新检查最多等待 60 秒。网络设置支持部署端代理和可配置 HTTPS Git 镜像，安装前校验官方目标提交；镜像仅加速代码传输。
 备份支持下载、恢复与确认删除，包括最新备份；更新／恢复／回滚引用的备份受保护。网络与诊断收纳在「高级选项」，GitHub 加速提供预设、自定义地址和部署端 Git 连通性测试；手动代理与加速独立，默认填入 `http://127.0.0.1:7890`，手动地址留空则不使用代理。
 
@@ -211,7 +214,7 @@ pytest -q
 pyright  # 可选：类型检查
 ```
 
-CI 在 PR 和 `main` / `beta` / `dev` 推送时执行 Ruff 与 pytest，覆盖 Ubuntu（Python 3.10 / 3.13）和 Windows（Python 3.13）。
+CI 在 PR 和 `main` / `beta` / `dev` 推送时执行 Ruff、pytest 与真实浏览器交互测试；Python 覆盖 Ubuntu（3.10 / 3.13）和 Windows（3.13），浏览器任务独立安装 Node／Playwright，不增加运行部署依赖。
 源码目录与测试注意事项见[开发说明](docs/operations.md#开发说明)。
 
 ## 许可与鸣谢
@@ -221,5 +224,3 @@ CI 在 PR 和 `main` / `beta` / `dev` 推送时执行 Ruff 与 pytest，覆盖 U
 
 [提交问题](https://github.com/Eason4869/Ooptra/issues) · [OneBot v11 协议](https://github.com/botuniverse/onebot-11) ·
 [SnowLuma](https://github.com/SnowLuma/SnowLuma)（文档与产品形态参考，无隶属关系）
-
-访问计数仅作曝光参考，不代表独立访客；维护者可在 [GitHub Traffic](https://github.com/Eason4869/Ooptra/graphs/traffic) 查看近 14 天访问与克隆统计。

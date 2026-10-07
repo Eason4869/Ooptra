@@ -422,7 +422,18 @@
     button.disabled = true;
     button.textContent = '检查中…';
     try {
-      const result = await api('/api/voice/diagnostics', {method: 'POST', body: {network: $('diagnostic-network').checked}});
+      const body = {network: $('diagnostic-network').checked};
+      const file = $('diagnostic-audio')?.files?.[0];
+      if (file) {
+        if (file.size > 2 * 1024 * 1024) throw new Error('自检 WAV 不能超过 2 MiB。');
+        body.audio_wav_base64 = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result).split(',')[1]);
+          reader.onerror = () => reject(new Error('无法读取自检音频。'));
+          reader.readAsDataURL(file);
+        });
+      }
+      const result = await api('/api/voice/diagnostics', {method: 'POST', body});
       $('diagnostic-results').innerHTML = checksHTML(result.checks || []);
     } catch (err) {
       $('diagnostic-results').innerHTML = checksHTML([{title: '自检未完成', state: 'fail', detail: err.message}]);
