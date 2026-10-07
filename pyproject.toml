@@ -1,7 +1,8 @@
 [tool.ruff]
 target-version = "py310"
 line-length = 100
-# src/oopz_sdk 是内置的官方 SDK 源码，保持与上游逐字一致，不参与本仓库的 lint。
+# src/oopz_sdk 是内置 SDK，保留其代码风格，不参与本仓库的批量 lint。
+# 本地兼容性修复由对应回归测试验证。
 extend-exclude = ["src/oopz_sdk"]
 
 [tool.ruff.lint]

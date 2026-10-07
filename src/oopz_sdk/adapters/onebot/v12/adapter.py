@@ -8,6 +8,7 @@ from typing import Any, Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING
 
 from oopz_sdk.models.event import HeartbeatEvent, ServerIdEvent
+from oopz_sdk.models.message import MentionInfo
 from ..utils import model_to_userinfo_dict, model_to_profile_extra
 from .event import to_onebot_event
 from .message import from_onebot_message
@@ -238,7 +239,7 @@ class OneBotV12Adapter:
             result = await self.oopz_bot.messages.send_private_message(
                 *send_parts.parts,
                 target=user_id,
-                mention_list=send_parts.mention_list,
+                mention_list=[MentionInfo.model_validate(mention) for mention in send_parts.mention_list],
                 is_mention_all=send_parts.is_mention_all,
                 reference_message_id=reference_message_id,
             )
@@ -265,7 +266,7 @@ class OneBotV12Adapter:
                 *send_parts.parts,
                 area=guild_id,
                 channel=channel_id,
-                mention_list=send_parts.mention_list,
+                mention_list=[MentionInfo.model_validate(mention) for mention in send_parts.mention_list],
                 is_mention_all=send_parts.is_mention_all,
                 reference_message_id=reference_message_id,
             )

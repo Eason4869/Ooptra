@@ -234,9 +234,11 @@ def build_voice_routes(
             return {}
         try:
             data = await request.json()
-        except Exception:
-            return {}
-        return data if isinstance(data, dict) else {}
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise web.HTTPBadRequest(text="请求体必须是有效 JSON 对象") from exc
+        if not isinstance(data, dict):
+            raise web.HTTPBadRequest(text="请求体必须是 JSON 对象")
+        return data
 
     # ── 插件契约：扁平 status ──
     def status_payload(agent: Any) -> dict[str, Any]:

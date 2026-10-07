@@ -487,3 +487,23 @@ def test_members_unknown_channel_is_empty_not_error() -> None:
     assert status == 200, payload
     assert payload["count"] == 0 and payload["members"] == []
     assert payload["live_members"] == 0
+
+
+@pytest.mark.parametrize('payload,status', [('broken-json', 400), ('x' * (3 * 1024 * 1024 + 1), 413)], ids=['invalid-json', 'oversized'])
+def test_standalone_guard_preserves_http_body_errors(payload, status):
+    async def run():
+        server = VoiceApiServer(FakeRuntime(FakeAgent()), VoiceApiSettings(
+            enabled=True, host='127.0.0.1', port=0, token='fixture-api',
+        ))
+        await server.start()
+        try:
+            port = server._runner.addresses[0][1]
+            from aiohttp import ClientSession
+            async with ClientSession() as client, client.delete(
+                f'http://127.0.0.1:{port}/memory', data=payload,
+                headers={'Authorization': 'Bearer fixture-api', 'Content-Type': 'application/json'},
+            ) as response:
+                assert response.status == status
+        finally:
+            await server.stop()
+    asyncio.run(run())

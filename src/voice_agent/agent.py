@@ -1232,6 +1232,11 @@ class VoiceAgent:
         if not text:
             return {"ok": False, "error": "text required"}
 
+        if not self._joined:
+            return {"ok": False, "error": "not joined to a voice room"}
+        if self.duplex is None or not self._connection_ready or self._voice_suspended:
+            return {"ok": False, "error": "voice playback unavailable"}
+
         if self.live_mode:
             speak = getattr(self.backend, "speak_text", None)
             if speak is not None:

@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 from collections.abc import AsyncIterator
@@ -85,7 +86,7 @@ async def open_live_ws(
                 max_msg_size=max_size,
                 heartbeat=20,
             )
-        except Exception:
+        except (Exception, asyncio.CancelledError):
             await session.close()
             raise
         return _AiohttpWs(ws, session)

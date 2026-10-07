@@ -161,7 +161,8 @@ VOICE_AGENT_CONFIG = {
     "conversation_window_seconds": 30,
     # AI 识别真人让 bot 退出语音的意图，先说离场语再真正退房；默认开启。
     # 所有当前监听成员均可触发。复用自动串门分域 leave_prompts，空列表时使用默认告别。
-    # MiMo 开启时每句都需 ASR 与额外意图判断；关闭且无关键词时才在ASR前按概率跳过。
+    # MiMo 开启时每句需 ASR 与意图判断；需要回复时可与聊天合并请求。
+    # 关闭且无关键词/连续对话窗口时，才可在 ASR 前按概率跳过。
     "voice_leave_enabled": True,
 
     # 模型 API 网络代理（选填）：""=不启用；"clash"=http://127.0.0.1:7890；

@@ -80,6 +80,8 @@ class VoiceApiServer:
             return self._err("访问令牌无效", 401)
         try:
             return await handler(request)
+        except web.HTTPException:
+            raise
         except Exception as exc:
             logger.exception("voice api handler failed")
             return self._err(str(exc), 500)

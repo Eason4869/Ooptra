@@ -31,9 +31,10 @@ def restored_endpoint(path: Path) -> dict | None:
                 value = ast.literal_eval(node.value)
                 if not isinstance(value, dict) or not value.get("enabled", True):
                     raise ValueError("恢复后 WebUI 必须启用，才能验证恢复结果")
-                host = str(value.get("host") or "127.0.0.1").strip() or "127.0.0.1"
+                host = str(os.environ.get("BOT_WEBUI_HOST") or value.get("host") or "127.0.0.1").strip() or "127.0.0.1"
                 host = "127.0.0.1" if host in {"0.0.0.0", "localhost"} else "::1" if host == "::" else host
-                return {"health_host": host, "health_port": int(value.get("port") or 3090), "health_token": str(value.get("token") or "").strip()}
+                token = str(value.get("token") or "").strip() or os.environ.get("BOT_WEBUI_TOKEN", "").strip()
+                return {"health_host": host, "health_port": int(os.environ.get("BOT_WEBUI_PORT") or value.get("port") or 3090), "health_token": token}
             except (TypeError, ValueError) as exc:
                 raise ValueError("无法安全检查备份中的 WebUI 配置，请手动恢复") from exc
     return None
@@ -45,7 +46,17 @@ def atomic_json(path: Path, value: dict) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
             json.dump(value, stream, ensure_ascii=False)
-        os.replace(name, path)
+        for attempt in range(5):
+            try:
+                os.replace(name, path)
+                break
+            except PermissionError as exc:
+                # Windows readers/antivirus can briefly deny rename. Keep the
+                # old complete file until replacement; real permission failures
+                # still propagate after at most 200 ms of retries.
+                if getattr(exc, "winerror", None) not in {5, 32, 33} or attempt == 4:
+                    raise
+                time.sleep(0.02 * (attempt + 1))
     finally:
         Path(name).unlink(missing_ok=True)
 

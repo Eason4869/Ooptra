@@ -211,9 +211,12 @@ WebUI 与所有语音 API 共用该密码，只在「配置 → 系统」修改�
 
 ## 开发与测试
 
+下载 [webui_preview.html](webui_preview.html) 后直接用浏览器打开，可离线查看当前界面；演示密码 `demo`，操作仅影响演示数据，不连接 Oopz 或模型服务。
+
 ```bash
 python -m pip install -r requirements-dev.txt
 ruff check .
+python scripts/build_webui_preview.py --check
 pytest -q
 pyright  # 可选：类型检查
 ```

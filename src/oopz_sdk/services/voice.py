@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from typing import Any
 
@@ -28,6 +29,7 @@ class Voice(BaseService):
         self._current_channel: str | None = None
         self._current_uid: str | None = None
         self._identity_task: asyncio.Task | None = None
+        self._join_generation = 0
 
 
     @property
@@ -52,18 +54,38 @@ class Voice(BaseService):
         `enter_channel` 成功后若浏览器/Agora 未就绪或加入失败，服务端可能仍认为在语音房；
         尽力退出 Agora 并调用服务端 `leave_voice_channel`，避免残留状态。
         """
-        try:
-            await self.backend.leave()
-        except Exception:
-            logger.debug("backend.leave after failed Voice.join", exc_info=True)
-        try:
-            await self._bot.channels.leave_voice_channel(
-                channel=channel,
-                area=area,
-                target=self._config.person_uid,
-            )
-        except Exception:
-            logger.debug("leave_voice_channel after failed Voice.join", exc_info=True)
+        generation = self._join_generation
+
+        async def rollback() -> None:
+            backend_ok = membership_ok = False
+            try:
+                await asyncio.wait_for(self.backend.leave(), timeout=5)
+                backend_ok = True
+            except Exception:
+                logger.debug("backend.leave after failed Voice.join", exc_info=True)
+            try:
+                result = await asyncio.wait_for(self._bot.channels.leave_voice_channel(
+                    channel=channel, area=area, target=self._config.person_uid,
+                ), timeout=5)
+                membership_ok = result is None or bool(getattr(result, "ok", True))
+            except Exception:
+                logger.debug("leave_voice_channel after failed Voice.join", exc_info=True)
+            if (backend_ok and membership_ok and self._join_generation == generation
+                    and self._current_area == area and self._current_channel == channel):
+                self._current_sign = None
+                self._current_area = self._current_channel = self._current_uid = None
+
+        task = asyncio.create_task(rollback(), name="voice-failed-join-rollback")
+        cancelled: asyncio.CancelledError | None = None
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError as exc:
+                # Every additional cancellation must still wait for bounded rollback.
+                cancelled = cancelled or exc
+        task.result()
+        if cancelled is not None:
+            raise cancelled
 
     async def start(self) -> None:
         await self.backend.start()
@@ -92,6 +114,12 @@ class Voice(BaseService):
             from_area=from_area,
             pid=rtc_uid,
         )
+        # Server membership already exists; retain its target until rollback succeeds.
+        self._join_generation += 1
+        self._current_sign = sign
+        self._current_area = area
+        self._current_channel = channel
+        self._current_uid = rtc_uid
         if not sign.rtc_token or not sign.rtc_channel_name:
             await self._cleanup_failed_join(area, channel)
             raise RuntimeError("enter_channel returned no supplierSign/roomId")
@@ -104,7 +132,7 @@ class Voice(BaseService):
                 uid=rtc_uid,
                 oopz_uid=self._config.person_uid
             )
-        except Exception:
+        except (Exception, asyncio.CancelledError):
             await self._cleanup_failed_join(area, channel)
             raise
 
@@ -130,11 +158,9 @@ class Voice(BaseService):
                     "browser WebSocket missing or agoraSendIdentity returned ok=false"
                 )
             await self._start_identity_heartbeat()
-        except Exception:
-            try:
-                await self.leave()
-            except Exception:
-                logger.debug("leave after post-join failure in Voice.join", exc_info=True)
+        except (Exception, asyncio.CancelledError):
+            await self._stop_identity_heartbeat()
+            await self._cleanup_failed_join(area, channel)
             raise
         return sign
 
@@ -222,7 +248,5 @@ class Voice(BaseService):
         if task is None:
             return
         task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await task
-        except asyncio.CancelledError:
-            pass

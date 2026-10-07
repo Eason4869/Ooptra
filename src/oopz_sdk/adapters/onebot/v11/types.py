@@ -128,6 +128,9 @@ class IdStore:
             raise ValueError("raw_id is required")
 
         with self._connect() as conn:
+            # Reserve the write transaction before reading/allocating so separate
+            # threads and IdStore instances cannot insert the same source/number.
+            conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
                 """
                 SELECT string, number, source

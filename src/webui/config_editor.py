@@ -274,7 +274,7 @@ FIELD_SPECS: dict[str, dict[str, dict[str, Any]]] = {
                 {"value": "direct", "label": "强制直连"},
             ],
             "allow_custom": True,
-            "hint": "选填；模型接口与更新检查走此代理，也可填 http://主机:端口",
+            "hint": "选填；模型接口走此代理，也可填 http://主机:端口；更新中心使用独立的更新 Git 代理",
         },
         # ── Gemini Live 厂商预设 ──
         "gemini.api_key": {
@@ -468,7 +468,7 @@ FIELD_SPECS: dict[str, dict[str, dict[str, Any]]] = {
                 "支持你出去吧、滚出去等明确对 bot 说的口语，否定和引用不执行。"
                 "不受回复概率限制，先播放离场语再退出，按手动退房冷却。"
                 "台词复用自动串门的分域退房预设（空列表时采用默认告别）。"
-                "MiMo 开启后每句需 ASR 和额外意图判断，会增加模型用量。"
+                "MiMo 开启后需要 ASR 和意图判断，可与聊天合并请求，仍可能增加模型用量。"
             ),
         },
         "barge_in": {"type": "bool", "label": "允许抢话打断", "tier": "adv", "section": "行为"},
@@ -800,14 +800,47 @@ def _node_span(lines: list[str], offsets: list[int], node: ast.expr) -> tuple[in
     return offsets[node.lineno - 1] + start_col, offsets[end_lineno - 1] + end_col
 
 
-def _dict_assignments(tree: ast.AST) -> dict[str, ast.Dict]:
-    assignments: dict[str, ast.Dict] = {}
+def _dict_assignments(tree: ast.AST) -> dict[str, ast.Dict | None]:
+    references: dict[str, list[ast.AST]] = {}
+    for node in ast.walk(tree):
+        names: list[str] = []
+        if isinstance(node, ast.Name):
+            names = [node.id]
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            names = [alias.asname or alias.name.split(".")[0] for alias in node.names]
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names = [node.name]
+        elif isinstance(node, ast.arg):
+            names = [node.arg]
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            names = [node.name]
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            names = node.names
+        elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
+            names = [node.name]
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            names = [node.rest]
+        for name in names:
+            references.setdefault(name, []).append(node)
+
+    # A mentioned name is not a missing group. Arbitrary references can alias or
+    # mutate its dictionary; only one standalone top-level literal is editable.
+    assignments: dict[str, ast.Dict | None] = dict.fromkeys(references)
     for node in getattr(tree, "body", []):
-        if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Dict):
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        else:
             continue
-        for target in node.targets:
-            if isinstance(target, ast.Name):
-                assignments[target.id] = node.value
+        if len(targets) != 1 or not isinstance(targets[0], ast.Name):
+            continue
+        target = targets[0]
+        if references.get(target.id) == [target] and isinstance(node.value, ast.Dict):
+            assignments[target.id] = node.value
+    if "*" in references:
+        for name in GROUP_SOURCES.values():
+            assignments[name] = None
     return assignments
 
 
@@ -816,6 +849,8 @@ def _dict_entries(dict_node: ast.Dict) -> dict[str, ast.expr]:
     for key_node, value_node in zip(dict_node.keys, dict_node.values, strict=True):
         if isinstance(key_node, ast.Constant) and isinstance(key_node.value, str):
             entries[key_node.value] = value_node
+        else:
+            raise RuntimeError("配置字典包含解包或动态键，无法安全修改")
     return entries
 
 
@@ -911,6 +946,8 @@ def _patched_text(text: str, updates: dict[str, dict[str, Any]]) -> str:
     for group, values in updates.items():
         source_name = GROUP_SOURCES[group]
         dict_node = assignments.get(source_name)
+        if source_name in assignments and dict_node is None:
+            raise RuntimeError(f"{source_name} 不是唯一的字典字面量定义，无法安全修改")
         if dict_node is None:
             # config.py 尚无该分组时，文件末尾追加空字典再写入
             appended = f"\n{source_name} = {{\n}}\n"
@@ -922,6 +959,10 @@ def _patched_text(text: str, updates: dict[str, dict[str, Any]]) -> str:
             dict_node = assignments.get(source_name)
             if dict_node is None:
                 raise RuntimeError(f"config.py 找不到 {source_name}，无法写入")
+
+        for node in ast.walk(dict_node):
+            if isinstance(node, ast.Dict):
+                _dict_entries(node)
 
         pending: dict[str, dict[str, Any]] = {}
         for field, value in values.items():
@@ -997,6 +1038,9 @@ def apply_updates(updates: Any) -> dict[str, Any]:
             text = handle.read()
         to_write = copy.deepcopy(normalized)
         if "auto_visit" in normalized:
+            # Reject unsafe target bindings before reading its current value by
+            # execution; malformed definitions must never run during a save.
+            _patched_text(text, normalized)
             current: dict[str, Any] = {}
             exec(compile(text, CONFIG_PATH, "exec"), current)
             raw = current.get("VOICE_AUTO_VISIT_CONFIG", {})
