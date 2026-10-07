@@ -8,8 +8,6 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "src"))
 _plugin = os.path.join(os.path.dirname(ROOT), "astrbot_plugin_ooptra")
-if os.path.isdir(_plugin):
-    sys.path.insert(0, _plugin)
 
 
 def normalize_member(row: dict) -> dict:
@@ -63,7 +61,9 @@ def test_normalize() -> None:
     print("normalize ok")
 
 
-def test_plugin_format() -> None:
+def test_plugin_format(monkeypatch) -> None:
+    if os.path.isdir(_plugin):
+        monkeypatch.syspath_prepend(_plugin)
     try:
         from ooptra_client import format_members, format_status
     except Exception as exc:

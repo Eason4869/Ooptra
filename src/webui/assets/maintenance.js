@@ -417,7 +417,78 @@
     }
   });
 
+  $('diagnostic-run').addEventListener('click', async () => {
+    const button = $('diagnostic-run');
+    button.disabled = true;
+    button.textContent = '检查中…';
+    try {
+      const body = {network: $('diagnostic-network').checked};
+      const file = $('diagnostic-audio')?.files?.[0];
+      if (file) {
+        if (file.size > 2 * 1024 * 1024) throw new Error('自检 WAV 不能超过 2 MiB。');
+        body.audio_wav_base64 = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result).split(',')[1]);
+          reader.onerror = () => reject(new Error('无法读取自检音频。'));
+          reader.readAsDataURL(file);
+        });
+      }
+      const result = await api('/api/voice/diagnostics', {method: 'POST', body});
+      $('diagnostic-results').innerHTML = checksHTML(result.checks || []);
+    } catch (err) {
+      $('diagnostic-results').innerHTML = checksHTML([{title: '自检未完成', state: 'fail', detail: err.message}]);
+    } finally { button.disabled = false; button.textContent = '开始自检'; }
+  });
 
+  const audio = $('preview-audio');
+  const defaults = {voice: '你好，我是 Ooptra，很高兴听到你的声音。', enter: '在玩什么游戏？', leave: '拜拜，我下了'};
+  let saved = [];
+  let promptRequest = 0;
+  window.loadPreviewPrompts = async () => {
+    const kind = $('preview-kind').value;
+    const request = ++promptRequest;
+    show($('preview-saved'), kind !== 'voice');
+    if (kind === 'voice') return;
+    const area = $('preview-area').value;
+    $('preview-area').replaceChildren(new Option('全局默认', ''));
+    for (const [id, name] of Object.entries(voiceAreaNames)) $('preview-area').add(new Option(name, id));
+    $('preview-area').value = area;
+    try {
+      const result = await api('/api/voice/preview/prompts?kind=' + kind + '&area=' + encodeURIComponent(area));
+      if (request !== promptRequest) return;
+      saved = result.prompts || [];
+      $('preview-prompt').replaceChildren();
+      saved.forEach((value, index) => $('preview-prompt').add(new Option(value, String(index))));
+      if (!saved.length) $('preview-prompt').add(new Option('未保存台词；可输入临时试听内容', ''));
+      $('preview-random').disabled = !saved.length;
+      if (saved.length) $('preview-text').value = saved[0];
+    } catch (err) { if (request === promptRequest) text('preview-status', err.message); }
+  };
+  $('preview-kind').addEventListener('change', () => { $('preview-text').value = defaults[$('preview-kind').value]; window.loadPreviewPrompts(); });
+  $('preview-area').addEventListener('change', () => window.loadPreviewPrompts());
+  $('preview-prompt').addEventListener('change', () => { const value = saved[Number($('preview-prompt').value)]; if (value) $('preview-text').value = value; });
+  $('preview-random').addEventListener('click', () => { if (saved.length) { const index = Math.floor(Math.random() * saved.length); $('preview-prompt').value = String(index); $('preview-text').value = saved[index]; } });
+  $('preview-stop').addEventListener('click', () => { audio.pause(); audio.currentTime = 0; });
+  $('preview-run').addEventListener('click', async () => {
+    const button = $('preview-run');
+    const content = $('preview-text').value.trim();
+    if (!content) { text('preview-status', '请输入试听内容。'); return; }
+    audio.pause();
+    audio.removeAttribute('src');
+    show(audio, false);
+    button.disabled = true;
+    $('preview-stop').disabled = true;
+    text('preview-status', '正在生成独立试听，最长等待 30 秒…');
+    try {
+      const result = await api('/api/voice/preview', {method: 'POST', body: {kind: $('preview-kind').value, text: content, voice: $('preview-voice').value.trim()}});
+      audio.src = 'data:audio/wav;base64,' + result.wav_base64;
+      show(audio, true);
+      $('preview-stop').disabled = false;
+      text('preview-status', '试听文本：' + result.text);
+      try { await audio.play(); } catch (_) { text('preview-status', '音频已生成，请点击播放器播放。文本：' + result.text); }
+    } catch (err) { text('preview-status', err.message); }
+    finally { button.disabled = false; }
+  });
  }
  function start() {
    try { initializeMaintenance(); }

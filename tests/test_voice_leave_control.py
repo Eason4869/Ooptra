@@ -66,7 +66,10 @@ def test_mimo_intent_uses_isolated_model_request_and_strict_boolean(tmp_path, mo
         monkeypatch.setattr(agent.backend, "_http", http)
         assert await agent.backend.detect_leave_intent("机器人，你先下吧") is expected
         assert requests[0]["messages"][-1] == {"role": "user", "content": "机器人，你先下吧"}
-        assert "不要退语音" in requests[0]["messages"][0]["content"]
+        instructions = requests[0]["messages"][0]["content"]
+        assert "不要退语音" in instructions
+        assert "你出去吧" in instructions and "滚出去" in instructions
+        assert "不要出去" in instructions and "他说你出去吧" in instructions
         assert not agent.memory.recent()
         await agent.backend.aclose()
     asyncio.run(run())
@@ -259,7 +262,7 @@ def test_failed_voice_departure_restores_worker_and_accepts_spoken_retry(tmp_pat
     (True, 270, 500, True, ["asr", "intent", "leave"]),
     (True, 270, 500, False, ["asr", "intent"]),
     (False, 270, 500, True, []),
-    (True, 220, 200, False, ["asr", "intent", "chat"]),
+    (True, 220, 200, False, ["asr", "intent_chat"]),
 ])
 def test_short_voice_control_preserves_normal_reply_length_filter(
     tmp_path, monkeypatch, enabled, duration, minimum, intent, expected,
@@ -283,6 +286,9 @@ def test_short_voice_control_preserves_normal_reply_length_filter(
         async def chat(*args, **kwargs):
             calls.append("chat")
             return ""
+        async def intent_chat(*args, **kwargs):
+            calls.append("intent_chat")
+            return intent, ""
         async def tts(*args):
             pytest.fail("short generic utterance must not synthesize speech")
         async def announce(*args, **kwargs):
@@ -291,6 +297,7 @@ def test_short_voice_control_preserves_normal_reply_length_filter(
         monkeypatch.setattr(agent.backend, "asr", asr)
         monkeypatch.setattr(agent.backend, "detect_leave_intent", classify)
         monkeypatch.setattr(agent.backend, "chat", chat)
+        monkeypatch.setattr(agent.backend, "chat_with_intent", intent_chat)
         monkeypatch.setattr(agent.backend, "tts", tts)
         monkeypatch.setattr(agent, "speak_announcement", announce)
         await agent._on_remote_pcm("member", pcm, 16000)

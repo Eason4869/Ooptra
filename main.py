@@ -99,8 +99,9 @@ async def run() -> None:
     except Exception:
         logger.exception("语音 Agent 启动失败，不影响文字桥接")
 
+    # WebUI starts early for recovery; a response alone does not mean bootstrap finished.
+    console.set_bootstrap_ready(True)
     try:
-        console.set_bootstrap_ready(True)
         await stop_event.wait()
     finally:
         console.set_bootstrap_ready(False)

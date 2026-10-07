@@ -268,6 +268,59 @@ def build_voice_routes(
             "join_source": st.get("join_source", ""),
         }
 
+    from voice_agent.preview import PreviewService
+    preview_service = PreviewService()
+
+    async def voice_diagnostics(request: web.Request) -> web.Response:
+        import base64
+        import binascii
+
+        from voice_agent.diagnostics import diagnose
+        try:
+            body = await request.json() if request.can_read_body else {}
+            if not isinstance(body, dict):
+                return err("自检参数必须是 JSON 对象")
+            source = body.get("audio_wav_base64")
+            audio = None
+            if source is not None:
+                if not isinstance(source, str) or not source or len(source) > 2_796_204:
+                    return err("请上传不超过 2 MiB 的短句 WAV")
+                audio = base64.b64decode(source, validate=True)
+                if len(audio) > 2 * 1024 * 1024:
+                    return err("请上传不超过 2 MiB 的短句 WAV")
+            return ok(await diagnose(current_agent(), network=body.get("network") is True, audio_wav=audio))
+        except web.HTTPRequestEntityTooLarge:
+            return err("请上传不超过 2 MiB 的短句 WAV", 413)
+        except (ValueError, binascii.Error):
+            return err("音频或自检参数无效，请上传短句 WAV")
+
+    async def voice_stop(_request: web.Request) -> web.Response:
+        try:
+            await current_agent().stop_current_reply()
+            return ok({"speaking": False})
+        except Exception:
+            logger.exception("voice stop failed")
+            return err("停止回复失败，请检查当前语音状态", 503)
+
+    async def voice_preview(request: web.Request) -> web.Response:
+        body = await read_json(request)
+        try:
+            result = await preview_service.generate(
+                current_agent().settings, str(body.get("kind") or "voice"),
+                str(body.get("text") or ""), str(body.get("voice") or ""))
+            return ok(result)
+        except (ValueError, asyncio.TimeoutError) as exc:
+            return err(str(exc) or "试听超时，请检查模型连接")
+        except Exception as exc:
+            return err(f"{type(exc).__name__}：试听生成失败，请检查模型与音色配置")
+
+    async def voice_preview_prompts(request: web.Request) -> web.Response:
+        from voice_agent.auto_visit_settings import parse_auto_visit_config
+        from voice_agent.preview import saved_prompts
+        controller = getattr(voice_runtime, "auto_visit", None)
+        config = controller.config if controller is not None else parse_auto_visit_config(None)
+        return ok({"prompts": saved_prompts(config, request.query.get("kind", ""), request.query.get("area", ""))})
+
     async def health(_request: web.Request) -> web.Response:
         agent = current_agent()
         return ok(
@@ -598,6 +651,9 @@ def build_voice_routes(
     pairs = [
         ("GET", "/health", health),
         ("GET", "/voice/status", voice_status),
+        ("POST", "/voice/diagnostics", voice_diagnostics),
+        ("POST", "/voice/preview", voice_preview),
+        ("GET", "/voice/preview/prompts", voice_preview_prompts),
         ("GET", "/voice/auto-visit", auto_visit_get),
         ("POST", "/voice/auto-visit/config", auto_visit_config),
         ("POST", "/voice/auto-visit/pause", auto_visit_pause),
@@ -606,6 +662,7 @@ def build_voice_routes(
         ("GET", "/voice/channels", voice_channels),
         ("POST", "/voice/join", voice_join),
         ("POST", "/voice/leave", voice_leave),
+        ("POST", "/voice/stop", voice_stop),
         ("POST", "/voice/speak", voice_speak),
         ("GET", "/oopz/areas", oopz_areas),
         ("GET", "/oopz/channels", oopz_channels),

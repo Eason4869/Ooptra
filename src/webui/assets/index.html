@@ -248,6 +248,7 @@
         <button class="subtab" data-tab="auto-visit">自动串门</button>
         <button class="subtab" data-tab="members">房间成员</button>
         <button class="subtab" data-tab="persona">人格与记忆</button>
+        <button class="subtab" data-tab="tools">自检与试听</button>
       </div>
 
       <!-- 会话 -->
@@ -267,6 +268,7 @@
             <button class="btn ghost sm" id="voice-set-default" title="把当前选中的域/频道写入配置，作为插件 /进语音 的默认目标">设为默认</button>
             <button class="btn primary sm" id="voice-join">进房</button>
             <button class="btn ghost sm" id="voice-leave">退房</button>
+            <button class="btn ghost sm" id="voice-stop" type="button">停止回复</button>
           </header>
           <p class="hint" id="default-target-hint">默认目标：未设置。插件不带参数进房时用它；一个 QQ 群绑了多个域时也按默认域查询。</p>
 
@@ -322,19 +324,19 @@
             <p class="tile-sub" id="v-speaking">空闲</p>
           </article>
           <article class="tile">
-            <header><i class="dot"></i>API</header>
-            <b class="tile-value" id="v-api">/api/voice/*</b>
-            <p class="tile-sub">与控制台同端口 3090</p>
+            <header><i class="dot"></i>无人退房</header>
+            <b class="tile-value" id="v-empty">—</b>
+            <p class="tile-sub" id="v-empty-sub">手动与自动进房均适用</p>
           </article>
         </div>
 
         <div class="split">
           <section class="card">
-            <header class="card-head"><h3>与 AI 对话</h3></header>
-            <p class="hint">用文字发一句话，AI 会在当前语音房用语音回答，和房间里说话是同一场对话（需已进房）。级联模式下不经过模型，直接朗读这段文字。</p>
+            <header class="card-head"><h3 id="speak-title">快捷开口</h3><span class="chip" id="speak-mode">读取模型…</span></header>
+            <p class="hint" id="speak-hint">读取当前模型的开口方式…</p>
             <div class="speak-row">
               <input class="control grow" id="speak-text" placeholder="例如：大家好啊，在聊什么呢" />
-              <button class="btn primary" id="speak-btn">发送</button>
+              <button class="btn primary" id="speak-btn">开口</button>
             </div>
             <p class="hint" id="speak-status"></p>
           </section>
@@ -343,6 +345,7 @@
             <ul class="feed" id="voice-transcript"></ul>
           </section>
         </div>
+        <details class="tool-details voice-observation"><summary>回复决策与耗时</summary><p class="hint">只显示原因和耗时，不保存原始音频。实时语音的阶段可能重叠。</p><ul class="check-list" id="voice-decision-list"><li class="empty">暂无决策记录</li></ul></details>
       </div>
 
       <!-- 自动串门：全局默认与域覆盖独立保存 -->
@@ -365,7 +368,7 @@
         <div class="visit-layout">
           <section class="card visit-global">
             <header class="card-head"><h3>全局规则</h3><span class="chip">各域共用</span></header>
-            <p class="hint">每轮只尝试一个有人的房间。手动进房不受次数和冷却限制，也不会被自动退出。</p>
+            <p class="hint">每轮只尝试一个有人的房间。手动进房不受串门次数和冷却限制；手动或自动进房后，只剩 bot 持续 30 秒都会静默退出。</p>
             <form id="visit-global-form">
               <div class="visit-field-grid">
                 <fieldset class="visit-field"><legend>检查间隔 / 分钟</legend><div class="range-input"><input class="control" id="visit-check-min" type="number" min="1" max="10080" step="any" required aria-label="检查间隔最小分钟" /><span>至</span><input class="control" id="visit-check-max" type="number" min="1" max="10080" step="any" required aria-label="检查间隔最大分钟" /></div></fieldset>
@@ -396,6 +399,34 @@
       </div>
 
       <!-- 成员 -->
+      <div class="vpane" id="vpane-tools">
+        <div class="tool-workspace">
+          <section class="card">
+            <header class="card-head"><h3>语音自检</h3><button class="btn primary sm" id="diagnostic-run" type="button">开始自检</button></header>
+            <p class="hint">检查环境、连接与配置，不会进入语音房。网络检查会请求模型，可能产生少量费用。</p>
+            <label class="switch"><input type="checkbox" id="diagnostic-network" /><span>同时检查模型网络连接</span></label>
+            <label class="field"><span>短句音频样本（可选）</span><input class="control" id="diagnostic-audio" type="file" accept=".wav,audio/wav" /><small class="hint">WAV，最长 10 秒、最大 2 MB。独立检查识别、意图和合成；不进房、不写记忆。</small></label>
+            <ul class="check-list" id="diagnostic-results" aria-live="polite"><li class="empty">进房或回复异常时，先运行一次自检。</li></ul>
+          </section>
+          <section class="card">
+            <header class="card-head"><h3>台词与音色试听</h3><span class="chip">仅浏览器播放</span></header>
+            <p class="hint">使用当前模型与人格，独立生成短音频。进退房台词会交给 AI 改写，不影响当前房间或共享记忆。</p>
+            <label class="field"><span>试听内容</span><select class="control" id="preview-kind"><option value="voice">音色试听</option><option value="enter">进房台词</option><option value="leave">离场台词</option></select></label>
+            <div id="preview-saved" hidden>
+              <label class="field"><span>已保存台词的来源</span><select class="control" id="preview-area"><option value="">全局默认</option></select></label>
+              <label class="field"><span>选择已保存台词</span><select class="control" id="preview-prompt"><option value="">读取台词…</option></select></label>
+              <button class="btn ghost sm" id="preview-random" type="button">随机选一句</button>
+            </div>
+            <label class="field"><span>文字或台词指令</span><textarea class="control ta" id="preview-text" rows="3" maxlength="500">你好，我是 Ooptra，很高兴听到你的声音。</textarea></label>
+            <details class="tool-details"><summary>临时选择音色</summary><label class="field"><span>音色名称</span><input class="control" id="preview-voice" maxlength="80" placeholder="留空使用已保存的音色，不修改配置" /></label></details>
+            <div class="btn-row"><button class="btn primary" id="preview-run" type="button">生成试听</button><button class="btn ghost" id="preview-stop" type="button" disabled>停止播放</button></div>
+            <p class="hint" id="preview-status" role="status"></p>
+            <audio id="preview-audio" controls hidden preload="none"></audio>
+            <details class="tool-details"><summary>语音 API 地址</summary><p class="hint"><code id="v-api">/api/voice/*</code> 与当前控制台共用端口；插件可使用 /voice/*。</p></details>
+          </section>
+        </div>
+      </div>
+
       <div class="vpane" id="vpane-members">
         <div class="toolbar">
           <select class="control grow" id="member-area"></select>
@@ -512,6 +543,7 @@
         <span id="config-status"></span>
       </div>
       <div class="config-groups" id="config-groups"></div>
+      <p class="hint config-summary" id="config-summary" hidden aria-live="polite"></p>
       <div class="savebar" id="savebar" hidden>
         <span id="savebar-text">有未保存的改动</span>
         <button class="btn subtle" id="config-discard">放弃</button>
@@ -564,6 +596,8 @@
 </div>
 
 <script src="/assets/app.js"></script>
+<script src="/assets/config.js"></script>
+<script src="/assets/voice.js"></script>
 <script src="/assets/maintenance.js"></script>
 </body>
 </html>

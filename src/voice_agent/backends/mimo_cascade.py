@@ -12,7 +12,13 @@ import wave
 from io import BytesIO
 
 from voice_agent.backends.base import VoiceBackend, VoiceReply
-from voice_agent.reply_policy import allow_reply, matches_force_keyword
+from voice_agent.observation import DecisionTrace, VoiceObservation
+from voice_agent.reply_policy import (
+    ConversationWindow,
+    allow_reply,
+    matches_force_keyword,
+    window_seconds,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -249,6 +255,9 @@ class MimoCascadeBackend(VoiceBackend):
     def __init__(self, settings, memory) -> None:
         self.settings = settings
         self.memory = memory
+        self.observation = VoiceObservation(self.name)
+        self.intent_response_valid = True
+        self._conversation = ConversationWindow()
         self._session = None  # aiohttp.ClientSession，懒加载
 
     def _proxy_url(self) -> str | None:
@@ -308,7 +317,7 @@ class MimoCascadeBackend(VoiceBackend):
             logger.info("ASR 结果含控制标记，已丢弃：%r -> %r", raw[:80], clean[:80])
         return clean
 
-    async def chat(self, user_text: str, *, user_key: str = "") -> str:
+    async def chat(self, user_text: str, *, user_key: str = "", _with_intent: bool = False) -> str:
         history = self.memory.as_messages(user_key=user_key, limit=self.settings.memory_max_turns)
         # 历史里存着净化之前的回复（emoji、星号动作、换行、超长），照样会带偏
         # 模型 —— 一并清掉。长度也要夹：只清不夹的话，模型照着历史里的长回复
@@ -327,6 +336,16 @@ class MimoCascadeBackend(VoiceBackend):
         ]
         messages.extend(history)
         messages.append({"role": "user", "content": user_text})
+        if _with_intent:
+            from voice_agent.voice_control import LEAVE_INTENT_DESCRIPTION
+
+            messages[0]["content"] += (
+                "\n【语音控制与回复】" + LEAVE_INTENT_DESCRIPTION
+                + '对当前用户发言同时判断退房意图并生成回复。只输出 JSON 对象 '
+                + '{"leave": false, "reply": "口语回复"}；leave 必须是布尔值。'
+                + '确认退房时输出 {"leave": true, "reply": ""}，告别由系统单独处理。'
+                + "JSON 格式要求优先于正文输出规则，reply 字段仍遵守语音房规则。"
+            )
         body = {
             "model": self.settings.mimo_llm_model,
             "messages": messages,
@@ -349,6 +368,8 @@ class MimoCascadeBackend(VoiceBackend):
         if not choices:
             return ""
         raw = str(((choices[0] or {}).get("message") or {}).get("content") or "")
+        if _with_intent:
+            return raw
         clean = clamp_reply(sanitize_for_tts(raw))
         if looks_like_reasoning_leak(clean):
             # 弃用整轮：说英文内心独白比不说话更糟（用户已经在房里喊「说中文」了）
@@ -364,9 +385,24 @@ class MimoCascadeBackend(VoiceBackend):
             )
         return clean
 
+    async def chat_with_intent(self, user_text: str, *, user_key: str = "") -> tuple[bool, str]:
+        raw = await self.chat(user_text, user_key=user_key, _with_intent=True)
+        try:
+            decision = json.loads(raw)
+        except (ValueError, TypeError) as exc:
+            raise ValueError("Invalid combined voice decision") from exc
+        if (not isinstance(decision, dict) or type(decision.get("leave")) is not bool
+                or not isinstance(decision.get("reply"), str)):
+            raise ValueError("Invalid combined voice decision")
+        if decision["leave"]:
+            return True, ""
+        clean = clamp_reply(sanitize_for_tts(decision["reply"]))
+        return False, "" if looks_like_reasoning_leak(clean) else clean
+
     async def detect_leave_intent(self, user_text: str) -> bool:
         from voice_agent.voice_control import LEAVE_INTENT_DESCRIPTION
 
+        self.intent_response_valid = False
         body = {
             "model": self.settings.mimo_llm_model,
             "messages": [
@@ -390,7 +426,9 @@ class MimoCascadeBackend(VoiceBackend):
         except (ValueError, TypeError):
             logger.warning("语音退房意图返回非 JSON，本轮不执行退房")
             return False
-        return isinstance(decision, dict) and decision.get("leave") is True
+        self.intent_response_valid = (isinstance(decision, dict)
+                                      and type(decision.get("leave")) is bool)
+        return self.intent_response_valid and decision["leave"] is True
 
     async def tts(self, text: str) -> tuple[bytes, int]:
         # 兜底：无论谁调用，进 TTS 的文本一律再清一遍
@@ -474,58 +512,95 @@ class MimoCascadeBackend(VoiceBackend):
         user_key: str = "",
         channel_key: str = "",
     ) -> VoiceReply:
+        trace = DecisionTrace(self.observation)
+        try:
+            return await self._decide_utterance(pcm16, sample_rate, user_key, channel_key, trace)
+        except asyncio.CancelledError:
+            trace.reason, trace.outcome = "interrupted", "skipped"
+            raise
+        except Exception:
+            trace.reason, trace.outcome = "error", "error"
+            raise
+        finally:
+            trace.finish()
+
+    async def _decide_utterance(self, pcm16, sample_rate, user_key, channel_key, trace):
         if not pcm16:
             return VoiceReply()
         keywords = list(self.settings.force_reply_keywords)
         percent = self.settings.reply_probability_percent
         control_enabled = self.settings.voice_leave_enabled
-        if not control_enabled and not keywords and not allow_reply(percent):
-            logger.debug("自动语音回复按概率跳过（MiMo，未调用 ASR）")
+        in_window = self._conversation.observe("", [], user_key, window_seconds(self.settings))
+        preselected = not control_enabled and not keywords and not in_window
+        if preselected and not allow_reply(percent):
+            trace.reason = "probability"
             return VoiceReply()
-        text = await self.asr(pcm16, sample_rate)
+        with trace.measure("asr"):
+            text = await self.asr(pcm16, sample_rate)
         if not text.strip():
             return VoiceReply(user_text=text)
+        audio_ms = len(pcm16) / 2 / max(1, sample_rate) * 1000.0
+        short = control_enabled and audio_ms < max(0, self.settings.min_utterance_ms)
+        addressed = False if short else self._conversation.observe(
+            text, keywords, user_key, window_seconds(self.settings))
+        selected = not short and (preselected or addressed or allow_reply(percent))
+        trace.reason = ("short" if short else "keyword" if matches_force_keyword(text, keywords)
+                        else "window" if addressed else "reply" if selected else "probability")
+        reply_text = ""
+        failed = False
+        leave_requested = False
         if control_enabled:
-            try:
-                leave_requested = await asyncio.wait_for(self.detect_leave_intent(text), 5.0)
-            except Exception:
-                logger.warning("语音退房意图识别失败，本轮不执行退房", exc_info=True)
-                leave_requested = False
+            if selected:
+                try:
+                    trace.timing_mode = "combined_intent_chat"
+                    with trace.measure("chat"):
+                        leave_requested, reply_text = await self.chat_with_intent(text, user_key=user_key)
+                    trace.timings["intent"] = trace.timings["chat"]
+                except Exception:
+                    # A malformed/failed combined reply must still check semantic departure.
+                    failed = True
+                    trace.reason, trace.outcome = "error", "error"
+            if not selected or failed:
+                try:
+                    with trace.measure("intent"):
+                        leave_requested = await asyncio.wait_for(self.detect_leave_intent(text), 5.0)
+                    if not self.intent_response_valid:
+                        failed = True
+                        trace.reason, trace.outcome = "error", "error"
+                except Exception:
+                    failed = True
+                    trace.reason, trace.outcome = "error", "error"
+                    logger.warning("语音退房意图识别失败，本轮不执行退房", exc_info=True)
             if leave_requested:
                 self.memory.append("user", text, user_key=user_key, channel_key=channel_key)
+                trace.reason, trace.outcome = "control", "control"
                 return VoiceReply(user_text=text, user_key=user_key, raw={"voice_control": "leave"})
-            audio_ms = len(pcm16) / 2 / max(1, sample_rate) * 1000.0
-            if audio_ms < max(0, self.settings.min_utterance_ms):
-                logger.debug("短句仅检查退房意图，不作为普通对话回复")
-                return VoiceReply(user_text=text, user_key=user_key)
-        if ((keywords or control_enabled) and not matches_force_keyword(text, keywords)
-                and not allow_reply(percent)):
-            self.memory.append("user", text, user_key=user_key, channel_key=channel_key)
-            logger.debug("自动语音回复按概率跳过（MiMo，已完成 ASR）")
+        if not selected or failed:
+            if not short:
+                self.memory.append("user", text, user_key=user_key, channel_key=channel_key)
             return VoiceReply(user_text=text, user_key=user_key)
-        reply_text = await self.chat(text, user_key=user_key)
-        # chat 会追加当前问题；先读取旧历史，完成请求后再落盘当前回合。
+        if not control_enabled:
+            with trace.measure("chat"):
+                reply_text = await self.chat(text, user_key=user_key)
+        # Read old history first; store this turn only after completing the model request.
         self.memory.append("user", text, user_key=user_key, channel_key=channel_key)
         if not reply_text.strip():
-            return VoiceReply(user_text=text, text="", user_key=user_key)
-        self.memory.append(
-            "assistant",
-            reply_text,
-            user_key=user_key,
-            channel_key=channel_key,
-        )
-        pcm_out, rate_out = await self.tts(reply_text)
-        pcm_out = resample_pcm16(pcm_out, rate_out, self.settings.sample_rate_out)
-        return VoiceReply(
-            user_text=text,
-            text=reply_text,
-            pcm16=pcm_out,
-            sample_rate=self.settings.sample_rate_out,
-            user_key=user_key,
-            raw={"stored": True},
-        )
+            trace.reason = "empty"
+            return VoiceReply(user_text=text, user_key=user_key)
+        self.memory.append("assistant", reply_text, user_key=user_key, channel_key=channel_key)
+        with trace.measure("tts"):
+            pcm_out, rate_out = await self.tts(reply_text)
+            pcm_out = resample_pcm16(pcm_out, rate_out, self.settings.sample_rate_out)
+        if not pcm_out:
+            trace.reason = "empty"
+        else:
+            trace.outcome = "replied"
+        return VoiceReply(user_text=text, text=reply_text, pcm16=pcm_out,
+                          sample_rate=self.settings.sample_rate_out,
+                          user_key=user_key, raw={"stored": True})
 
     async def aclose(self) -> None:
+        self._conversation.clear()
         session = self._session
         self._session = None
         if session is not None and not session.closed:

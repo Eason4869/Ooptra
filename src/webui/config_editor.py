@@ -449,6 +449,14 @@ FIELD_SPECS: dict[str, dict[str, dict[str, Any]]] = {
                 "Gemini 延迟转写最多等待 2 秒；跨回合无法确认归属时仅按概率回复。"
             ),
         },
+        "conversation_window_enabled": {
+            "type": "bool", "label": "连续对话窗口", "tier": "basic",
+            "hint": "叫到关键词后，同一成员可连续追问；换房清除，需先配置强制回复关键词。",
+        },
+        "conversation_window_seconds": {
+            "type": "int", "label": "连续追问窗口 / 秒", "tier": "basic",
+            "min": 1, "max": 300,
+        },
         "voice_leave_enabled": {
             "type": "bool",
             "label": "语音控制退语音",
@@ -456,6 +464,7 @@ FIELD_SPECS: dict[str, dict[str, dict[str, Any]]] = {
             "default": True,
             "hint": (
                 "默认开启，由 AI 判断真人是否要求 bot 退房；所有当前监听的成员均可触发。"
+                "支持你出去吧、滚出去等明确对 bot 说的口语，否定和引用不执行。"
                 "不受回复概率限制，先播放离场语再退出，按手动退房冷却。"
                 "台词复用自动串门的分域退房预设（空列表时采用默认告别）。"
                 "MiMo 开启后每句需 ASR 和额外意图判断，会增加模型用量。"

@@ -35,6 +35,8 @@ class VoiceAgentSettings:
     # 自动接话概率；快捷开口与进退房台词始终可用。
     reply_probability_percent: int = 30
     force_reply_keywords: list[str] = field(default_factory=list)
+    conversation_window_enabled: bool = True
+    conversation_window_seconds: int = 30
     voice_leave_enabled: bool = True
     sample_rate_in: int = 16000
     sample_rate_out: int = 24000
@@ -119,6 +121,8 @@ def load_voice_agent_settings() -> tuple[VoiceAgentSettings, VoiceApiSettings]:
         reply_text_to_channel=bool(_get(agent_raw, "reply_text_to_channel", False)),
         reply_probability_percent=max(0, min(100, int(_get(agent_raw, "reply_probability_percent", 30)))),
         force_reply_keywords=[str(word).strip() for word in keywords if str(word).strip()],
+        conversation_window_enabled=bool(_get(agent_raw, "conversation_window_enabled", True)),
+        conversation_window_seconds=max(1, min(300, int(_get(agent_raw, "conversation_window_seconds", 30)))),
         voice_leave_enabled=bool(_get(agent_raw, "voice_leave_enabled", True)),
         sample_rate_in=int(_get(agent_raw, "sample_rate_in", 16000)),
         sample_rate_out=int(_get(agent_raw, "sample_rate_out", 24000)),
