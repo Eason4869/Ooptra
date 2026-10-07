@@ -147,6 +147,9 @@ VOICE_AGENT_CONFIG = {
     # 包含任一关键词时强制回复，绕过概率。忽略大小写、全半角、空格与标点。
     # 例如 ["Ooptra", "机器人", "小欧"]；同音识别别名可直接补到列表。默认不启用。
     "force_reply_keywords": [],
+    # 命中关键词后，同一成员可连续追问；换房/退房清除窗口。
+    "conversation_window_enabled": True,
+    "conversation_window_seconds": 30,
     # AI 识别真人让 bot 退出语音的意图，先说离场语再真正退房；默认开启。
     # 所有当前监听成员均可触发。复用自动串门分域 leave_prompts，空列表时使用默认告别。
     # MiMo 开启时每句都需 ASR 与额外意图判断；关闭且无关键词时才在ASR前按概率跳过。

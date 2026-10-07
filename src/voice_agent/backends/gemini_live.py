@@ -25,7 +25,12 @@ from typing import Any
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit, urlunsplit
 
 from voice_agent.backends.base import VoiceBackend, VoiceReply
-from voice_agent.reply_policy import allow_reply, matches_force_keyword
+from voice_agent.reply_policy import (
+    ConversationWindow,
+    allow_reply,
+    matches_force_keyword,
+    window_seconds,
+)
 from voice_agent.vad import EnergyVad, VadvConfig
 
 logger = logging.getLogger(__name__)
@@ -40,6 +45,7 @@ class _CompletedReply:
     user_text: str
     reply_text: str
     deadline: float
+    user_key: str = ""
 
 # Google AI Studio / Gemini API 的 BidiGenerateContent WebSocket 端点
 DEFAULT_LIVE_WS = (
@@ -150,6 +156,12 @@ class GeminiLiveBackend(VoiceBackend):
     def __init__(self, settings, memory) -> None:
         self.settings = settings
         self.memory = memory
+        self._conversation = ConversationWindow()
+        self._input_speakers: set[str] = set()
+        self._turn_user_key = ""
+        self._connection_state = "idle"
+        self._connection_error = ""
+        self._reconnect_attempts = 0
         self._ws = None
         self._session_task: asyncio.Task | None = None
         self._reconnect_task: asyncio.Task | None = None
@@ -189,6 +201,21 @@ class GeminiLiveBackend(VoiceBackend):
 
     def set_audio_out(self, handler: AudioOutHandler | None) -> None:
         self._audio_out = handler
+
+    def note_input_speaker(self, uid: str) -> None:
+        if uid and uid != "unknown":
+            self._input_speakers.add(uid)
+            if len(self._input_speakers) > 1:
+                # A mixed turn cannot safely extend an earlier attribution.
+                self._conversation.clear()
+                self._turn_user_key = ""
+                if self._completed_reply:
+                    self._completed_reply.user_key = ""
+
+    def _conversation_allows(self, text: str, keywords: list[str]) -> bool:
+        key = next(iter(self._input_speakers)) if len(self._input_speakers) == 1 else ""
+        self._turn_user_key = key
+        return self._conversation.observe(text, keywords, key, window_seconds(self.settings))
 
     def set_text_out(self, handler) -> None:
         self._text_out = handler
@@ -250,6 +277,7 @@ class GeminiLiveBackend(VoiceBackend):
         await self._cancel_reconnect()
 
         self._closed = False
+        self._connection_state = "connecting"
         self._ready.clear()
         proxy = resolve_agent_proxy_url(getattr(self.settings, "proxy", "") or "")
 
@@ -271,9 +299,15 @@ class GeminiLiveBackend(VoiceBackend):
             await self._reset_session()
             raise RuntimeError("Gemini Live 会话建立后立即断开（请检查代理与 API key）")
         logger.info("Gemini Live session ready model=%s", self.settings.gemini_model)
+        self._connection_state = "ready"
+        self._connection_error = ""
+        self._reconnect_attempts = 0
 
     async def _reset_session(self) -> None:
         """回收当前会话：取消循环、关掉 socket、清空状态。可重复调用。"""
+        self._conversation.clear()
+        self._input_speakers.clear()
+        self._turn_user_key = ""
         task = self._session_task
         ws = self._ws
         self._session_task = None
@@ -301,12 +335,15 @@ class GeminiLiveBackend(VoiceBackend):
 
     async def close(self) -> None:
         self._closed = True
+        self._connection_state = "closed"
         await self._cancel_reconnect()
         await self._reset_session()
 
     async def _cancel_reconnect(self) -> None:
         """取消后台重连并**等它真的结束**——只 cancel 不 await 会留下悬空任务。"""
         task = self._reconnect_task
+        if task is asyncio.current_task():
+            return
         self._reconnect_task = None
         if task is not None and not task.done():
             task.cancel()
@@ -323,7 +360,7 @@ class GeminiLiveBackend(VoiceBackend):
 
     def _schedule_reconnect(self) -> None:
         """音频热路径不能阻塞，断线后交给后台任务重连。"""
-        if self._closed:
+        if self._closed or self._connection_state == "failed":
             return
         task = self._reconnect_task
         if task is not None and not task.done():
@@ -333,16 +370,31 @@ class GeminiLiveBackend(VoiceBackend):
         )
 
     async def _reconnect(self) -> None:
-        try:
-            await asyncio.sleep(self.reconnect_delay)
-            if self.session_active:
+        for attempt in range(3):
+            if self._closed:
                 return
-            await self.start_session()
-            logger.info("Gemini Live session reconnected")
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.warning("Gemini Live reconnect failed: %s", exc)
+            self._connection_state = "reconnecting"
+            self._reconnect_attempts = attempt + 1
+            await asyncio.sleep(min(30, self.reconnect_delay * 2 ** attempt))
+            if self._closed or self.session_active:
+                return
+            try:
+                await self.start_session()
+                logger.info("Gemini Live session reconnected")
+                return
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self._connection_error = f"{type(exc).__name__}：模型连接失败，请检查网络与模型配置"
+                logger.warning("Gemini Live reconnect attempt %s failed (%s)", attempt + 1, type(exc).__name__)
+                detail = str(exc).lower()
+                if any(word in detail for word in ("401", "403", "1007", "api_key", "permission", "authentication")):
+                    break
+        self._connection_state = "failed"
+
+    def connection_status(self) -> dict[str, Any]:
+        return {"state": self._connection_state, "attempts": self._reconnect_attempts,
+                "error": self._connection_error, "ready": self.session_active and self._ready.is_set()}
 
     # ------------------------------------------------------------------
     # 协议
@@ -395,7 +447,7 @@ class GeminiLiveBackend(VoiceBackend):
         这是热路径（每帧都会调），断线时只标记 + 后台重连，不做同步重连；
         但**一定**会打 WARNING，不再像以前那样吞成 debug 造成无声黑洞。
         """
-        if not pcm16 or self._closed:
+        if not pcm16 or self._closed or self._connection_state == "failed":
             return
         self._expire_completed_reply()
         if ((self._between_turns or self._completed_reply is not None)
@@ -405,7 +457,12 @@ class GeminiLiveBackend(VoiceBackend):
                 self._keyword_quarantine = True
             self._between_turns = False
         if not self.session_active:
-            await self.start_session()
+            # Subsequent microphone frames must not cancel/backdoor the retry budget.
+            if self._connection_state in {"idle", "closed"}:
+                await self.start_session()
+            else:
+                self._schedule_reconnect()
+                return
         mime = f"audio/pcm;rate={int(sample_rate or self._in_sample)}"
         payload = {
             "realtimeInput": {
@@ -507,6 +564,8 @@ class GeminiLiveBackend(VoiceBackend):
         pending.user_text += text
         if not matches_force_keyword(pending.user_text, pending.keywords):
             return
+        self._conversation.observe(pending.user_text, pending.keywords,
+                                   pending.user_key, window_seconds(self.settings))
         # Detach before awaiting callbacks. A reset/new command invalidates this generation.
         self._completed_reply = None
         generation = self._policy_generation
@@ -610,7 +669,7 @@ class GeminiLiveBackend(VoiceBackend):
             self._last_user_text = (self._last_user_text + input_tr["text"]).strip()
             if (self._reply_allowed is False and not self._deferred_audio_overflow
                     and not self._keyword_quarantine
-                    and matches_force_keyword(self._last_user_text, self._turn_keywords)):
+                    and self._conversation_allows(self._last_user_text, self._turn_keywords)):
                 # Transcription can arrive after audio: replay all buffered fragments.
                 self._reply_allowed = True
                 buffered = self._deferred_audio
@@ -627,7 +686,8 @@ class GeminiLiveBackend(VoiceBackend):
                 self._reply_allowed = (
                     self._announcement or self._force_reply
                     or (not self._keyword_quarantine
-                        and matches_force_keyword(self._last_user_text, self._turn_keywords))
+                        and self._conversation_allows(self._last_user_text, self._turn_keywords))
+                    or self._conversation_allows(self._last_user_text, [])
                     or allow_reply(self.settings.reply_probability_percent)
                 )
                 self._force_reply = False
@@ -671,6 +731,7 @@ class GeminiLiveBackend(VoiceBackend):
                     list(self._deferred_audio), self._turn_keywords,
                     self._last_user_text, self._last_reply,
                     time.monotonic() + _LATE_TRANSCRIPTION_SECONDS,
+                    self._turn_user_key if len(self._input_speakers) == 1 else "",
                 )
             # 转写落日志：语言乱切换这类问题**只能**从这里看出来（模型到底听到了
             # 什么、又用什么语言回答）。记忆里本来就存了这两段文本，日志不增加暴露。
@@ -713,6 +774,8 @@ class GeminiLiveBackend(VoiceBackend):
             self._between_turns = True
             self._keyword_quarantine = False
             self._clear_deferred_reply()
+            self._input_speakers.clear()
+            self._turn_user_key = ""
 
     # ------------------------------------------------------------------
     # VoiceBackend 兼容接口（Live 走流式，handle_utterance 仅兜底）

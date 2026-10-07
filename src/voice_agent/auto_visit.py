@@ -53,6 +53,10 @@ class AutoVisitController:
         self._leave_at: float | None = None
         self._empty_since: float | None = None
         self._empty_room: tuple[int, int, str, str] | None = None
+        self._empty_state = "unknown"
+        self._empty_checked_at: str | None = None
+        self._empty_error = ""
+        self._last_exit_reason = ""
         self._visit_id = ""
         self._visit_area = ""
         self._visit_channel = ""
@@ -133,7 +137,16 @@ class AutoVisitController:
                 "manual_cooldown_until": self._utc_deadline(self._cooldown_deadline(
                     f"area:{area}", snapshot["area_cooldowns"].get(area))),
             }
-        return {"phase": "paused" if self._paused else self._phase,
+        current_key = self._room_key()
+        countdown = (max(0.0, 30 - (self.clock.monotonic() - self._empty_since))
+                     if current_key is not None and current_key == self._empty_room
+                     and self._empty_since is not None else None)
+        return {"empty_room": {"state": (self._empty_state if current_key == self._empty_room else "unknown") if current_key else "inactive",
+                               "remaining_seconds": countdown,
+                               "checked_at": self._empty_checked_at,
+                               "last_exit_reason": self._last_exit_reason,
+                               "error": self._empty_error},
+                "phase": "paused" if self._paused else self._phase,
                 "paused": self._paused, "pause_reason": self._pause_reason,
                 "next_check_at": self._utc_deadline(self._next_check),
                 "leave_at": self._utc_deadline(self._leave_at),
@@ -193,6 +206,8 @@ class AutoVisitController:
         if room.get("joined") and area == room.get("area") and channel == room.get("channel"):
             # A member can enter and leave between polls; require a fresh quiet interval.
             self._empty_since = None
+            self._empty_state = "unknown"
+            self._empty_checked_at = None
             self._wake.set()
         if area == self._visit_area and channel == self._visit_channel:
             self._visit_wake.set()
@@ -473,6 +488,7 @@ class AutoVisitController:
         key = self._room_key()
         if key != self._empty_room:
             self._empty_room, self._empty_since = key, None
+            self._empty_state, self._empty_error = "unknown", ""
         if key is None:
             self._empty_since = None
             return False
@@ -487,12 +503,18 @@ class AutoVisitController:
 
         try:
             alone = await only_self()
+            self._empty_checked_at = self.clock.utcnow().isoformat()
+            self._empty_error = ""
         except Exception:
             self._empty_since = None
+            self._empty_state = "unknown"
+            self._empty_error = "无法确认成员状态，已重置无人倒计时"
             return False
         if not alone or key != self._room_key():
             self._empty_since = None
+            self._empty_state = "occupied" if key == self._room_key() else "unknown"
             return False
+        self._empty_state = "alone"
         now = self.clock.monotonic()
         if self._empty_since is None:
             self._empty_since = now
@@ -502,9 +524,12 @@ class AutoVisitController:
             verified = await only_self()
         except Exception:
             self._empty_since = None
+            self._empty_state = "unknown"
+            self._empty_error = "退出前复查失败，已重置无人倒计时"
             return False
         if not verified or key != self._room_key():
             self._empty_since = None
+            self._empty_state = "occupied" if key == self._room_key() else "unknown"
             return False
         return self._empty_since is not None and self.clock.monotonic() - self._empty_since >= 30
 
@@ -522,8 +547,11 @@ class AutoVisitController:
                 if source == "auto":
                     await self._cooldown_after_auto_exit(key[2])
                 self._last_action = "房间只剩 bot 持续 30 秒，已静默退出"
+                self._last_exit_reason = "alone_30_seconds"
+                self._empty_error = ""
             except Exception as exc:
                 self._last_error = str(exc)
+                self._empty_error = "无人退房未成功，将重新确认独处状态后重试"
                 logger.warning("empty room leave failed: %s", exc)
             finally:
                 # A failed leave waits another confirmed interval before retrying.

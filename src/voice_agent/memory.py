@@ -6,6 +6,7 @@ import json
 import os
 import threading
 import time
+from collections import deque
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -56,9 +57,9 @@ class MemoryStore:
 
     def recent(self, *, user_key: str = "", limit: int | None = None) -> list[dict[str, Any]]:
         limit = self._max_turns if limit is None else max(1, int(limit))
-        rows: list[dict[str, Any]] = []
+        rows: deque[dict[str, Any]] = deque(maxlen=limit)
         if not os.path.exists(self._path):
-            return rows
+            return []
         with self._lock, open(self._path, encoding="utf-8") as fh:
             for line in fh:
                 line = line.strip()
@@ -71,7 +72,7 @@ class MemoryStore:
                 if user_key and row.get("user_key") and row.get("user_key") != user_key:
                     continue
                 rows.append(row)
-        return rows[-limit:]
+        return list(rows)
 
     def as_messages(self, *, user_key: str = "", limit: int | None = None) -> list[dict[str, str]]:
         out: list[dict[str, str]] = []

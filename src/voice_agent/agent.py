@@ -620,6 +620,8 @@ class VoiceAgent:
             "channel": channel,
             "rtc_channel": getattr(sign, "rtc_channel_name", ""),
             "mode": "live" if self.live_mode else "cascade",
+            "model_connection": self.backend.connection_status() if hasattr(self.backend, "connection_status") else None,
+            "conversation_window_seconds": self.settings.conversation_window_seconds if self.settings.conversation_window_enabled else 0,
         }
         logger.info("voice agent joined %s/%s mode=%s", area, channel, payload["mode"])
         return payload
@@ -811,6 +813,8 @@ class VoiceAgent:
     def status(self) -> dict[str, Any]:
         return {
             "enabled": self.settings.enabled,
+            "model_connection": self.backend.connection_status() if hasattr(self.backend, "connection_status") else None,
+            "conversation_window_seconds": self.settings.conversation_window_seconds if self.settings.conversation_window_enabled else 0,
             "backend": self.settings.backend,
             "mode": "live" if self.live_mode else "cascade",
             "joined": self._joined,
@@ -981,6 +985,9 @@ class VoiceAgent:
                     self._speaking = False
             push = getattr(self.backend, "push_audio", None)
             if push is not None:
+                note_speaker = getattr(self.backend, "note_input_speaker", None)
+                if note_speaker is not None and EnergyVad._rms(pcm) >= _MIN_UTTERANCE_RMS:
+                    note_speaker(uid)
                 await push(pcm, sample_rate)
             return
 

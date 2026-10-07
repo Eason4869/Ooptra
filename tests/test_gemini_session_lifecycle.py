@@ -195,7 +195,11 @@ def test_push_audio_does_not_silently_swallow_failure(
         # 直接对已死的会话灌音频：内部会尝试重连，无论成败都不能无声无息
         with caplog.at_level("DEBUG", logger="voice_agent.backends.gemini_live"):
             await backend.push_audio(b"\x00\x01" * 160, 16000)
-        assert backend.session_active is True  # 已自动恢复
+        # Audio frames schedule bounded background recovery rather than opening
+        # another session inline and bypassing the retry budget.
+        assert backend._reconnect_task is not None
+        await backend.start_session()  # Explicit actions can still retry immediately.
+        assert backend.session_active is True
         await backend.aclose()
 
     asyncio.run(run())

@@ -66,7 +66,10 @@ def test_mimo_intent_uses_isolated_model_request_and_strict_boolean(tmp_path, mo
         monkeypatch.setattr(agent.backend, "_http", http)
         assert await agent.backend.detect_leave_intent("机器人，你先下吧") is expected
         assert requests[0]["messages"][-1] == {"role": "user", "content": "机器人，你先下吧"}
-        assert "不要退语音" in requests[0]["messages"][0]["content"]
+        instructions = requests[0]["messages"][0]["content"]
+        assert "不要退语音" in instructions
+        assert "你出去吧" in instructions and "滚出去" in instructions
+        assert "不要出去" in instructions and "他说你出去吧" in instructions
         assert not agent.memory.recent()
         await agent.backend.aclose()
     asyncio.run(run())

@@ -12,7 +12,7 @@ import wave
 from io import BytesIO
 
 from voice_agent.backends.base import VoiceBackend, VoiceReply
-from voice_agent.reply_policy import allow_reply, matches_force_keyword
+from voice_agent.reply_policy import ConversationWindow, allow_reply, window_seconds
 
 logger = logging.getLogger(__name__)
 
@@ -249,6 +249,7 @@ class MimoCascadeBackend(VoiceBackend):
     def __init__(self, settings, memory) -> None:
         self.settings = settings
         self.memory = memory
+        self._conversation = ConversationWindow()
         self._session = None  # aiohttp.ClientSession，懒加载
 
     def _proxy_url(self) -> str | None:
@@ -479,7 +480,8 @@ class MimoCascadeBackend(VoiceBackend):
         keywords = list(self.settings.force_reply_keywords)
         percent = self.settings.reply_probability_percent
         control_enabled = self.settings.voice_leave_enabled
-        if not control_enabled and not keywords and not allow_reply(percent):
+        in_window = self._conversation.observe("", [], user_key, window_seconds(self.settings))
+        if not control_enabled and not keywords and not in_window and not allow_reply(percent):
             logger.debug("自动语音回复按概率跳过（MiMo，未调用 ASR）")
             return VoiceReply()
         text = await self.asr(pcm16, sample_rate)
@@ -498,7 +500,8 @@ class MimoCascadeBackend(VoiceBackend):
             if audio_ms < max(0, self.settings.min_utterance_ms):
                 logger.debug("短句仅检查退房意图，不作为普通对话回复")
                 return VoiceReply(user_text=text, user_key=user_key)
-        if ((keywords or control_enabled) and not matches_force_keyword(text, keywords)
+        addressed = self._conversation.observe(text, keywords, user_key, window_seconds(self.settings))
+        if ((keywords or control_enabled or in_window) and not addressed
                 and not allow_reply(percent)):
             self.memory.append("user", text, user_key=user_key, channel_key=channel_key)
             logger.debug("自动语音回复按概率跳过（MiMo，已完成 ASR）")
@@ -526,6 +529,7 @@ class MimoCascadeBackend(VoiceBackend):
         )
 
     async def aclose(self) -> None:
+        self._conversation.clear()
         session = self._session
         self._session = None
         if session is not None and not session.closed:
