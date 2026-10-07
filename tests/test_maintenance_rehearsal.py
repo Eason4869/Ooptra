@@ -12,8 +12,11 @@ def git(root, *args):
     return subprocess.check_output(["git", *args], cwd=root, text=True).strip()
 
 
-@pytest.mark.parametrize("crash", [False, True])
-def test_real_process_switch_and_failed_candidate_rollback(tmp_path, crash):
+@pytest.mark.parametrize("candidate", ["ready", "crash", "not_ready", "no_supervisor"])
+def test_real_process_switch_and_failed_candidate_rollback(tmp_path, monkeypatch, candidate):
+    crash = candidate != "ready"
+    check_health = worker.healthy
+    monkeypatch.setattr(worker, "healthy", lambda process, job, timeout=3: check_health(process, job, timeout=timeout))
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
@@ -23,7 +26,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(json.dumps({"ok": True, "process": {"pid": os.getpid(), "executable": sys.executable, "update_id": os.environ.get("OOPTRA_UPDATE_ID")}}).encode())
+        self.wfile.write(json.dumps({"ok": True, "process": {"pid": os.getpid(), "executable": sys.executable, "update_id": os.environ.get("OOPTRA_UPDATE_ID"), "bootstrap_ready": True}, "bridge": {"runtime": {"supervisor_alive": True}, "oopz": {"connected": False}, "onebot": {"connected": False}}}).encode())
     def log_message(self, *args): pass
 def control():
     if sys.stdin.readline().strip() == "OOPTRA_STOP": os._exit(0)
@@ -39,7 +42,13 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
     git(tmp_path, "add", ".")
     git(tmp_path, "commit", "-m", "old server")
     old = git(tmp_path, "rev-parse", "HEAD")
-    (tmp_path / "main.py").write_text("raise SystemExit(3)" if crash else code + "\n# replacement\n")
+    replacement = {
+        "ready": code + "\n# replacement\n",
+        "crash": "raise SystemExit(3)",
+        "not_ready": code.replace('"bootstrap_ready": True', '"bootstrap_ready": False'),
+        "no_supervisor": code.replace('"supervisor_alive": True', '"supervisor_alive": False'),
+    }[candidate]
+    (tmp_path / "main.py").write_text(replacement)
     git(tmp_path, "add", "main.py")
     git(tmp_path, "commit", "-m", "candidate")
     target = git(tmp_path, "rev-parse", "HEAD")

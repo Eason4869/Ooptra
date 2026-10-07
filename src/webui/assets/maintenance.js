@@ -11,6 +11,10 @@
   let page = 1;
   let cleanup = null;
   let selectedSource = false;
+  const channels = {main: '正式版', beta: '测试版', dev: '预览版'};
+  const channelName = channel => channels[channel] ? channels[channel] + '（' + channel + '）' : channel || '未知';
+  const currentChannel = data => data?.current_channel || data?.update?.current_channel || data?.update?.channel;
+  const switchingChannel = check => !!check?.requires_confirmation || check?.action === 'switch' || !!(check?.current_channel && check.current_channel !== check.channel);
   const activePhases = new Set(['preparing', 'awaiting_restart', 'switching', 'checking', 'rolling_back']);
   const names = {preparing: '准备中', awaiting_restart: '正在关闭旧会话', switching: '切换中', checking: '检查新进程', rolling_back: '恢复原版本', complete: '已完成', rolled_back: '已回滚', failed: '需要处理'};
   const megabytes = value => (Number(value || 0) / 1024 / 1024).toFixed(2) + ' MB';
@@ -37,19 +41,24 @@
     current = data;
     const supported = !!data.preflight?.supported;
     const busy = operating || data.busy || activePhases.has(data.job?.phase);
-    if (!selectedSource && data.update?.channel) { $('maintenance-channel').value = data.update.channel; selectedSource = true; }
+    const installed = currentChannel(data);
+    if (!selectedSource && channels[installed]) { $('maintenance-channel').value = installed; selectedSource = true; }
     const selected = $('maintenance-channel').value;
     const check = data.check;
     text('maintenance-capability', supported ? '支持自动升级' : '查看部署预检查');
     text('maintenance-version', '当前 v' + (data.update?.version || state?.process?.version || '—'));
     busyControls(!!busy);
     $('maintenance-checks').innerHTML = checksHTML(data.preflight?.checks || []);
-    $('maintenance-update').disabled = busy || !supported || !check?.available || check.channel !== selected;
+    const checked = check?.channel === selected;
+    const compatible = check?.compatible !== false && check?.compatibility?.supported !== false;
+    const switching = switchingChannel(check) || !!(installed && installed !== check?.channel);
+    $('maintenance-update').disabled = busy || !supported || !checked || !check?.available || check?.action === 'current' || !compatible;
+    text('maintenance-update', checked && switching ? '备份并切换频道' : '备份并更新');
     $('maintenance-backup').disabled = !!busy;
     $('maintenance-check').disabled = !!busy;
     $('maintenance-channel').disabled = !!busy;
     const update = data.update || check || {};
-    text('maintenance-update-metadata', '来源 ' + selected + ' · 当前提交 ' + (update.current_sha?.slice(0, 12) || '未知') + ' · 目标提交 ' + (check?.channel === selected ? check.target_sha?.slice(0, 12) || '待检查' : '待检查') + ' · ' + (supported ? '可自动升级' : '需手动更新'));
+    text('maintenance-update-metadata', '当前频道 ' + channelName(installed) + ' · 目标 ' + channelName(selected) + ' · 当前提交 ' + (update.current_sha?.slice(0, 12) || '未知') + ' · 目标提交 ' + (checked ? check.target_sha?.slice(0, 12) || '待检查' : '待检查') + (checked && check.target_version ? ' · 目标 v' + check.target_version : '') + ' · ' + (supported && compatible ? '可自动更新' : '需手动更新'));
     if ($('maintenance-health')) $('maintenance-health').innerHTML = checksHTML(data.health?.checks || []);
     const storage = data.storage || {};
     text('maintenance-storage', storage.error || ('维护材料合计 ' + megabytes(storage.total_bytes) + ' · 备份 ' + megabytes(storage.backups_bytes) + '（' + (storage.backups_count || 0) + ' 份） · 环境 ' + megabytes(storage.environments_bytes) + ' · 浏览器 ' + megabytes(storage.browsers_bytes) + ' · 临时准备 ' + megabytes(storage.staging_bytes)));
@@ -58,7 +67,11 @@
     text('maintenance-pagination', '第 ' + pagination.page + ' / ' + pagination.pages + ' 页 · 共 ' + pagination.total + ' 份');
     if ($('maintenance-prev')) $('maintenance-prev').disabled = !!busy || page <= 1;
     if ($('maintenance-next')) $('maintenance-next').disabled = !!busy || page >= pagination.pages;
-    if (check?.channel === selected) text('maintenance-check-detail', check.available ? '目标提交 ' + check.target_sha.slice(0, 12) + '，确认后准备并安装。' : '已是所选分支的最新提交。');
+    if (checked) {
+      if (!compatible) text('maintenance-check-detail', '目标不支持自动更新，请手动安装。' + (check.compatibility_detail || check.compatibility?.detail || ''));
+      else if (!check.available || check.action === 'current') text('maintenance-check-detail', '已是' + channelName(selected) + '的最新提交，无需更新。');
+      else text('maintenance-check-detail', (switching ? '将切换到' + channelName(selected) + '，可能降级或改变功能。' : '发现' + channelName(selected) + '更新。') + '目标提交 ' + (check.target_sha?.slice(0, 12) || '未知') + '，确认后准备并安装。');
+    } else text('maintenance-check-detail', '请检查' + channelName(selected) + '，再确认安装。');
     show($('maintenance-job'), !!data.job);
     if (data.job) {
       $('maintenance-job').dataset.phase = data.job.phase;
@@ -131,10 +144,9 @@
     }
   }
 
-  window.checkMaintenanceUpdate = () => operation('/api/maintenance/check', {channel: $('maintenance-channel').value}, '检查完成', '正在检查更新，最长等待 60 秒…');
+  window.checkMaintenanceUpdate = () => operation('/api/maintenance/check', selectedSource ? {channel: $('maintenance-channel').value} : {}, '检查完成', '正在检查更新，最长等待 60 秒…');
   $('maintenance-check').addEventListener('click', window.checkMaintenanceUpdate);
   $('maintenance-channel').addEventListener('change', () => {
-    text('maintenance-check-detail', '更新来源已切换，请重新检查。');
     selectedSource = true;
     if (current) renderMaintenance(current);
   });
@@ -165,9 +177,14 @@
   });
   $('maintenance-update').addEventListener('click', async () => {
     const check = current?.check;
-    if (!check || $('maintenance-update').disabled) return;
-    if (await confirmDialog('升级 Ooptra？', '安装 ' + check.channel + ' 分支提交 ' + check.target_sha.slice(0, 12) + '。先创建备份和独立虚拟环境，再重启服务；健康检查失败会尝试恢复原版本。', '备份并升级')) {
-      await operation('/api/maintenance/update', {channel: check.channel, target_sha: check.target_sha}, '升级准备已开始');
+    if (!check || check.channel !== $('maintenance-channel').value || $('maintenance-update').disabled) return;
+    const installed = check.current_channel || currentChannel(current);
+    const switching = switchingChannel(check) || !!(installed && installed !== check.channel);
+    const detail = (switching ? '从' + channelName(installed) + '切换到' + channelName(check.channel) + '，可能降级或改变功能。' : '更新' + channelName(check.channel) + '。') + '安装提交 ' + check.target_sha.slice(0, 12) + '。先创建备份和独立虚拟环境，再重启服务；健康检查失败会尝试恢复原版本。';
+    if (await confirmDialog(switching ? '确认切换更新频道？' : '更新 Ooptra？', detail, switching ? '确认切换并安装' : '备份并更新')) {
+      const body = {channel: check.channel, target_sha: check.target_sha};
+      if (switching) body.confirm_channel_switch = true;
+      await operation('/api/maintenance/update', body, switching ? '频道切换准备已开始' : '更新准备已开始');
     }
   });
 

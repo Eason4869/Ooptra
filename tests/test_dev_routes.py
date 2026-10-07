@@ -54,8 +54,10 @@ def test_status_exposes_layers_when_external_connections_are_offline():
     from webui.server import WebUIConsole
 
     console = WebUIConsole(None, SimpleNamespace(snapshot=lambda: {
+        "runtime": {"supervisor_alive": True},
         "oopz": {"connected": False}, "onebot": {"connected": False},
     }))
+    console.set_bootstrap_ready(True)
     response = asyncio.run(console._handle_status(None))
     import json
     payload = json.loads(response.body)

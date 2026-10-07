@@ -51,7 +51,7 @@ def stop_owned(process):
 
 
 def runtime_health(status, *, expected_pid=None, update_id=None, expected_python=None):
-    """Process identity gates a switch; remote connections only describe degradation."""
+    """Local startup and supervision gate a switch; remote links only describe degradation."""
     status = status if isinstance(status, dict) else {}
     actual = status.get("process") if isinstance(status.get("process"), dict) else {}
     process_ok = bool(status.get("ok") and actual.get("pid"))
@@ -64,10 +64,14 @@ def runtime_health(status, *, expected_pid=None, update_id=None, expected_python
         # A venv's Python can link to the same base as another environment.
         # Preserve the invoked path instead of resolving those links away.
         process_ok = process_ok and isinstance(executable, str) and bool(executable) and os.path.normcase(os.path.abspath(executable)) == os.path.normcase(os.path.abspath(expected_python))
-    checks = [{"id": "process", "title": "服务进程", "state": "pass" if process_ok else "fail",
-               "detail": "服务已响应，进程身份校验通过" if process_ok else "服务未响应或进程身份不匹配"}]
+    bridge = status.get("bridge") if isinstance(status.get("bridge"), dict) else {}
+    runtime = bridge.get("runtime") if isinstance(bridge.get("runtime"), dict) else {}
+    local_ready = actual.get("bootstrap_ready") is True and runtime.get("supervisor_alive") is True
+    detail = "服务已响应，本地启动和桥接监督已就绪" if process_ok and local_ready else (
+        "本地启动尚未完成或桥接监督未运行" if process_ok else "服务未响应或进程身份不匹配")
+    process_ok = process_ok and local_ready
+    checks = [{"id": "process", "title": "服务进程", "state": "pass" if process_ok else "fail", "detail": detail}]
     for key, title in [("oopz", "Oopz 连接"), ("onebot", "OneBot 连接")]:
-        bridge = status.get("bridge") if isinstance(status.get("bridge"), dict) else {}
         link = bridge.get(key) if isinstance(bridge.get(key), dict) else {}
         connected = bool(link.get("connected"))
         checks.append({"id": key, "title": title, "state": "pass" if connected else "degraded",
@@ -140,8 +144,9 @@ def switch(root: Path, job: dict):
         phase("checking", "已启动新进程，等待 WebUI 健康检查")
         if not healthy(replacement, job):
             raise RuntimeError("新进程健康检查未通过")
-        # Only make the interpreter persistent after the candidate became healthy.
-        atomic_json(root / "data/maintenance/runtime.json", {"python": python, "browser_path": browsers})
+        # Persist the interpreter and source only after the candidate became ready.
+        channel = job.get("channel", "") if job["action"] == "update" else job.get("old_channel", "")
+        atomic_json(root / "data/maintenance/runtime.json", {"python": python, "browser_path": browsers, "channel": channel})
         phase("complete", "更新完成" if job["action"] == "update" else "备份恢复完成")
         return replacement
     except Exception:
@@ -160,7 +165,8 @@ def switch(root: Path, job: dict):
                 stop_owned(replacement)
                 phase("failed", "恢复后仍未通过健康检查；请在部署机器查看日志并手动启动")
                 return None
-            atomic_json(root / "data/maintenance/runtime.json", {"python": job["old_python"], "browser_path": job.get("old_browser_path", "")})
+            atomic_json(root / "data/maintenance/runtime.json", {"python": job["old_python"], "browser_path": job.get("old_browser_path", ""),
+                                                                "channel": job.get("old_channel", "")})
             phase("rolled_back", "操作失败，已恢复原版本和数据")
             return replacement
         except Exception:

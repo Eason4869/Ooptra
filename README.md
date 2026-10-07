@@ -38,7 +38,7 @@ Ooptra 将 Oopz 消息接入 **OneBot v11**，通过反向 WebSocket 对接机�
 | AI 语音 | Gemini Live / MiMo 级联；支持抢话、回复概率、强制关键词与语音退房 |
 | 自动串门 | 按域开启，随机进有人的房间；限时退出、进退房台词、冷却与每日上限 |
 | 语音工具 | 连续追问、回复决策与耗时、自检、短句 WAV 分阶段验证、无人倒计时与独立浏览器试听 |
-| 更新与备份 | 统一检查 main / dev 提交、备份分页与存储清理预览；Git + 虚拟环境支持升级、分层健康检查及失败回滚 |
+| 更新与备份 | 检查 main 正式版 / beta 测试版 / dev 预览版提交、备份分页与存储清理预览；Git + 虚拟环境支持更新、分层健康检查及失败回滚 |
 | 插件对接 | HTTP API 提供语音控制、人格与记忆管理，支持外部插件调用 |
 
 README 顶部只保留一套累计访问计数展示，不能据此判断独立访客数。仓库拥有者可在 [Insights → Traffic](https://github.com/Eason4869/Ooptra/graphs/traffic) 查看最近 14 天的访客、克隆和来源。
@@ -55,10 +55,30 @@ README 顶部只保留一套累计访问计数展示，不能据此判断独立�
 
 ### 1. 获取代码
 
+选择一个频道执行对应的克隆命令：
+
+正式版（`main`）：
+
 ```bash
-git clone https://github.com/Eason4869/Ooptra.git
+git clone -b main https://github.com/Eason4869/Ooptra.git
+```
+
+测试版（`beta`）：
+
+```bash
+git clone -b beta https://github.com/Eason4869/Ooptra.git
+```
+
+预览版（`dev`，本 README 对应 `261007-dev`）：
+
+```bash
+git clone -b dev https://github.com/Eason4869/Ooptra.git
+```
+
+进入刚克隆的目录并创建虚拟环境：
+
+```bash
 cd Ooptra
-git switch dev
 python -m venv .venv
 ```
 
@@ -94,6 +114,8 @@ python -m playwright install chromium
 python launcher.py
 ```
 
+请在上一步激活的虚拟环境内启动。`launcher.py` 管理更新后的重启和失败回滚。`python main.py` 可直接运行，但自动部署需要先通过启动器重启一次。
+
 打开 **`http://127.0.0.1:3090`**，在「配置 → 连接」填写对端反向 WS 地址，点击「保存并重新连接」。
 概览页显示「OneBot v11 反向 WS」已接入，即连接成功。
 
@@ -123,8 +145,8 @@ Ooptra 主动连接，对端需开启 **OneBot v11 反向 WebSocket 服务端**�
 | 更新与备份 | 检查分支提交、创建和下载备份、升级与恢复进度 |
 
 右上角可切换暗色模式，选择保存在当前浏览器。配置草稿在页面与分组切换时保留；离开、放弃和保存提供确认与改动摘要。侧栏「维护与账号」提供重连、检查更新和退出登录。
-「更新与备份」检查 main / dev 的最新提交；符合预检查条件时可一键备份并升级，失败时尝试恢复原版本和数据。
-自动升级需 **官方 Git 仓库 + 虚拟环境 + `python launcher.py`**；局域网维护还需设置访问令牌。
+「更新与备份」提供 **main 正式版、beta 测试版、dev 预览版**，默认选择当前安装频道，也可手动切换后重新检查。当前提交已是所选频道最新时无需安装；跨频道安装会明确要求确认，可能降级或改变功能。
+自动更新需 **官方 Git 仓库 + 虚拟环境 + `python launcher.py`**，还需代码无未提交改动、部署目录可写，目标版本支持自动更新。符合预检查条件时可先备份再安装，失败时尝试恢复原版本和数据；目标不兼容时按页面提示手动更新。局域网维护还需设置访问令牌。
 侧栏「检查更新」统一进入更新与备份中心。旧 Release / 标签查询 API 保留兼容。详细支持条件与恢复方法见[配置与维护](docs/operations.md)。
 
 局域网访问：将 `WEBUI_CONFIG.host` 设为 `0.0.0.0`，**同时设置 `token`**，然后打开
@@ -190,7 +212,7 @@ pytest -q
 pyright  # 可选：类型检查
 ```
 
-CI 在 PR 和 `main` / `dev` 推送时执行 Ruff、pytest 与真实浏览器交互测试；Python 覆盖 Ubuntu（3.10 / 3.13）和 Windows（3.13），浏览器任务独立安装 Node／Playwright，不增加运行部署依赖。
+CI 在 PR 和 `main` / `beta` / `dev` 推送时执行 Ruff、pytest 与真实浏览器交互测试；Python 覆盖 Ubuntu（3.10 / 3.13）和 Windows（3.13），浏览器任务独立安装 Node／Playwright，不增加运行部署依赖。
 源码目录与测试注意事项见[开发说明](docs/operations.md#开发说明)。
 
 ## 许可与鸣谢

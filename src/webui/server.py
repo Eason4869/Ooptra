@@ -59,6 +59,7 @@ class WebUIConsole:
         self._config = config if isinstance(config, dict) else getattr(runtime_config, "WEBUI_CONFIG", {}) or {}
         self._voice_runtime = voice_runtime
         self._shutdown = shutdown
+        self._bootstrap_ready = False
         self._maintenance = None
         self._tailer = LogTailer(LOGS_DIR)
         self._login = OopzLoginService(controller, state)
@@ -71,6 +72,14 @@ class WebUIConsole:
     # ------------------------------------------------------------------
     # 生命周期
     # ------------------------------------------------------------------
+
+    @property
+    def bootstrap_ready(self) -> bool:
+        return self._bootstrap_ready
+
+    def set_bootstrap_ready(self, ready: bool) -> None:
+        """The entrypoint marks local initialization complete, independently of remote links."""
+        self._bootstrap_ready = bool(ready)
 
     @property
     def base_url(self) -> str:
@@ -103,7 +112,8 @@ class WebUIConsole:
 
         self._maintenance = MaintenanceService(PROJECT_ROOT, shutdown=self._shutdown,
                                                port=self._port, host=self._host, token=self._token,
-                                               runtime_status=self._controller.snapshot)
+                                               runtime_status=self._controller.snapshot,
+                                               bootstrap_ready=lambda: self.bootstrap_ready)
         mount_maintenance_routes(app, self._maintenance)
         app.add_routes(
             [
@@ -154,6 +164,7 @@ class WebUIConsole:
         logger.info("Web 控制台已启动：%s%s", self.base_url, suffix)
 
     async def stop(self) -> None:
+        self.set_bootstrap_ready(False)
         if self._maintenance is not None:
             await self._maintenance.close()
         await self._login.shutdown()
@@ -234,6 +245,7 @@ class WebUIConsole:
                 "update_id": os.environ.get("OOPTRA_UPDATE_ID", ""),
                 "python": platform.python_version(),
                 "executable": sys.executable,
+                "bootstrap_ready": self.bootstrap_ready,
                 "platform": platform.platform(),
                 "project_root": PROJECT_ROOT,
                 "log_file": os.path.join(LOGS_DIR, "oopz_bot.log"),

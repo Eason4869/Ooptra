@@ -12,6 +12,8 @@ let job = null;
 let slowMaintenance = false;
 let configReadDelay = 0;
 let stallCheckBody = false;
+let installedChannel = 'beta';
+let updateCheck = {channel: 'beta', current_channel: 'beta', target_sha: 'b'.repeat(40), available: true, action: 'update', requires_confirmation: false, compatible: true};
 let schema = {oopz: {fields: {default_area: {type: 'str', value: 'original', label: '默认域'}}}, voice: {fields: {backend: {type: 'select', value: 'mimo_cascade', label: '后端', options: ['mimo_cascade', 'gemini_live']}}}, webui: {fields: {port: {type: 'int', value: 8080, label: '端口'}}}};
 const wav = Buffer.alloc(524);
 wav.write('RIFF'); wav.writeUInt32LE(516, 4); wav.write('WAVEfmt ', 8); wav.writeUInt32LE(16, 16);
@@ -57,7 +59,11 @@ const server = http.createServer(async (req, res) => {
   if (endpoint === '/api/voice/preview/prompts') data = {prompts: ['保存的台词一', '保存的台词二']};
   if (endpoint === '/api/voice/preview') data = {text: body.text, wav_base64: wav.toString('base64')};
   if (endpoint === '/api/voice/diagnostics') data = {checks: [{id: 'asr', title: '音频识别', state: 'pass', detail: '样本识别完成', elapsed_ms: 12}]};
-  if (endpoint === '/api/maintenance') data = {preflight: {supported: true, checks: []}, restore_supported: true, health: {checks: [{id: 'process', title: '进程', state: 'pass', detail: '控制台在线'}, {id: 'onebot', title: 'OneBot', state: 'warn', detail: '未接入，桥接降级'}]}, backups: [{id: 'a'.repeat(32), created_at: 1, size: 524}], backup_page: {page: Number(url.searchParams.get('page') || 1), pages: 2, total: 11, page_size: 10}, storage: {total_bytes: 524, backups_count: 11, backups_bytes: 524}, update: {channel: 'dev', current_sha: 'a'.repeat(40), target_sha: 'b'.repeat(40)}, check: {channel: 'dev', target_sha: 'b'.repeat(40), available: true}, job};
+  if (endpoint === '/api/maintenance/check') {
+    updateCheck = {channel: body.channel, current_channel: installedChannel, target_sha: 'b'.repeat(40), available: true, action: body.channel === installedChannel ? 'update' : 'switch', requires_confirmation: body.channel !== installedChannel, compatible: true};
+    data = updateCheck;
+  }
+  if (endpoint === '/api/maintenance') data = {preflight: {supported: true, checks: []}, restore_supported: true, health: {checks: [{id: 'process', title: '进程', state: 'pass', detail: '控制台在线'}, {id: 'onebot', title: 'OneBot', state: 'warn', detail: '未接入，桥接降级'}]}, backups: [{id: 'a'.repeat(32), created_at: 1, size: 524}], backup_page: {page: Number(url.searchParams.get('page') || 1), pages: 2, total: 11, page_size: 10}, storage: {total_bytes: 524, backups_count: 11, backups_bytes: 524}, update: {channel: 'dev', current_channel: installedChannel, current_sha: 'a'.repeat(40), target_sha: 'b'.repeat(40)}, check: updateCheck, job};
   if (endpoint === '/api/maintenance/cleanup/preview') data = {token: 'fixture-cleanup', items: [{id: 'old-env', path: 'old-env', kind: 'environment', size: 524}], total_bytes: 524};
   res.end(JSON.stringify(data));
 });
@@ -71,6 +77,34 @@ async function main() {
   const nav = name => page.locator('.nav-item[data-page="' + name + '"]').first().click();
   try {
     await page.goto('http://127.0.0.1:' + server.address().port);
+    await page.locator('#screen-app').waitFor({state: 'visible'});
+    await nav('maintenance');
+    await page.waitForFunction(() => document.querySelector('#maintenance-channel').value === 'beta');
+    assert.deepEqual(await page.locator('#maintenance-channel option').evaluateAll(options => options.map(option => [option.value, option.textContent])), [['main', 'main · 正式版'], ['beta', 'beta · 测试版'], ['dev', 'dev · 预览版']]);
+    await page.selectOption('#maintenance-channel', 'main');
+    await page.evaluate(() => window.refreshMaintenance(true));
+    assert.equal(await page.locator('#maintenance-channel').inputValue(), 'main', 'status polling preserves manual channel selection');
+    assert(await page.locator('#maintenance-update').isDisabled(), 'changing channel requires a fresh check');
+    await page.locator('#maintenance-check').click();
+    await page.waitForFunction(() => !document.querySelector('#maintenance-update').disabled);
+    assert.match(await page.locator('#maintenance-update').textContent(), /切换/);
+    await page.locator('#maintenance-update').click();
+    await page.locator('#dialog').waitFor({state: 'visible'});
+    assert.match(await page.locator('#dialog').textContent(), /正式版/);
+    assert.match(await page.locator('#dialog').textContent(), /降级/);
+    await page.locator('#dialog-no').click();
+    assert(!requests.some(item => item.endpoint === '/api/maintenance/update'), 'cancel must leave installation untouched');
+    await page.locator('#maintenance-update').click();
+    await page.locator('#dialog-yes').click();
+    await page.waitForFunction(() => !document.querySelector('#maintenance-check').disabled);
+    assert(requests.some(item => item.endpoint === '/api/maintenance/update' && item.body.channel === 'main' && item.body.confirm_channel_switch === true));
+    updateCheck = {...updateCheck, channel: 'main', available: false, action: 'current', requires_confirmation: false};
+    await page.evaluate(() => window.refreshMaintenance(true));
+    assert(await page.locator('#maintenance-update').isDisabled(), 'current target must not offer an install');
+    assert.match(await page.locator('#maintenance-check-detail').textContent(), /无需更新|最新/);
+    installedChannel = 'dev';
+    updateCheck = {...updateCheck, channel: 'dev', current_channel: 'dev', available: true, action: 'update'};
+    await page.reload();
     await page.locator('#screen-app').waitFor({state: 'visible'});
     await nav('config');
     await page.locator('#config-groups input[type="text"]').fill('draft-area');
