@@ -64,7 +64,7 @@ Files: OneBot image conversion/resolution, new image-source helper, image tests.
 ### 6. 文档、曝光统计与发布
 - [x] 版本及 README／CHANGELOG／图示统一为 `261007-dev`；曝光计数统一展示并说明 GitHub Traffic 口径。
 - [x] 完整 Python 3.10／3.12 测试、Ruff、浏览器验收及独立代码审查。
-- [ ] 推送 dev，等待 CI 全部通过，核对 beta 快照未变。
+- [x] 推送 dev，等待 CI 全部通过，核对 beta 快照未变。
 
 ## 本地验收记录
 
@@ -73,3 +73,10 @@ Files: OneBot image conversion/resolution, new image-source helper, image tests.
 - 独立全量审查通过；发现的时间显示、detached 更新来源及 Live 自检迟到响应问题均先复现再修复。审查者独立回归 64 passed、1 skipped。
 - 升级与失败回滚有真实受控子进程演练；模型和房间接口使用模拟，不代替真实 Oopz／模型账户联调。
 - 优化前 beta 快照：`a874ab950c1b051e620a82b3fe35478f5a0dd9e3`；发布前远端 dev 同 SHA，main 保持 `c34d3d5618a0de95053ded680f5a9679a52ab45e`。
+
+## 发布验收
+
+- 功能与浏览器修订已推送 dev：`32bed0f3537dacf89bdfcbb660c2b9deeb353339`，版本 `261007-dev`。
+- [GitHub CI](https://github.com/Eason4869/Ooptra/actions/runs/37589569508) 的五项检查全部成功：Ruff、Ubuntu Python 3.10／3.13、Windows Python 3.13、Linux Chromium 浏览器。
+- 首轮 Linux 浏览器 CI 暴露旧 toast 干扰等待的问题；保留旧提示并延迟响应可确定性复现，改为等待当前维护页面错误后通过。
+- beta 仍为原始快照 `a874ab950c1b051e620a82b3fe35478f5a0dd9e3`，main 未改动。此记录与部署指南随后同步到同一 dev 版本。
