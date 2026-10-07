@@ -197,10 +197,16 @@ async function main() {
     await page.locator('#dialog-yes').click();
     await page.waitForFunction(() => !document.querySelector('#maintenance-check').disabled);
     assert(requests.some(item => item.endpoint === '/api/maintenance/update' && item.body.channel === 'main' && item.body.confirm_channel_switch === true));
+    // Force the same overlap as CI: an operation's poll is still reading status.
+    stallMaintenanceStatus = true;
+    await page.evaluate(() => {void window.refreshMaintenance(true);});
+    await page.waitForFunction(() => document.querySelector('#maintenance-status-retry').disabled);
     updateCheck = {...updateCheck, channel: 'main', available: false, action: 'current', requires_confirmation: false};
     await page.evaluate(() => window.refreshMaintenance(true));
+    await page.waitForFunction(() => /无需更新|最新/.test(document.querySelector('#maintenance-check-detail').textContent));
     assert(await page.locator('#maintenance-update').isDisabled(), 'current target must not offer an install');
     assert.match(await page.locator('#maintenance-check-detail').textContent(), /无需更新|最新/);
+    stallMaintenanceStatus = false;
     installedChannel = 'dev';
     updateCheck = {...updateCheck, channel: 'dev', current_channel: 'dev', available: true, action: 'update'};
     await page.reload();
@@ -334,6 +340,7 @@ async function main() {
     assert(downloadValue > 0 && downloadValue < 100);
     job.progress_stage = 'dependencies'; job.detail = '安装 Python 依赖';
     await page.evaluate(() => window.refreshMaintenance(true));
+    await page.waitForFunction(() => document.querySelector('#maintenance-detail').textContent === '安装 Python 依赖');
     assert(await page.locator('#maintenance-progress').evaluate(el => el.value) > downloadValue);
     if (process.env.OOPTRA_BROWSER_ARTIFACTS) {
       fs.mkdirSync(process.env.OOPTRA_BROWSER_ARTIFACTS, {recursive: true});
@@ -342,29 +349,36 @@ async function main() {
     }
     job = {...job, phase: 'checking', detail: '重启中'};
     await page.evaluate(() => window.refreshMaintenance(true));
+    await page.waitForFunction(() => document.querySelector('#maintenance-job').dataset.phase === 'checking');
     failures.add('/api/maintenance');
     await page.evaluate(() => window.refreshMaintenance(true));
+    await page.waitForFunction(() => /重新连接|重启/.test(document.querySelector('#maintenance-status').textContent));
     assert.match(await page.locator('#maintenance-status').textContent(), /重新连接|重启/);
     assert(await page.locator('#maintenance-progress').evaluate(el => el.value) < 100, 'reconnect must not imply completion');
     assert.match(await page.locator('#maintenance-feedback').textContent(), /fixture offline/, 'reconnection status must not erase the operation failure');
     failures.clear(); job = {...job, phase: 'complete', detail: '恢复连接'};
     await page.evaluate(() => window.refreshMaintenance(true));
+    await page.waitForFunction(() => document.querySelector('#maintenance-job').dataset.phase === 'complete');
     assert.match(await page.locator('#maintenance-detail').textContent(), /恢复连接/);
     assert.equal(await page.locator('#maintenance-progress').evaluate(el => el.value), 100);
     job = {id: 'failed-test', phase: 'failed', detail: '下载失败'};
     await page.evaluate(() => window.refreshMaintenance(true));
+    await page.waitForFunction(() => document.querySelector('#maintenance-job').dataset.phase === 'failed');
     assert.match(await page.locator('#maintenance-progress-label').textContent(), /已停止/);
     assert(await page.locator('#maintenance-progress').evaluate(el => el.value) < 100);
     job = {...job, phase: 'rolling_back', detail: '恢复原版本'};
     await page.evaluate(() => window.refreshMaintenance(true));
+    await page.waitForFunction(() => document.querySelector('#maintenance-job').dataset.phase === 'rolling_back');
     assert.match(await page.locator('#maintenance-progress-label').textContent(), /回滚/);
     const rollbackValue = await page.locator('#maintenance-progress').evaluate(el => el.value);
     job.phase = 'failed';
     await page.evaluate(() => window.refreshMaintenance(true));
+    await page.waitForFunction(() => document.querySelector('#maintenance-job').dataset.phase === 'failed');
     assert.equal(await page.locator('#maintenance-progress').evaluate(el => el.value), rollbackValue);
     assert.match(await page.locator('#maintenance-progress-label').textContent(), /回滚已停止/);
     job.phase = 'rolled_back';
     await page.evaluate(() => window.refreshMaintenance(true));
+    await page.waitForFunction(() => document.querySelector('#maintenance-job').dataset.phase === 'rolled_back');
     assert.match(await page.locator('#maintenance-progress-label').textContent(), /回滚完成/);
     await nav('voice');
     await page.getByText('回复决策与耗时', {exact: true}).click();
