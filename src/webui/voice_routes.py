@@ -608,7 +608,13 @@ def build_voice_routes(
         persona = body.get("persona")
         if not isinstance(persona, str) or not persona.strip():
             return err("persona 不能为空")
-        agent.update_persona(persona)
+        from webui import config_editor
+        try:
+            await asyncio.to_thread(config_editor.apply_updates, {"voice": {"persona": persona}})
+        except Exception:
+            logger.exception("人格配置保存失败")
+            return err("人格保存失败，请检查配置文件权限后重试", 500)
+        agent.update_persona(persona.strip())
         notes = await agent.refresh(["persona"])
         return ok({"persona": agent.settings.persona, "notes": notes})
 

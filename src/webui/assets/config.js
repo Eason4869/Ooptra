@@ -278,7 +278,7 @@ async function saveConfig(restartAfter) {
   $('config-discard').disabled = true;
   $('savebar').setAttribute('aria-busy', 'true');
   try {
-    const result = await api('/api/config', { method: 'POST', body: { updates } });
+    const result = await api('/api/config', { method: 'POST', body: { updates, restart_after: restartAfter } });
     for (const [group, fields] of Object.entries(updates)) {
       for (const [field, value] of Object.entries(fields)) {
         if (JSON.stringify(dirty[group]?.[field]) === JSON.stringify(value)) delete dirty[group][field];
@@ -287,6 +287,17 @@ async function saveConfig(restartAfter) {
     }
     updateSavebar();
     const fields = Object.entries(result.changed || {}).map(([g, f]) => g + ': ' + f.join('/')).join('；');
+    if (result.reauth_required) {
+      sessionStorage.setItem(SIGNED_OUT_KEY, '1');
+      clearLegacyCredentials();
+      let detail = '请用新密码重新登录，并同步外部插件的 API Token。';
+      if (result.bridge_restart_requested) detail += ' 已请求桥接重连。';
+      if (result.bridge_restart_error) detail += ' 桥接重连失败，登录后请手动重连。';
+      if (result.restart_required) detail += ' 修改监听地址或端口等设置后仍需重启 Ooptra。';
+      showLogin({gate: 'token', message: detail});
+      toast('共享密码已更新', detail, result.bridge_restart_error ? 'warn' : 'ok');
+      return;
+    }
     const notes = result.notes || [];
     if (notes.length) {
       // 语音配置会真正热应用，把后端回传的结果如实告诉用户

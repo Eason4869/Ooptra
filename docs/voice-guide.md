@@ -176,7 +176,7 @@ POST /memory
 DELETE /memory
 ```
 
-`VOICE_API_CONFIG` 提供同路由、同响应的独立端口，默认 `3091`、关闭；开启后使用其自己的 `token`，留空则无鉴权。
+`VOICE_API_CONFIG` 提供同路由、同响应的独立端口，默认 `3091`、关闭；开启后仍使用 `WEBUI_CONFIG.token`。共享密码为空时拒绝访问。
 
 例如 [astrbot_plugin_ooptra](https://github.com/Eason4869/astrbot_plugin_ooptra) 默认接入 WebUI 端口，令牌填写 `WEBUI_CONFIG.token`；
-只有使用独立端口时才改填 `VOICE_API_CONFIG.token`。绑定所需域与频道 ID 在「会话控制」复制。
+独立端口也填写同一个 Token；旧 `VOICE_API_CONFIG.token` 与 `VOICE_API_TOKEN` 不再读取。绑定所需域与频道 ID 在「会话控制」复制。

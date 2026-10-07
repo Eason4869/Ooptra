@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import hmac
 import ipaddress
 import logging
 
@@ -63,13 +64,13 @@ class VoiceApiServer:
     def _authed(self, request: web.Request) -> bool:
         token = (self.settings.token or "").strip()
         if not token:
-            return True
+            return False
         header = request.headers.get("Authorization", "")
-        if header.startswith("Bearer ") and header[7:].strip() == token:
+        if header.startswith("Bearer ") and hmac.compare_digest(header[7:].strip().encode(), token.encode()):
             return True
-        if request.query.get("token", "") == token:
+        if hmac.compare_digest(request.query.get("token", "").encode(), token.encode()):
             return True
-        return request.headers.get("X-Ooptra-Token", "") == token
+        return hmac.compare_digest(request.headers.get("X-Ooptra-Token", "").encode(), token.encode())
 
     def _err(self, message: str, status: int = 400) -> web.Response:
         return web.json_response({"ok": False, "error": message}, status=status)
@@ -125,8 +126,8 @@ class VoiceApiServer:
         self._runner = runner
         if not (self.settings.token or "").strip():
             logger.warning(
-                "VOICE_API on %s:%s has NO token configured — anyone who can reach "
-                "this port can control the voice channel",
+                "VOICE_API on %s:%s has no shared password configured; requests are rejected "
+                "until WEBUI_CONFIG.token is set",
                 self.settings.host,
                 self.settings.port,
             )

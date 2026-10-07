@@ -6,6 +6,52 @@ from pathlib import Path
 import pytest
 
 
+def test_maintenance_estimates_are_bounded_and_follow_real_stages():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node is required for maintenance progress regression")
+    script = Path(__file__).resolve().parents[1] / "src/webui/assets/maintenance.js"
+    runner = r"""
+const fs = require('fs'), vm = require('vm'), assert = require('node:assert/strict');
+const nodes = {};
+const element = () => ({value:'dev',textContent:'',disabled:false,dataset:{},hidden:false,
+ listeners:{},addEventListener(name,fn){this.listeners[name]=fn;},replaceChildren(){},append(){},add(){},
+ setAttribute(name,value){this[name]=value;}});
+const $ = id => nodes[id] ||= element();
+let now = 1000;
+const job = {id:'one',phase:'preparing',progress_stage:'download',detail:'下载更新，尝试 1/2'};
+const status = {update:{current_channel:'dev'},preflight:{supported:true,checks:[]},backups:[],job};
+const context = {console,Date:{now:()=>now},Set,Math,Option:function(){},window:{},state:{process:{}},voiceAreaNames:{},
+ $,text:(id,value)=>$(id).textContent=value,show:(el,value)=>el.hidden=!value,escapeHtml:String,
+ withToken:path=>path,confirmDialog:async()=>true,toast:()=>{},
+ document:{readyState:'complete',createElement:element,addEventListener(){}},api:async()=>status};
+vm.createContext(context);vm.runInContext(fs.readFileSync(process.argv[1],'utf8'),context);
+(async()=>{
+ const refresh = () => context.window.refreshMaintenance(true);
+ const value = () => $('maintenance-progress').value;
+ await refresh();const initial = value();
+ now += 30000;await refresh();assert(value()>initial,'waiting gives visible estimated movement');
+ now += 86400000;await refresh();assert(value()<18,'download never advances beyond its unfinished stage');
+ const beforeRetry=value();job.detail='下载更新，尝试 2/2';await refresh();assert.equal(value(),beforeRetry);
+ job.progress_stage='dependencies';await refresh();assert(value()>=30,'real preparation stage advances progress');
+ now += 86400000;await refresh();assert(value()<52,'unfinished dependency install stays below its next stage');
+ job.phase='checking';await refresh();assert(value()>=90 && value()<100);
+ now += 86400000;await refresh();assert(value()<100,'elapsed time alone never means success');
+ job.phase='failed';await refresh();const frozen=value();now+=60000;await refresh();assert.equal(value(),frozen);
+ assert.equal($('maintenance-job').dataset.active,'false');assert.match($('maintenance-progress-label').textContent,/已停止/);
+ job.id='two';job.phase='preparing';delete job.progress_stage;await refresh();assert(value()<frozen,'new job resets its estimate');
+ job.phase='rolling_back';await refresh();assert.match($('maintenance-progress-label').textContent,/回滚预计/);
+ now+=60000;await refresh();const rollbackValue=value();job.phase='failed';await refresh();
+ assert.equal(value(),rollbackValue,'rollback failure freezes its own last estimate');
+ assert.match($('maintenance-progress-label').textContent,/回滚已停止/);
+ job.phase='rolled_back';await refresh();assert.equal(value(),100);assert.match($('maintenance-progress-label').textContent,/回滚完成/);
+ job.id='three';job.phase='complete';await refresh();assert.equal(value(),100);
+})().catch(error=>{console.error(error);process.exitCode=1;});
+"""
+    result = subprocess.run([node, "-e", runner, str(script)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
 @pytest.mark.parametrize("button,path", [("maintenance-check", "/api/maintenance/check"), ("maintenance-backup", "/api/maintenance/backups")])
 def test_maintenance_click_before_status_has_visible_busy_and_failure_state(button, path):
     node = shutil.which("node")

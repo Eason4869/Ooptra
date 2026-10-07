@@ -33,6 +33,39 @@
   const activePhases = new Set(['preparing', 'awaiting_restart', 'switching', 'checking', 'rolling_back']);
   const names = {preparing: '准备中', awaiting_restart: '正在关闭旧会话', switching: '切换中', checking: '检查新进程', rolling_back: '恢复原版本', complete: '已完成', rolled_back: '已回滚', failed: '需要处理'};
   const megabytes = value => (Number(value || 0) / 1024 / 1024).toFixed(2) + ' MB';
+  // These are stage estimates, never byte counts or a promise of time remaining.
+  const preparationRanges = {download: [5, 18], source: [18, 22], environment: [22, 30], dependencies: [30, 52], verify: [52, 57], browser: [57, 72], browser_check: [72, 76], backup: [76, 80], restore_validate: [5, 45]};
+  const phaseRanges = {preparing: [5, 80], awaiting_restart: [80, 85], switching: [85, 90], checking: [90, 99], rolling_back: [5, 99]};
+  let progressState = null;
+
+  function renderProgress(job) {
+    const active = activePhases.has(job.phase);
+    const key = String(job.id || job.started_at || 'current');
+    const stage = job.phase === 'preparing' ? job.progress_stage || job.phase : job.phase;
+    if (progressState?.key !== key) progressState = {key, value: 0};
+    if (!progressState.rollback && (job.phase === 'rolling_back' || job.phase === 'rolled_back')) {
+      progressState.rollback = true;
+      progressState.value = 0;
+    }
+    const rollback = !!progressState.rollback;
+    if (progressState.stage !== stage) {
+      progressState.stage = stage;
+      progressState.since = Date.now();
+    }
+    if (active) {
+      const [start, end] = (job.phase === 'preparing' && preparationRanges[stage]) || phaseRanges[job.phase];
+      const elapsed = Math.max(0, (Date.now() - progressState.since) / 1000);
+      // Approach the stage ceiling slowly; only a real stage change advances beyond it.
+      const estimated = Math.min(end - 1, Math.floor(start + (end - start) * (1 - Math.exp(-elapsed / 120))));
+      progressState.value = Math.max(progressState.value, estimated);
+    } else if (job.phase === 'complete' || job.phase === 'rolled_back') progressState.value = 100;
+    else progressState.value = Math.min(progressState.value, 99);
+    const label = job.phase === 'complete' ? '已完成 100%' : job.phase === 'rolled_back' ? '回滚完成 100%' : job.phase === 'failed' ? (rollback ? '回滚已停止' : '已停止') : (rollback ? '回滚预计进度 ' : '预计进度 ') + progressState.value + '%';
+    $('maintenance-progress').value = progressState.value;
+    $('maintenance-progress').setAttribute('aria-valuetext', label);
+    $('maintenance-job').dataset.active = String(active);
+    text('maintenance-progress-label', label);
+  }
 
   function busyControls(busy) {
     for (const id of ['maintenance-check', 'maintenance-backup', 'maintenance-channel', 'maintenance-cleanup-preview', 'maintenance-prev', 'maintenance-next']) {
@@ -98,6 +131,7 @@
       $('maintenance-job').dataset.phase = data.job.phase;
       text('maintenance-phase', names[data.job.phase] || data.job.phase);
       text('maintenance-detail', data.job.detail);
+      renderProgress(data.job);
     }
     const signature = JSON.stringify([data.backups || [], !!busy, !!data.restore_supported]);
     if (backupSignature === signature) return;

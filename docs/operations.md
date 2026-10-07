@@ -13,10 +13,10 @@
 | `OOPZ_CONFIG` | `login_phone` / `login_password`：登录账号；`default_area` / `default_channel`：默认目标 |
 | `OOPZ_CONFIG.proxy` | 留空跟随系统代理，`direct` 直连，或填写 `http://主机:端口` |
 | `ONEBOT_V11_CONFIG` | `ws_reverse_url`：对端地址；`access_token`：对端令牌；`db_path`：身份映射数据库 |
-| `WEBUI_CONFIG` | `host` / `port` / `token`：控制台地址、端口与令牌，默认也供语音 API 使用 |
+| `WEBUI_CONFIG` | `host` / `port` / `token`：控制台地址、端口与共享密码，所有语音 API 使用同一 Token |
 | `VOICE_AGENT_CONFIG` | 语音开关、后端、概率、关键词、退房控制、人格、抢话、监听范围与模型设置，见[语音指南](voice-guide.md) |
 | `VOICE_AUTO_VISIT_CONFIG` | 检查间隔、每日上限、默认策略与分域覆盖；在「语音台 → 自动串门」管理 |
-| `VOICE_API_CONFIG` | 默认关闭的独立语音 API 端口与令牌 |
+| `VOICE_API_CONFIG` | 默认关闭的独立语音 API 开关、地址与端口；复用 WebUI 共享密码 |
 
 语音模型代理 `VOICE_AGENT_CONFIG.proxy` 与 Oopz 网络代理分别设置：
 `clash` 默认指向 `127.0.0.1:7890`，`direct` 直连，也支持显式 HTTP 地址；SOCKS 代理需要可选依赖。
@@ -26,6 +26,9 @@ Gemini 音色字段为 `gemini.voice`，MiMo 为 `mimo.tts_voice`，可在 WebUI
 
 完整清单见 [`.env.example`](../.env.example)，常用项有 `BOT_WEBUI_HOST`、`BOT_WEBUI_PORT`、
 `BOT_WEBUI_TOKEN`、`BOT_ONEBOT_REVERSE_URL`、`BOT_OOPZ_PROXY`。
+
+共享密码例外：已保存的 `WEBUI_CONFIG.token` 优先，`BOT_WEBUI_TOKEN` 仅在密码为空时用于首次引导；
+这样在控制台修改密码后，重启不会恢复旧环境密码。其他环境覆盖优先级保持不变。
 
 程序**不会自动读取 `.env` 文件**，需把变量设进启动进程的环境：
 
@@ -37,14 +40,18 @@ Gemini 音色字段为 `gemini.voice`，MiMo 为 `mimo.tts_voice`，可在 WebUI
 推荐在虚拟环境中运行 `python launcher.py`，以支持自动升级与回滚。`python main.py` 仍可直接运行桥接，但不能自动重启维护。Windows 可双击 `start_silent.vbs` 后台启动；
 将其快捷方式放进「启动」文件夹可开机自启，快捷方式目标后加 `delay` 可延迟 30 秒启动。
 
-WebUI 默认 `127.0.0.1:3090`，令牌留空时免登录。需要局域网访问时，设置 `host=0.0.0.0` 和非空 `token`，
-从其他设备打开 `http://<部署机器的 IP>:3090/?token=<token>`，并按需放行防火墙端口。
-未设置令牌的控制台仅建议在本机使用；独立语音 API 开放到其他设备时也需设置令牌。
+WebUI 默认 `127.0.0.1:3090`。首次密码为空时，只允许在部署机器本机设置密码；API 在设置前拒绝访问。
+已有 `WEBUI_CONFIG.token` 即为控制台密码，也作为所有语音 API 的 Token。
+需要局域网访问时，设置 `host=0.0.0.0` 和非空共享密码，从其他设备打开 `http://<部署机器的 IP>:3090/` 并输入密码，按需放行防火墙端口。
+旧浏览器缓存、原始 Token Cookie 和 `?token=` 链接不再用于自动登录；插件的 Bearer、`X-Ooptra-Token` 与查询参数鉴权保持兼容。
+共享密码只在「配置 → 系统」修改；保存立即生效、注销浏览器会话，插件也需要同步新 Token。
+退出登录后重新输入密码，服务重启或会话超过 12 小时也需重新登录；首次配置 Oopz 账号仍使用单独的 Oopz 登录流程。
+未设置密码时，本机更新器仅可读取最小启动健康信息，以兼容旧安装升级和恢复；配置、凭据、日志与语音控制仍需登录。
 
 主题选择在当前浏览器保存，切换不会刷新页面或清空未保存的配置；禁止本地存储时仅当前页面有效。
 
 侧栏「检查更新」统一打开「更新与备份」，按 main 正式版、beta 测试版或 dev 预览版提交检查，展示当前版本、当前提交和目标提交；旧 Release／标签 API 保留兼容。
-检查更新与创建备份会立即显示进度，失败原因保留在页面中。若提示「远程维护需要先配置 WebUI 访问令牌」，在部署端配置 token 后重新访问；不能通过浏览器绕过服务端权限。
+检查更新与创建备份会立即显示进度，失败原因保留在页面中。会话失效时需重新登录；首次未配置密码时先在部署机器本机设置。
 
 版本与备份列表独立读取，部署预检查和存储统计分别加载；其中一项失败不会阻塞其他内容。检查更新总等待上限为 60 秒，失败后可直接重试；备份列表无需访问 GitHub。
 

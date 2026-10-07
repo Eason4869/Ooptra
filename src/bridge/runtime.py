@@ -45,7 +45,8 @@ def apply_runtime_overrides() -> None:
             webui_cfg["host"] = host.strip()
         if port:
             webui_cfg["port"] = _as_int(port, "BOT_WEBUI_PORT")
-        if token is not None:
+        # Persisted shared password is canonical; environment can bootstrap an empty installation.
+        if token and not str(webui_cfg.get("token") or "").strip():
             webui_cfg["token"] = token.strip()
 
 

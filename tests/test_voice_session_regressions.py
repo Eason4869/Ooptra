@@ -214,7 +214,13 @@ def test_live_barge_in_clears_audio_whose_push_is_still_pending(monkeypatch, tmp
     asyncio.run(run())
 
 
-def test_persona_endpoint_updates_the_active_live_session(opened, tmp_path):
+def test_persona_endpoint_updates_the_active_live_session(opened, tmp_path, monkeypatch):
+    import config
+    from webui import config_editor
+    path = tmp_path / "config.py"
+    path.write_text('VOICE_AGENT_CONFIG = {"persona": "original"}\n', encoding="utf-8")
+    monkeypatch.setattr(config_editor, "CONFIG_PATH", str(path))
+    monkeypatch.setattr(config, "VOICE_AGENT_CONFIG", {"persona": "original"})
     async def run():
         agent = make_agent(tmp_path)
         agent._joined = True

@@ -22,44 +22,35 @@
       <img class="brand-symbol" src="/assets/logo.svg" width="64" height="64" alt="Ooptra 双对话环" />
       <div>
         <h1>Ooptra</h1>
-        <p>Oopz ⇄ OneBot v11 反向 WebSocket 桥接控制台</p>
+        <p>语音 · 对话 · 连接</p>
       </div>
     </div>
 
-    <svg class="art-flow" viewBox="0 0 360 132" fill="none" aria-hidden="true">
-      <defs>
-        <linearGradient id="flow" gradientUnits="userSpaceOnUse" x1="102" y1="0" x2="258" y2="0">
-          <stop offset="0" stop-color="#5eead4" />
-          <stop offset="1" stop-color="#38bdf8" />
-        </linearGradient>
-      </defs>
-      <rect x="6" y="38" width="92" height="56" rx="16" class="box" />
-      <text x="52" y="71" class="box-t">Oopz</text>
-      <rect x="262" y="38" width="92" height="56" rx="16" class="box" />
-      <text x="306" y="71" class="box-t">OneBot</text>
-      <path class="flow-line" d="M102 54 H250" />
-      <path class="arrow" d="M246 47 l10 7 -10 7" />
-      <text x="180" y="45" class="lbl">事件</text>
-      <path class="flow-line alt" d="M258 78 H110" />
-      <path class="arrow" d="M114 71 l-10 7 10 7" />
-      <text x="180" y="101" class="lbl">指令</text>
-    </svg>
-
+    <div class="login-intro">
+      <p class="login-eyebrow">OOPTRA CONSOLE</p>
+      <h2>让对话<br />自然发生<span>。</span></h2>
+      <p>在 Oopz 相遇，让 AI 加入聊天。<br />连接、语音与日常维护，在这里一处掌握。</p>
+    </div>
     <ul class="art-points">
-      <li><b>上行</b> Oopz 频道消息 → OneBot v11 事件 → 对端框架</li>
-      <li><b>下行</b> 对端的 action 调用 → Oopz 发送 / 管理</li>
-      <li><b>本页</b> 只做桥接与运维，不含内置命令</li>
+      <li><span class="login-feature-number">01</span><div><b>自然接话</b><span>实时语音、连续对话与自动串门</span></div></li>
+      <li><span class="login-feature-number">02</span><div><b>轻松连接</b><span>Oopz 与 OneBot，消息双向流通</span></div></li>
+      <li><span class="login-feature-number">03</span><div><b>安心管理</b><span>配置、自检、更新与本地备份</span></div></li>
     </ul>
   </div>
 
   <div class="login-side">
     <form class="login-card" id="login-form">
+      <div class="login-card-mark"><img src="/assets/logo.svg" width="40" height="40" alt="" /><span>欢迎回来</span></div>
       <h2 id="login-title">需要登录</h2>
       <p class="hint" id="login-sub"></p>
 
       <label class="field" id="login-token-field" hidden>
-        <span>访问令牌</span>
-        <input id="login-token" type="password" autocomplete="current-password" placeholder="config.py 里 WEBUI_CONFIG.token" />
+        <span>控制台密码</span>
+        <input id="login-token" name="console-password" type="password" maxlength="1024" autocomplete="current-password" placeholder="输入你的控制台密码" />
+      </label>
+      <label class="field" id="login-token-confirm-field" hidden>
+        <span>确认密码</span>
+        <input id="login-token-confirm" type="password" maxlength="1024" autocomplete="new-password" placeholder="再次输入密码" />
       </label>
 
       <div id="login-oopz-field" hidden>
@@ -79,6 +70,7 @@
         <button class="btn subtle block" id="login-cancel" type="button" hidden>取消网页版登录</button>
       </div>
       <p class="login-msg" id="login-msg" role="status"></p>
+      <p class="login-footnote">控制台密码与插件 API Token 共用，统一管理。</p>
     </form>
   </div>
 </div>
@@ -228,14 +220,14 @@
           <option value="ERROR">仅错误</option>
         </select>
         <label class="switch"><input type="checkbox" id="log-follow" checked /><span>实时跟随</span></label>
-        <label class="switch"><input type="checkbox" id="log-wrap" /><span>自动换行</span></label>
+        <label class="switch"><input type="checkbox" id="log-wrap" checked /><span>自动换行</span></label>
         <span class="spacer"></span>
         <span class="hint" id="log-status"></span>
         <button class="btn ghost sm" id="log-clear">清屏</button>
         <button class="btn ghost sm" id="log-download">下载</button>
       </div>
       <div class="logwrap">
-        <div class="logview" id="log-view"></div>
+        <div class="logview wrap" id="log-view"></div>
         <button class="jump" id="log-jump" hidden>↓ 回到底部</button>
       </div>
     </section>
@@ -459,7 +451,7 @@
               <h3>人格提示词</h3>
               <button class="btn primary sm" id="persona-save">保存</button>
             </header>
-            <p class="hint">语音 Agent 的角色设定；会与配置页的 persona 同步。</p>
+            <p class="hint">人格统一在此管理；保存后写入配置文件并热生效，重启后保留。</p>
             <textarea class="control grow ta" id="persona-text" rows="10" placeholder="你是……"></textarea>
             <p class="hint" id="persona-status"></p>
           </section>
@@ -486,12 +478,16 @@
       <div class="maintenance-notices" aria-live="polite">
         <p class="hint" id="maintenance-status" role="status">正在读取版本与备份，最长等待 15 秒…</p>
         <p class="hint" id="maintenance-feedback" role="status"></p>
-        <div class="maintenance-job" id="maintenance-job" hidden role="status"><b id="maintenance-phase"></b><p id="maintenance-detail"></p></div>
+        <div class="maintenance-job" id="maintenance-job" hidden role="status">
+          <div class="maintenance-progress-head"><b id="maintenance-phase"></b><span id="maintenance-progress-label"></span></div>
+          <div class="maintenance-progress-track"><progress id="maintenance-progress" max="100" value="0" aria-label="维护预计进度"></progress></div>
+          <p id="maintenance-detail"></p>
+        </div>
       </div>
       <div class="tool-workspace">
         <section class="card">
           <header class="card-head"><h3>版本更新</h3><span class="chip" id="maintenance-version">—</span></header>
-          <label class="field"><span>更新频道</span><select class="control" id="maintenance-channel"><option value="main">main · 正式版</option><option value="beta" selected>beta · 测试版</option><option value="dev">dev · 预览版</option></select></label>
+          <label class="field"><span>更新频道</span><select class="control" id="maintenance-channel"><option value="main">main · 正式版</option><option value="beta">beta · 测试版</option><option value="dev" selected>dev · 预览版</option></select></label>
           <p class="hint" id="maintenance-check-detail">先检查更新，再确认安装。</p>
           <div class="btn-row maintenance-update-actions"><button class="btn primary" id="maintenance-check" type="button">检查更新</button><button class="btn ghost" id="maintenance-update" type="button" disabled>备份并更新</button></div>
         </section>

@@ -260,6 +260,7 @@ FIELD_SPECS: dict[str, dict[str, dict[str, Any]]] = {
             "label": "人格提示词",
             "tier": "basic",
             "hint": "语音房里 bot 的说话风格与角色设定",
+            "editor": "persona",
         },
         "area": {"type": "str", "label": "默认域 ID", "tier": "basic"},
         "channel": {"type": "str", "label": "默认语音频道 ID", "tier": "basic"},
@@ -527,13 +528,6 @@ FIELD_SPECS: dict[str, dict[str, dict[str, Any]]] = {
             "hint": "127.0.0.1 仅本机",
         },
         "port": {"type": "int", "label": "监听端口", "tier": "basic", "min": 1, "max": 65535},
-        "token": {
-            "type": "str",
-            "label": "访问令牌",
-            "sensitive": True,
-            "tier": "basic",
-            "hint": "仅独立端口生效；默认关闭时请改填 WEBUI_CONFIG.token。外部插件填同一项",
-        },
     },
     "webui": {
         "update_proxy": {
@@ -556,10 +550,12 @@ FIELD_SPECS: dict[str, dict[str, dict[str, Any]]] = {
         "port": {"type": "int", "label": "监听端口", "tier": "basic", "min": 1, "max": 65535},
         "token": {
             "type": "str",
-            "label": "访问令牌",
+            "label": "控制台密码 / 插件 API Token",
+            "nonempty": True,
+            "max_length": 1024,
             "sensitive": True,
             "tier": "basic",
-            "hint": "留空=不校验；填入后访问需带 ?token=...。语音 API 与外部插件（astrbot_plugin_ooptra）默认也用 WEBUI_CONFIG.token",
+            "hint": "唯一共享密码。留空不修改；保存后立即生效并要求重新登录，外部插件也需填写同一个新 Token",
         },
         "enabled": {"type": "bool", "label": "启用 Web 控制台", "tier": "adv", "section": "其他"},
         "log_lines": {
@@ -573,7 +569,7 @@ FIELD_SPECS: dict[str, dict[str, dict[str, Any]]] = {
     },
 }
 
-_RESTART_FREE_FIELDS = {("webui", "log_lines"), ("webui", "update_proxy"), ("webui", "update_mirror")}
+_RESTART_FREE_FIELDS = {("webui", "token"), ("webui", "log_lines"), ("webui", "update_proxy"), ("webui", "update_mirror")}
 
 # 这些组保存后由 server._hot_reload_voice 在事件循环上真正应用到 VoiceRuntime，
 # 故不再标记 restart_required（voice_api 的 host/port 例外，socket 已绑定，
@@ -617,7 +613,7 @@ def schema_payload() -> dict[str, Any]:
         entries: dict[str, Any] = {}
         for field, meta in fields.items():
             tier = str(meta.get("tier", "adv"))
-            if tier == "hidden":
+            if tier == "hidden" or meta.get("editor") == "persona":
                 continue
             entry = {
                 "type": meta["type"],
@@ -684,6 +680,8 @@ def _coerce(meta: dict[str, Any], value: Any, field: str) -> Any:
             return [str(item).strip() for item in value if str(item).strip()]
         return [item.strip() for item in str(value).split(",") if item.strip()]
     text = str(value).strip()
+    if len(text) > meta.get("max_length", len(text)):
+        raise ValueError(f"{field} 超出最大长度 {meta['max_length']} 字符")
     if kind == "select":
         allowed = _select_values(meta)
         if text in allowed or meta.get("allow_custom") or (not text and not meta.get("nonempty")):
@@ -970,15 +968,23 @@ def _validate_text(text: str) -> None:
         raise RuntimeError(f"新配置无法求值，已取消保存: {exc}") from exc
 
 
-def _sync_runtime(namespace: dict[str, Any]) -> None:
+def _sync_runtime(namespace: dict[str, Any], updates: dict[str, dict[str, Any]]) -> None:
+    """Apply only saved fields; unrelated environment overrides stay intact."""
     module = _runtime_config()
-    for source_name in GROUP_SOURCES.values():
+    for group, fields in updates.items():
+        source_name = GROUP_SOURCES[group]
         target = getattr(module, source_name, None)
         fresh = namespace.get(source_name)
         if isinstance(fresh, dict):
             if isinstance(target, dict):
-                target.clear()
-                target.update(copy.deepcopy(fresh))
+                for field in fields:
+                    path = _split_field_path(field)
+                    node = target
+                    for part in path[:-1]:
+                        if not isinstance(node.get(part), dict):
+                            node[part] = {}
+                        node = node[part]
+                    node[path[-1]] = copy.deepcopy(_nested_get(fresh, path))
             else:
                 setattr(module, source_name, copy.deepcopy(fresh))
 
@@ -1004,7 +1010,7 @@ def apply_updates(updates: Any) -> dict[str, Any]:
         namespace: dict[str, Any] = {}
         exec(compile(patched, CONFIG_PATH, "exec"), namespace)
         replace_text_files_atomically(((CONFIG_PATH, patched),))
-        _sync_runtime(namespace)
+        _sync_runtime(namespace, normalized)
     changed = {group: sorted(values) for group, values in normalized.items()}
     restart_required = any(
         (group, field) not in _RESTART_FREE_FIELDS and group not in _HOT_RELOAD_GROUPS
