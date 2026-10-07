@@ -268,6 +268,33 @@ def build_voice_routes(
             "join_source": st.get("join_source", ""),
         }
 
+    from voice_agent.preview import PreviewService
+    preview_service = PreviewService()
+
+    async def voice_diagnostics(request: web.Request) -> web.Response:
+        from voice_agent.diagnostics import diagnose
+        body = await read_json(request)
+        return ok(await diagnose(current_agent(), network=body.get("network") is True))
+
+    async def voice_preview(request: web.Request) -> web.Response:
+        body = await read_json(request)
+        try:
+            result = await preview_service.generate(
+                current_agent().settings, str(body.get("kind") or "voice"),
+                str(body.get("text") or ""), str(body.get("voice") or ""))
+            return ok(result)
+        except (ValueError, asyncio.TimeoutError) as exc:
+            return err(str(exc) or "试听超时，请检查模型连接")
+        except Exception as exc:
+            return err(f"{type(exc).__name__}：试听生成失败，请检查模型与音色配置")
+
+    async def voice_preview_prompts(request: web.Request) -> web.Response:
+        from voice_agent.auto_visit_settings import parse_auto_visit_config
+        from voice_agent.preview import saved_prompts
+        controller = getattr(voice_runtime, "auto_visit", None)
+        config = controller.config if controller is not None else parse_auto_visit_config(None)
+        return ok({"prompts": saved_prompts(config, request.query.get("kind", ""), request.query.get("area", ""))})
+
     async def health(_request: web.Request) -> web.Response:
         agent = current_agent()
         return ok(
@@ -598,6 +625,9 @@ def build_voice_routes(
     pairs = [
         ("GET", "/health", health),
         ("GET", "/voice/status", voice_status),
+        ("POST", "/voice/diagnostics", voice_diagnostics),
+        ("POST", "/voice/preview", voice_preview),
+        ("GET", "/voice/preview/prompts", voice_preview_prompts),
         ("GET", "/voice/auto-visit", auto_visit_get),
         ("POST", "/voice/auto-visit/config", auto_visit_config),
         ("POST", "/voice/auto-visit/pause", auto_visit_pause),
