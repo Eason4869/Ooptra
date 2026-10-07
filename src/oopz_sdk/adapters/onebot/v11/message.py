@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from typing import Any, Mapping
+from urllib.parse import unquote, urlsplit
 
 from oopz_sdk.models.segment import Image, Mention, MentionAll, Text
 
@@ -65,10 +66,8 @@ def from_v11_message(message: str | Mapping[str, Any] | list[Mapping[str, Any]])
                 parts.append(Mention(qq))
         elif seg_type == "image":
             file = str(data.get("file") or data.get("url") or "")
-            if file.startswith("file:///"):
-                parts.append(Image.from_file(file.removeprefix("file:///")))
-            elif file:
-                parts.append(Image(file_key=file, url=str(data.get("url") or "")))
+            if file:
+                parts.append(_image_from_v11(file, str(data.get("url") or "")))
         else:
             parts.append(f"[{seg_type}:{dict(data)}]")
     return V11SendParts(parts=parts or [""], mention_list=mentions, is_mention_all=is_all)
@@ -94,16 +93,39 @@ def _from_cq_or_text(text: str) -> V11SendParts:
                 parts.append(Mention(qq))
         elif seg_type == "image":
             file = params.get("file") or params.get("url") or ""
-            if file.startswith("file://"):
-                parts.append(Image.from_file(file.removeprefix("file://")))
-            elif file:
-                parts.append(Image(file_key=file, url=params.get("url", "")))
+            if file:
+                parts.append(_image_from_v11(file, params.get("url", "")))
         else:
             parts.append(m.group(0))
         pos = m.end()
     if pos < len(text):
         parts.append(text[pos:])
     return V11SendParts(parts=parts or [""], mention_list=mentions, is_mention_all=is_all)
+
+
+def _image_from_v11(file: str, url: str) -> Image:
+    # AstrBot sends inline bytes as base64://, not an Oopz upload key.
+    # Leave decoding/file I/O to the existing async image upload pipeline.
+    if file.startswith("base64://"):
+        return Image.from_file(file.removeprefix("base64://"))
+    if file.startswith("data:image/"):
+        return Image.from_file(file)
+    if file.startswith("file://"):
+        parsed = urlsplit(file)
+        path = unquote(parsed.path)
+        if parsed.netloc:
+            if re.fullmatch(r"[A-Za-z]:", parsed.netloc):
+                path = parsed.netloc + path
+            elif parsed.netloc.lower() != "localhost":
+                path = "//" + parsed.netloc + path
+        if re.match(r"^/[A-Za-z]:/", path):
+            path = path[1:]
+        return Image.from_file(path)
+    if file.startswith(("/", "\\\\")) or re.match(r"^[A-Za-z]:[/\\]", file):
+        return Image.from_file(file)
+    if not url and not file.startswith(("http://", "https://")):
+        return Image.from_file(file)
+    return Image(file_key=file, url=url)
 
 
 def _parse_cq_params(raw: str) -> dict[str, str]:
@@ -114,5 +136,6 @@ def _parse_cq_params(raw: str) -> dict[str, str]:
     for item in raw.split(","):
         if "=" in item:
             k, v = item.split("=", 1)
-            result[k] = v
+            result[k] = (v.replace("&#44;", ",").replace("&#91;", "[")
+                         .replace("&#93;", "]").replace("&amp;", "&"))
     return result
