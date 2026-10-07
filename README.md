@@ -39,7 +39,7 @@ Ooptra 将 Oopz 消息接入 **OneBot v11**，通过反向 WebSocket 对接机�
 | AI 语音 | Gemini Live / MiMo 级联；支持抢话、回复概率、强制关键词与语音退房 |
 | 自动串门 | 按域开启，随机进有人的房间；限时退出、进退房台词、冷却与每日上限 |
 | 语音工具 | 连续追问、自检、无人倒计时与独立浏览器试听 |
-| 更新与备份 | 检查 main / dev 提交、配置数据备份；Git + 虚拟环境支持自动升级与失败回滚 |
+| 更新与备份 | 检查 main 正式版 / beta 测试版 / dev 预览版提交、配置数据备份；Git + 虚拟环境支持自动升级与失败回滚 |
 | 插件对接 | HTTP API 提供语音控制、人格与记忆管理，支持外部插件调用 |
 
 文字消息指令与插件由对端机器人框架处理。Ooptra 是第三方工具，与 Oopz 官方无隶属关系。
@@ -54,10 +54,30 @@ Ooptra 将 Oopz 消息接入 **OneBot v11**，通过反向 WebSocket 对接机�
 
 ### 1. 获取代码
 
+选择一个频道执行对应的克隆命令：
+
+正式版（`main`）：
+
 ```bash
-git clone https://github.com/Eason4869/Ooptra.git
+git clone -b main https://github.com/Eason4869/Ooptra.git
+```
+
+测试版（`beta`，本 README 对应 `261007-beta`）：
+
+```bash
+git clone -b beta https://github.com/Eason4869/Ooptra.git
+```
+
+预览版（`dev`）：
+
+```bash
+git clone -b dev https://github.com/Eason4869/Ooptra.git
+```
+
+进入刚克隆的目录并创建虚拟环境：
+
+```bash
 cd Ooptra
-git switch dev
 python -m venv .venv
 ```
 
@@ -122,9 +142,9 @@ Ooptra 主动连接，对端需开启 **OneBot v11 反向 WebSocket 服务端**�
 | 更新与备份 | 检查分支提交、创建和下载备份、升级与恢复进度 |
 
 右上角可切换暗色模式，选择保存在当前浏览器。侧栏「维护与账号」提供重连、检查更新和退出登录。
-「更新与备份」检查 main / dev 的最新提交；符合预检查条件时可一键备份并升级，失败时尝试恢复原版本和数据。
-自动升级需 **官方 Git 仓库 + 虚拟环境 + `python launcher.py`**；局域网维护还需设置访问令牌。
-原有侧栏「检查更新」仍查询 Release / 标签。详细支持条件与恢复方法见[配置与维护](docs/operations.md)。
+「更新与备份」默认跟随当前安装渠道，可选择 main 正式版、beta 测试版或 dev 预览版；跨渠道安装可能降级或改变功能，需要确认。预检查通过后可一键备份并更新，启动失败时尝试恢复原版本和数据。
+自动部署需 **官方 Git 仓库 + 虚拟环境 + `python launcher.py`**；此前通过 `python main.py` 启动的实例需先手动重启一次。局域网浏览器只发起请求，安装和重启在部署机器上执行；服务账户须能写入部署目录、维护目录和 Git 元数据，远程维护还需设置访问令牌。
+侧栏「检查更新」统一进入「更新与备份」，旧 Release / 标签查询 API 保留兼容。详细支持条件与恢复方法见[配置与维护](docs/operations.md)。
 
 局域网访问：将 `WEBUI_CONFIG.host` 设为 `0.0.0.0`，**同时设置 `token`**，然后打开
 `http://<部署机器的 IP>:3090/?token=<token>`。默认 `127.0.0.1` 仅允许本机访问。
@@ -189,7 +209,7 @@ pytest -q
 pyright  # 可选：类型检查
 ```
 
-CI 在 PR 和 `main` / `dev` 推送时执行 Ruff 与 pytest，覆盖 Ubuntu（Python 3.10 / 3.13）和 Windows（Python 3.13）。
+CI 在 PR 和 `main` / `beta` / `dev` 推送时执行 Ruff 与 pytest，覆盖 Ubuntu（Python 3.10 / 3.13）和 Windows（Python 3.13）。
 源码目录与测试注意事项见[开发说明](docs/operations.md#开发说明)。
 
 ## 许可与鸣谢

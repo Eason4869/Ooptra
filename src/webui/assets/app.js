@@ -39,16 +39,25 @@ function withToken(path) {
 }
 
 async function api(path, opts = {}) {
-  const res = await fetch(withToken(path), {
-    method: opts.method || 'GET',
-    headers: opts.body ? { 'Content-Type': 'application/json' } : {},
-    body: opts.body ? JSON.stringify(opts.body) : undefined,
-  });
-  let payload = null;
-  try { payload = await res.json(); } catch (err) { payload = null; }
-  if (res.status === 401) throw new AuthError('需要访问令牌');
-  if (!res.ok) throw new Error((payload && payload.error) || ('HTTP ' + res.status));
-  return payload || {};
+  const controller = opts.timeout ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), opts.timeout) : null;
+  try {
+    const res = await fetch(withToken(path), {
+      method: opts.method || 'GET',
+      headers: opts.body ? { 'Content-Type': 'application/json' } : {},
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+      signal: controller?.signal,
+    });
+    let payload = null;
+    try { payload = await res.json(); }
+    catch (err) { if (controller?.signal.aborted) throw err; }
+    if (res.status === 401) throw new AuthError('需要访问令牌');
+    if (!res.ok) throw new Error((payload && payload.error) || ('HTTP ' + res.status));
+    return payload || {};
+  } catch (err) {
+    if (controller?.signal.aborted) throw new Error('请求超过 ' + (opts.timeout / 1000) + ' 秒，请重试。');
+    throw err;
+  } finally { if (timer !== null) clearTimeout(timer); }
 }
 
 function toast(title, text, kind) {
@@ -1116,35 +1125,10 @@ function openGithubRepo() {
 }
 
 async function checkUpdate() {
-  const btn = $('btn-check-update');
-  if (btn) btn.disabled = true;
-  try {
-    toast('正在检查更新', '查询 GitHub 仓库…', 'ok');
-    const data = await api('/api/update');
-    const current = data.current_version || '';
-    const latest = data.latest_version || '';
-    if (data.update_available) {
-      const url = data.release_url || data.branch_url || data.repo_url || GITHUB_REPO_URL;
-      toast('发现新版本', '当前 v' + current + ' → 最新 v' + latest, 'warn');
-      if (await confirmDialog('发现新版本', '当前 v' + current + '，最新 v' + latest + '。是否打开 GitHub 仓库查看？', '打开 GitHub')) {
-        window.open(url, '_blank', 'noopener');
-      }
-    } else if (data.ok) {
-      toast('已是最新版本', data.message || ('当前 v' + current), 'ok');
-    } else {
-      toast('检查更新失败', data.error || '未知错误', 'err');
-      if (await confirmDialog('检查更新失败', (data.error || '无法连接 GitHub') + '。是否直接打开 GitHub 仓库？', '打开 GitHub')) {
-        window.open(data.repo_url || GITHUB_REPO_URL, '_blank', 'noopener');
-      }
-    }
-  } catch (err) {
-    toast('检查更新失败', err.message, 'err');
-    if (await confirmDialog('检查更新失败', err.message + '。是否直接打开 GitHub 仓库？', '打开 GitHub')) {
-      window.open(GITHUB_REPO_URL, '_blank', 'noopener');
-    }
-  } finally {
-    if (btn) btn.disabled = false;
-  }
+  await switchPage('maintenance');
+  if (!isPage('maintenance')) return;
+  if (window.checkMaintenanceUpdate) await window.checkMaintenanceUpdate();
+  else toast('更新入口未加载', '请刷新页面后重试；检查页面脚本是否完整。', 'err');
 }
 
 async function boot() {
