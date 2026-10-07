@@ -110,6 +110,8 @@ def _image_from_v11(file: str, url: str) -> Image:
         return Image.from_file(file.removeprefix("base64://"))
     if file.startswith("data:image/"):
         return Image.from_file(file)
+    if file.startswith(("http://", "https://")):
+        return Image.from_file(file)
     if file.startswith("file://"):
         parsed = urlsplit(file)
         path = unquote(parsed.path)
