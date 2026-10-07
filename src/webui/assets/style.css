@@ -819,7 +819,7 @@ form[inert] { opacity: .65; }
   .screen-app { grid-template-columns: minmax(0, 1fr); }
   .rail { display: grid; grid-template-columns: minmax(0, 1fr) auto; position: static; height: auto; gap: 12px; padding: 16px; overflow: visible; }
   .rail-brand { padding: 0; }
-  .rail-nav { grid-column: 1 / -1; grid-row: 2; flex-direction: row; padding: 0; gap: 4px; justify-content: space-between; overflow: visible; }
+  .rail-nav { grid-column: 1 / -1; grid-row: 2; flex-direction: row; flex-wrap: wrap; padding: 0; gap: 4px; justify-content: flex-start; overflow: visible; }
   .nav-group { flex-direction: row; display: contents; }
   .nav-group-label { display: none; }
   .nav-item { width: auto; padding: 9px 11px; font-size: 12px; gap: 6px; }
@@ -873,3 +873,33 @@ form[inert] { opacity: .65; }
   .art-points { font-size: 12px; }
   .login-card { padding: 24px; }
 }
+
+/* Tools share the working surface, with status rows instead of nested cards. */
+.tool-workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+.tool-workspace > .card { min-width: 0; }
+.maintenance-banner { display: flex; justify-content: space-between; align-items: center; gap: 24px; padding: 28px 0; border-top: 3px solid var(--accent); margin-bottom: 24px; }
+.maintenance-banner h2 { font-size: 26px; font-weight: 650; margin: 0 0 10px; letter-spacing: -.5px; }
+.maintenance-banner p { color: var(--muted); margin: 0; max-width: 46em; line-height: 1.7; }
+.maintenance-banner .chip { white-space: nowrap; }
+.tool-details { border-top: 1px solid var(--line); margin: 20px 0; padding-top: 14px; }
+.tool-details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.tool-details .field { margin-top: 14px; }
+.check-list, .backup-list { list-style: none; padding: 0; margin: 18px 0 0; }
+.check-row { display: flex; align-items: start; gap: 12px; border-bottom: 1px solid var(--line); padding: 14px 0; }
+.check-row:last-child, .backup-row:last-child { border-bottom: 0; }
+.check-mark { flex: 0 0 24px; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; background: var(--panel-3); color: var(--dim); font-weight: 700; }
+.check-row[data-state='pass'] .check-mark { background: var(--ok-soft); color: var(--ok-text); }
+.check-row[data-state='fail'] .check-mark { background: var(--err-soft); color: var(--err); }
+.check-row b, .backup-row b { font-size: 13px; font-weight: 600; }
+.check-row p, .backup-row p { margin: 4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.backup-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 0; border-bottom: 1px solid var(--line); }
+.maintenance-job { margin-top: 22px; padding: 18px; border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 0 var(--r-md) var(--r-md) 0; }
+.maintenance-job p { line-height: 1.7; color: var(--muted); margin: 8px 0 0; overflow-wrap: anywhere; }
+.maintenance-job[data-phase='failed'] { border-color: var(--err); background: var(--err-soft); }
+.maintenance-job[data-phase='complete'] { border-color: var(--ok); background: var(--ok-soft); }
+#preview-audio { display: block; width: 100%; margin-top: 16px; }
+#preview-audio[hidden] { display: none; }
+#v-empty { font-size: clamp(18px, 1.7vw, 25px); }
+.btn:focus-visible, summary:focus-visible, audio:focus-visible { outline: 3px solid var(--accent-line); outline-offset: 3px; }
+@media (max-width: 980px) { .tool-workspace { grid-template-columns: minmax(0, 1fr); gap: 16px; } }
+@media (max-width: 600px) { .maintenance-banner { align-items: start; flex-direction: column; gap: 16px; padding: 22px 0; } .maintenance-banner h2 { font-size: 23px; } .backup-row { align-items: start; flex-wrap: wrap; } }

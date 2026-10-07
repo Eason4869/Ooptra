@@ -12,6 +12,7 @@ const PAGE_META = {
   voice: ['语音台', '手动对话、自动串门、房间成员与共享记忆'],
   config: ['配置', '连接 / 语音模型 / 系统；常用项直接改'],
   account: ['账号', '查看凭据状态，或重新登录 Oopz'],
+  maintenance: ['更新与备份', '准备、切换与恢复，在部署机器上完成维护'],
 };
 const GROUP_TITLE = { oopz: 'Oopz 账号与事件', onebot: 'OneBot v11 桥接', webui: 'Web 控制台', voice: '语音对话 Agent', voice_api: '语音 HTTP API' };
 
@@ -322,6 +323,7 @@ function switchPage(name, tab) {
   else stopLogStream();
   if (name === 'config') loadConfig();
   if (name === 'account') refreshCredentials();
+  if (name === 'maintenance' && window.refreshMaintenance) window.refreshMaintenance();
   if (name === 'voice') {
     if (tab) switchVoiceTab(tab);
     refreshVoiceStatus();
@@ -479,6 +481,7 @@ async function refreshStatus() {
     await _origRefreshVoiceStatus();
     if ($('vpane-auto-visit').classList.contains('is-active')) await refreshAutoVisit(false);
   }
+  if (isPage('maintenance') && window.refreshMaintenance) await window.refreshMaintenance();
 }
 
 const isPage = (name) => document.querySelector('.page.is-active')?.id === 'page-' + name;
@@ -1310,6 +1313,7 @@ function switchVoiceTab(tab) {
     loadPersona();
     loadMemory();
   }
+  if (name === 'tools' && window.loadPreviewPrompts) window.loadPreviewPrompts();
 }
 
 function setupVoice() {
@@ -1419,8 +1423,20 @@ async function refreshVoiceStatus() {
     const data = await api('/api/voice/status');
     const st = data.status || {};
     const joined = !!st.joined;
+    const live = String(st.backend || '').includes('gemini');
+    text('speak-title', live ? 'AI 语音回答' : '直接朗读');
+    text('speak-mode', live ? '交给 AI 回答' : '文字转语音');
+    text('speak-btn', live ? '让 AI 回答' : '朗读');
+    text('speak-hint', live ? '输入一句话，AI 在当前语音房生成语音回答；需要已经进房。' : '把输入文字直接读给当前语音房，不经过对话模型；需要已经进房。');
+    const empty = (data.auto_visit || {}).empty_room || {};
+    text('v-empty', !joined ? '未在房间' : empty.state === 'alone' ? Math.ceil(empty.remaining_seconds ?? 30) + ' 秒后退出' : empty.state === 'occupied' ? '房间有人' : '等待确认');
+    text('v-empty-sub', empty.error || (empty.state === 'alone' ? '独处 30 秒后复查并静默退房' : empty.last_exit_reason === 'alone_30_seconds' && !joined ? '上次因独处 30 秒退出' : '手动与自动进房均适用'));
     text('v-backend', st.backend || '—');
     text('v-backend-sub', (st.enabled ? '已启用' : '未启用') + ' · 对话后端');
+    if (st.model_connection) {
+      const conn = st.model_connection;
+      text('v-backend-sub', conn.state === 'ready' ? '模型已连接' : conn.state === 'reconnecting' ? '正在重连（' + conn.attempts + '/3）' : conn.state === 'failed' ? conn.error + '；可退房后重新加入重试' : '模型连接：' + conn.state);
+    }
     const source = st.join_source || st.source || st.session_source || '';
     const automatic = source === 'auto' || source === 'auto_visit';
     text('v-joined', joined ? (automatic ? '自动停留' : (source ? '手动会话' : '在房')) : '不在房');
@@ -1436,7 +1452,7 @@ async function refreshVoiceStatus() {
     if (detail) {
       detail.textContent = st.last_reply
         ? '最近回复：' + String(st.last_reply).slice(0, 80)
-        : (joined ? '可对语音房说话，或点「说一句」' : '点「进房」开始语音对话');
+        : (joined ? '可对语音房说话，或使用「快捷开口」' : '点「进房」开始语音对话');
     }
     renderTranscript(st);
   } catch (err) {
