@@ -72,7 +72,7 @@ Files: src/core/version.py, README.md, CHANGELOG.md, docs/voice-guide.md, docs/o
 - [x] Set 261007-beta with comparison base 3.1.0; document preview charges, maintenance support and backup contents.
 - [x] Run full pytest on Python 3.10/current environment, Ruff, JavaScript syntax and git diff checks.
 - [x] Independent review; fix findings and run justified regression checks.
-- [ ] Push HEAD:dev, verify GitHub CI and remote SHA; do not modify main.
+- [x] Push HEAD:dev, verify GitHub CI and remote SHA; do not modify main.
 
 ## Validation record
 
@@ -82,3 +82,5 @@ Files: src/core/version.py, README.md, CHANGELOG.md, docs/voice-guide.md, docs/o
 - Independent review: sixrequired findings fixed; follow-up31tests passed, noresidualblocker. Whitespace endpoint edge also corrected.
 - Ruling: automatic restart requires launcher.py. Directmain.py andunsupporteddeployments remain usable; automaticupgrades disabled, backupsavailable.
 - Ruling: interruptedtransactions are recorded asfailed withmanualrecovery guidance, without guessingwhichunownedprocess toterminate.
+
+Published dev implementation e7ff6c3. GitHub Actions run 37580612077: all four jobs succeeded (Ruff, Ubuntu 3.10/3.13, Windows 3.13). Main remained c34d3d5618a0de95053ded680f5a9679a52ab45e.
