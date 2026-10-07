@@ -909,8 +909,6 @@ form[inert] { opacity: .65; }
 .maintenance-job[data-phase='complete'] #maintenance-progress::-moz-progress-bar { background: var(--ok); }
 .maintenance-job[data-phase='failed'] #maintenance-progress::-webkit-progress-value { background: var(--err); }
 .maintenance-job[data-phase='failed'] #maintenance-progress::-moz-progress-bar { background: var(--err); }
-#maintenance-progress-hint { display: block; margin-top: 8px; font-size: 12px; color: var(--muted); line-height: 1.6; }
-#maintenance-progress-hint[hidden] { display: none; }
 @keyframes maintenance-activity { to { transform: translateX(100%); } }
 @media (prefers-reduced-motion: reduce) {
   .maintenance-job[data-active='true'] .maintenance-progress-track::after { animation: none; }

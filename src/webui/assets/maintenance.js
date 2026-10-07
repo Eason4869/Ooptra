@@ -65,7 +65,6 @@
     $('maintenance-progress').setAttribute('aria-valuetext', label);
     $('maintenance-job').dataset.active = String(active);
     text('maintenance-progress-label', label);
-    show($('maintenance-progress-hint'), active);
   }
 
   function busyControls(busy) {
