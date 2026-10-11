@@ -19,6 +19,13 @@ from voice_agent.reply_policy import (
     matches_force_keyword,
     window_seconds,
 )
+from voice_agent.voice_control import (
+    CONTROL_DECISION_FORMAT,
+    LEAVE_INTENT_DESCRIPTION,
+    VOLUME_INTENT_DESCRIPTION,
+    VoiceControlDecision,
+    parse_control_decision,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -337,13 +344,11 @@ class MimoCascadeBackend(VoiceBackend):
         messages.extend(history)
         messages.append({"role": "user", "content": user_text})
         if _with_intent:
-            from voice_agent.voice_control import LEAVE_INTENT_DESCRIPTION
-
             messages[0]["content"] += (
-                "\n【语音控制与回复】" + LEAVE_INTENT_DESCRIPTION
-                + '对当前用户发言同时判断退房意图并生成回复。只输出 JSON 对象 '
-                + '{"leave": false, "reply": "口语回复"}；leave 必须是布尔值。'
-                + '确认退房时输出 {"leave": true, "reply": ""}，告别由系统单独处理。'
+                "\n【语音控制与回复】" + LEAVE_INTENT_DESCRIPTION + VOLUME_INTENT_DESCRIPTION
+                + CONTROL_DECISION_FORMAT
+                + '对当前用户发言同时判断控制意图并生成回复，JSON另加reply字符串字段。'
+                + '有任何控制意图时reply必须为空，禁止口头承诺控制成功，真实执行由系统处理。'
                 + "JSON 格式要求优先于正文输出规则，reply 字段仍遵守语音房规则。"
             )
         body = {
@@ -385,29 +390,27 @@ class MimoCascadeBackend(VoiceBackend):
             )
         return clean
 
-    async def chat_with_intent(self, user_text: str, *, user_key: str = "") -> tuple[bool, str]:
+    async def chat_with_intent(self, user_text: str, *, user_key: str = "") -> tuple[VoiceControlDecision, str]:
         raw = await self.chat(user_text, user_key=user_key, _with_intent=True)
         try:
             decision = json.loads(raw)
         except (ValueError, TypeError) as exc:
             raise ValueError("Invalid combined voice decision") from exc
-        if (not isinstance(decision, dict) or type(decision.get("leave")) is not bool
-                or not isinstance(decision.get("reply"), str)):
+        if not isinstance(decision, dict) or not isinstance(decision.get("reply"), str):
             raise ValueError("Invalid combined voice decision")
-        if decision["leave"]:
-            return True, ""
+        control = parse_control_decision({k: v for k, v in decision.items() if k != "reply"})
+        if control.leave or control.volume is not None:
+            return control, ""
         clean = clamp_reply(sanitize_for_tts(decision["reply"]))
-        return False, "" if looks_like_reasoning_leak(clean) else clean
+        return control, "" if looks_like_reasoning_leak(clean) else clean
 
-    async def detect_leave_intent(self, user_text: str) -> bool:
-        from voice_agent.voice_control import LEAVE_INTENT_DESCRIPTION
-
+    async def detect_control_intent(self, user_text: str) -> VoiceControlDecision:
         self.intent_response_valid = False
         body = {
             "model": self.settings.mimo_llm_model,
             "messages": [
-                {"role": "system", "content": LEAVE_INTENT_DESCRIPTION
-                 + '只输出 JSON 对象 {"leave": true} 或 {"leave": false}，不要输出其他内容。'},
+                {"role": "system", "content": LEAVE_INTENT_DESCRIPTION + VOLUME_INTENT_DESCRIPTION
+                 + CONTROL_DECISION_FORMAT},
                 {"role": "user", "content": user_text},
             ],
             "stream": False, "thinking": {"type": "disabled"}, "max_tokens": 64,
@@ -422,13 +425,12 @@ class MimoCascadeBackend(VoiceBackend):
                 raise RuntimeError(f"voice intent failed HTTP {resp.status}")
         raw = str((((data.get("choices") or [{}])[0] or {}).get("message") or {}).get("content") or "")
         try:
-            decision = json.loads(raw)
+            decision = parse_control_decision(json.loads(raw))
         except (ValueError, TypeError):
-            logger.warning("语音退房意图返回非 JSON，本轮不执行退房")
-            return False
-        self.intent_response_valid = (isinstance(decision, dict)
-                                      and type(decision.get("leave")) is bool)
-        return self.intent_response_valid and decision["leave"] is True
+            logger.warning("语音控制意图返回不合法，本轮不执行控制")
+            return VoiceControlDecision()
+        self.intent_response_valid = True
+        return decision
 
     async def tts(self, text: str) -> tuple[bytes, int]:
         # 兜底：无论谁调用，进 TTS 的文本一律再清一遍
@@ -529,7 +531,7 @@ class MimoCascadeBackend(VoiceBackend):
             return VoiceReply()
         keywords = list(self.settings.force_reply_keywords)
         percent = self.settings.reply_probability_percent
-        control_enabled = self.settings.voice_leave_enabled
+        control_enabled = self.settings.voice_leave_enabled or self.settings.voice_volume_enabled
         in_window = self._conversation.observe("", [], user_key, window_seconds(self.settings))
         preselected = not control_enabled and not keywords and not in_window
         if preselected and not allow_reply(percent):
@@ -548,33 +550,47 @@ class MimoCascadeBackend(VoiceBackend):
                         else "window" if addressed else "reply" if selected else "probability")
         reply_text = ""
         failed = False
-        leave_requested = False
+        control = VoiceControlDecision()
         if control_enabled:
             if selected:
                 try:
                     trace.timing_mode = "combined_intent_chat"
                     with trace.measure("chat"):
-                        leave_requested, reply_text = await self.chat_with_intent(text, user_key=user_key)
+                        control, reply_text = await self.chat_with_intent(text, user_key=user_key)
                     trace.timings["intent"] = trace.timings["chat"]
                 except Exception:
-                    # A malformed/failed combined reply must still check semantic departure.
+                    # A malformed/failed combined reply must still check semantic control.
                     failed = True
                     trace.reason, trace.outcome = "error", "error"
             if not selected or failed:
                 try:
                     with trace.measure("intent"):
-                        leave_requested = await asyncio.wait_for(self.detect_leave_intent(text), 5.0)
+                        control = await asyncio.wait_for(self.detect_control_intent(text), 5.0)
                     if not self.intent_response_valid:
                         failed = True
                         trace.reason, trace.outcome = "error", "error"
                 except Exception:
                     failed = True
                     trace.reason, trace.outcome = "error", "error"
-                    logger.warning("语音退房意图识别失败，本轮不执行退房", exc_info=True)
-            if leave_requested:
+                    logger.warning("语音控制意图识别失败，本轮不执行控制", exc_info=True)
+            if control.leave or control.volume is not None:
                 self.memory.append("user", text, user_key=user_key, channel_key=channel_key)
+                if ((control.leave and not self.settings.voice_leave_enabled)
+                        or (control.volume is not None and not self.settings.voice_volume_enabled)):
+                    # A disabled control is never converted into a spoken promise.
+                    trace.reason, trace.outcome = "control_disabled", "skipped"
+                    return VoiceReply(user_text=text, user_key=user_key)
                 trace.reason, trace.outcome = "control", "control"
-                return VoiceReply(user_text=text, user_key=user_key, raw={"voice_control": "leave"})
+                if control.leave:
+                    raw = {"voice_control": "leave"}
+                else:
+                    volume = control.volume
+                    assert volume is not None  # The decision above contains exactly one control.
+                    command: dict[str, str | int] = {"action": volume.action}
+                    if volume.value is not None:
+                        command["value"] = volume.value
+                    raw = {"voice_control": "volume", "volume_command": command}
+                return VoiceReply(user_text=text, user_key=user_key, raw=raw)
         if not selected or failed:
             if not short:
                 self.memory.append("user", text, user_key=user_key, channel_key=channel_key)

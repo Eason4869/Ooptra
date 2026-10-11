@@ -597,6 +597,7 @@ class BrowserVoiceTransport:
         sample_rate: int,
         *,
         finish: bool = False,
+        volume: int = 50,
     ) -> dict[str, Any]:
         import base64 as _b64
 
@@ -606,7 +607,12 @@ class BrowserVoiceTransport:
             payload,
             int(sample_rate),
             bool(finish),
+            int(volume),
         )
+        return result if isinstance(result, dict) else {"ok": bool(result)}
+
+    async def set_tts_volume(self, volume: int) -> dict[str, Any]:
+        result = await self._run_on_browser("agoraSetTtsVolume", int(volume))
         return result if isinstance(result, dict) else {"ok": bool(result)}
 
     async def stop_tts(self) -> dict[str, Any]:

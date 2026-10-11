@@ -52,6 +52,7 @@ def opened(monkeypatch):
 def make_agent(tmp_path, **kwargs):
     kwargs.setdefault("reply_probability_percent", 100)
     kwargs.setdefault("voice_leave_enabled", False)
+    kwargs.setdefault("voice_volume_enabled", False)
     settings = VoiceAgentSettings(
         enabled=True, gemini_api_key="test", memory_path=str(tmp_path / "memory.jsonl"),
         **kwargs,

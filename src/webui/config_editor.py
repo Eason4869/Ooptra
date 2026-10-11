@@ -244,6 +244,19 @@ FIELD_SPECS: dict[str, dict[str, dict[str, Any]]] = {
     },
     "voice": {
         "enabled": {"type": "bool", "label": "启用语音 Agent", "tier": "basic"},
+        "output_volume": {
+            "type": "int",
+            "label": "bot 语音音量（%）",
+            "tier": "basic",
+            "default": 50,
+            "min": 10,
+            "max": 100,
+            "hint": "默认 50%，可调 10-100%。保存立即生效；临时静音请使用语音台的麦克风按钮。",
+        },
+        "voice_volume_enabled": {
+            "type": "bool", "label": "语音控制音量与开闭麦", "tier": "basic", "default": True,
+            "hint": "明确对 bot 说调大、调小、设为某个百分比、闭麦或开麦。音量自动保存，闭麦为临时状态；不受回复概率限制。",
+        },
         "backend": {
             "type": "select",
             "label": "Live 模型厂商",

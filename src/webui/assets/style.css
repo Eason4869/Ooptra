@@ -152,6 +152,7 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 14px 0; }
 .control.sm { padding: 7px 9px; font-size: 12.5px; }
 .control.grow { flex: 1 1 220px; min-width: 140px; }
 select.control { cursor: pointer; }
+input::placeholder, textarea::placeholder { color: var(--dim); opacity: 1; }
 
 .field { display: block; margin-bottom: 12px; }
 .field > span { display: block; margin-bottom: 5px; font-size: 12.5px; color: var(--muted); }
@@ -306,6 +307,8 @@ select.control { cursor: pointer; }
 }
 .logview.wrap .ln { white-space: pre-wrap; word-break: break-all; }
 .ln { display: grid; grid-template-columns: 66px 62px minmax(0, 1fr); gap: 10px; white-space: pre; }
+.ln.is-plain { grid-template-columns: minmax(0, 1fr); }
+.ln.is-plain .ln-time, .ln.is-plain .ln-level { display: none; }
 .ln-time { color: #475569; }
 .ln-level { color: var(--dim); font-weight: 600; }
 .ln-body { color: #cbd5e1; }
@@ -329,6 +332,12 @@ mark.hit { background: rgba(94, 234, 212, .24); color: #d7fff7; border-radius: 3
 .cfg-group { border-radius: var(--r-lg); border: 1px solid var(--line); background: var(--panel); overflow: hidden; }
 .cfg-group > header { display: flex; align-items: center; gap: 10px; padding: 13px 16px; border-bottom: 1px solid var(--line); background: rgba(148, 163, 184, .05); }
 .cfg-group > header .chip { margin-left: auto; }
+.cfg-group > header { flex-wrap: wrap; }
+.cfg-group > header h3 { flex: 1 1 150px; }
+.cfg-group > header .chip { overflow-wrap: anywhere; }
+.cfg-state { white-space: nowrap; }
+.cfg-field, .feed-top b, .feed-top .meta, .visit-metrics dd { min-width: 0; overflow-wrap: anywhere; }
+.note #config-status, .cfg-field .hint { overflow-wrap: anywhere; }
 .cfg-body { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px 18px; padding: 16px; }
 .cfg-field > label > span { display: block; margin-bottom: 5px; font-size: 12.5px; color: var(--muted); }
 .cfg-field input[type="text"], .cfg-field input[type="number"], .cfg-field input[type="password"] {
@@ -381,21 +390,25 @@ mark.hit { background: rgba(94, 234, 212, .24); color: #d7fff7; border-radius: 3
 .kv-list .copy { flex: none; }
 
 /* ── 轻提示 ── */
-.toasts { position: fixed; top: 18px; right: 18px; display: grid; gap: 10px; z-index: 60; max-width: 340px; }
+.toasts { position: fixed; bottom: var(--toast-offset, 18px); right: 18px; display: grid; gap: 10px; z-index: 60; max-width: 340px; max-height: calc(100dvh - var(--toast-offset, 18px) - 18px); overflow-y: auto; pointer-events: none; }
 .toast {
-  padding: 11px 14px; border-radius: var(--r-md); border: 1px solid var(--line-2); background: rgba(15, 22, 38, .96);
+  position: relative; padding: 11px 40px 11px 14px; border-radius: var(--r-md); border: 1px solid var(--line-2); background: rgba(15, 22, 38, .96); pointer-events: auto; overflow-wrap: anywhere;
   box-shadow: var(--shadow); animation: drop .2s ease; font-size: 12.5px; color: var(--muted);
 }
 .toast b { display: block; color: var(--text); font-size: 13px; margin-bottom: 2px; }
 .toast.ok { border-color: rgba(52, 211, 153, .4); }
+.toast.warn { border-color: var(--warn-line); }
+.toast.warn b { color: var(--warn-text); }
 .toast.err { border-color: rgba(251, 113, 133, .42); }
 .toast.err b { color: #fecdd3; }
+.toast-close { position: absolute; top: 4px; right: 4px; width: 32px; height: 32px; border: 0; border-radius: var(--r-sm); color: var(--muted); background: transparent; font: 22px/1 var(--sans); cursor: pointer; }
+.toast-close:hover { background: var(--panel-3); color: var(--text); }
 @keyframes drop { from { opacity: 0; transform: translateY(-8px); } }
 
 /* ── 对话框 ── */
 .backdrop { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(3, 7, 18, .68); z-index: 70; animation: fade .16s ease; }
 @keyframes fade { from { opacity: 0; } }
-.dialog { width: min(400px, 92vw); padding: 22px; border-radius: var(--r-lg); border: 1px solid var(--line-2); background: var(--panel); box-shadow: var(--shadow); }
+.dialog { width: min(400px, 92vw); max-height: calc(100dvh - 32px); overflow: auto; padding: 22px; border-radius: var(--r-lg); border: 1px solid var(--line-2); background: var(--panel); box-shadow: var(--shadow); overflow-wrap: anywhere; }
 .dialog p { margin: 8px 0 18px; color: var(--muted); font-size: 13px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
@@ -551,6 +564,8 @@ mark.hit { background: rgba(94, 234, 212, .24); color: #d7fff7; border-radius: 3
   margin: 4px 0 14px;
 }
 .chip-tab {
+  max-width: 100%;
+  overflow-wrap: anywhere;
   border: 1px solid var(--line);
   background: rgba(148, 163, 184, .08);
   color: var(--muted);
@@ -599,6 +614,7 @@ mark.hit { background: rgba(94, 234, 212, .24); color: #d7fff7; border-radius: 3
   gap: 8px;
 }
 .channel-card {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -637,7 +653,7 @@ mark.hit { background: rgba(94, 234, 212, .24); color: #d7fff7; border-radius: 3
   background: rgba(94, 234, 212, .12);
   align-self: flex-start;
 }
-.ch-name { font-weight: 650; font-size: 13px; }
+.ch-name { max-width: 100%; overflow-wrap: anywhere; font-weight: 650; font-size: 13px; }
 .ch-sub { color: var(--muted); font-size: 11.5px; }
 .ch-id {
   font-family: var(--mono, ui-monospace, monospace);
@@ -863,6 +879,9 @@ form[inert] { opacity: .65; }
   .channel-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .channel-card { padding: 10px; }
   .logview { height: calc(100vh - 340px); }
+  .ln:not(.is-plain) { grid-template-columns: minmax(0, 1fr) auto; gap: 0 8px; }
+  .ln .ln-body { grid-column: 1 / -1; }
+  .ln + .ln { margin-top: 8px; }
   .toolbar .control { max-width: 100%; min-width: 0; }
   .kv-list dt { width: 70px; }
   .kv-list .kv { gap: 8px; }
@@ -945,13 +964,25 @@ form[inert] { opacity: .65; }
 @media (max-width: 600px) { .maintenance-banner { align-items: start; flex-direction: column; gap: 16px; padding: 22px 0; } .maintenance-banner h2 { font-size: 23px; } .backup-row { align-items: start; flex-wrap: wrap; } }
 
 /* Keep session controls together; diagnostics stay behind the secondary tools tab. */
+.voice-output-card { margin: 16px 0; }
+.voice-output-controls { display: grid; grid-template-columns: auto minmax(180px, 1fr) auto; align-items: center; gap: 20px; margin-bottom: 12px; }
+.voice-output-controls .btn { min-height: 44px; }
+.voice-volume-control { min-width: 0; width: 100%; max-width: 600px; justify-self: center; }
+.voice-volume-control label { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 13px; }
+.voice-volume-control output { color: var(--accent); font-weight: 650; font-variant-numeric: tabular-nums; }
+.voice-volume-control input[type="range"] { display: block; width: 100%; min-height: 28px; margin: 6px 0 0; accent-color: var(--accent); cursor: pointer; }
+.voice-output-card .hint { overflow-wrap: anywhere; }
 #voice-join-card .card-head { flex-wrap: wrap; }
 #voice-join-card .card-head h3 { flex: 1 0 100%; }
 .config-summary, #maintenance-update-metadata, .voice-observation p { overflow-wrap: anywhere; }
 .config-summary { padding: 12px 0; color: var(--accent); }
 .btn[aria-busy="true"] { cursor: progress; }
 .btn:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+:is(.control, .field input, .cfg-field input, .cfg-field select):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-color: var(--accent); }
 @media (max-width: 600px) {
+  .voice-output-controls { grid-template-columns: minmax(0, 1fr) auto; gap: 12px; }
+  .voice-volume-control { grid-column: 1 / -1; grid-row: 2; }
+  #v-backend { font-size: 16px; }
   #voice-join-card .card-head { gap: 8px; }
   #voice-join, #voice-leave, #voice-stop { min-height: 44px; flex: 1; }
   #voice-targets-refresh, #voice-set-default { order: 1; }
@@ -960,6 +991,8 @@ form[inert] { opacity: .65; }
   .savebar { position: sticky; bottom: 8px; padding: 12px; gap: 8px; }
   .savebar #savebar-text { flex-basis: 100%; }
   .savebar .btn { min-height: 44px; }
+  .toasts { right: 16px; max-height: min(40dvh, 320px, calc(100dvh - var(--toast-offset, 18px) - 16px)); }
+  .toast-close { width: 36px; height: 36px; }
   .voice-observation .check-row p { line-height: 1.7; }
 }
 

@@ -30,6 +30,7 @@ ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 3090
 DEFAULT_LOG_LINES = 300
+PAGE_PATHS = ("/", "/overview", "/logs", "/voice", "/maintenance", "/config", "/account")
 
 
 def _is_loopback(host: str) -> bool:
@@ -117,9 +118,9 @@ class WebUIConsole:
                                                runtime_status=self._controller.snapshot,
                                                bootstrap_ready=lambda: self.bootstrap_ready)
         mount_maintenance_routes(app, self._maintenance)
+        app.add_routes([web.get(path, self._handle_index) for path in PAGE_PATHS])
         app.add_routes(
             [
-                web.get("/", self._handle_index),
                 web.get("/favicon.ico", self._handle_favicon),
                 web.get("/assets/{name}", self._handle_asset),
                 web.get("/api/status", self._handle_status),
@@ -445,7 +446,7 @@ class WebUIConsole:
         message = "已写入 config.py"
         notes = result.get("notes") or []
         if notes:
-            message = "已写入 config.py，并已热生效：" + "；".join(str(n) for n in notes)
+            message = "已写入 config.py，应用结果：" + "；".join(str(n) for n in notes)
         elif result.get("restart_required"):
             message = "已写入 config.py，此项需重启 Ooptra 才能生效"
         return web.json_response({"ok": True, **result, "message": message})
@@ -463,10 +464,13 @@ class WebUIConsole:
             applied = await (self._voice_runtime or get_voice_runtime()).reload_settings()
         except Exception as exc:
             logger.exception("语音配置热重载失败")
+            result["hot_reload_failed"] = True
             result.setdefault("notes", []).append(f"语音配置热重载失败：{exc}")
             return
         if applied.get("changed"):
             result["hot_reloaded_fields"] = applied["changed"]
+        if applied.get("hot_reload_failed"):
+            result["hot_reload_failed"] = True
         if applied.get("api_changed"):
             result["hot_reloaded_fields"] = [
                 *(result.get("hot_reloaded_fields") or []),

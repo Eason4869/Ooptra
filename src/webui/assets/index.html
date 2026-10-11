@@ -299,6 +299,22 @@
           <input type="hidden" id="join-channel" value="" />
         </section>
 
+        <section class="card voice-output-card">
+          <header class="card-head">
+            <h3>麦克风与音量</h3>
+            <span class="hint" id="voice-output-state" aria-live="polite">读取状态…</span>
+          </header>
+          <div class="voice-output-controls">
+            <button class="btn ghost" id="voice-mic-toggle" type="button" aria-pressed="false" disabled>关闭麦克风</button>
+            <div class="voice-volume-control">
+              <label for="voice-output-volume">语音音量 <output id="voice-volume-value" for="voice-output-volume">50%</output></label>
+              <input id="voice-output-volume" type="range" min="10" max="100" step="1" value="50" aria-describedby="voice-output-hint" />
+            </div>
+            <button class="btn primary" id="voice-volume-save" type="button" disabled>保存音量</button>
+          </div>
+          <p class="hint" id="voice-output-hint">音量 10%–100%，默认 50%，保存后重启保留。闭麦只暂停 bot 发声，仍可听取“开麦”；调节音量会自动开麦，退房后恢复打开。音乐音量独立。</p>
+        </section>
+
         <div class="tiles">
           <article class="tile">
             <header><i class="dot"></i>模型</header>

@@ -196,6 +196,7 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 14px 0; }
 .control.sm { padding: 7px 9px; font-size: 12.5px; }
 .control.grow { flex: 1 1 220px; min-width: 140px; }
 select.control { cursor: pointer; }
+input::placeholder, textarea::placeholder { color: var(--dim); opacity: 1; }
 
 .field { display: block; margin-bottom: 12px; }
 .field > span { display: block; margin-bottom: 5px; font-size: 12.5px; color: var(--muted); }
@@ -350,6 +351,8 @@ select.control { cursor: pointer; }
 }
 .logview.wrap .ln { white-space: pre-wrap; word-break: break-all; }
 .ln { display: grid; grid-template-columns: 66px 62px minmax(0, 1fr); gap: 10px; white-space: pre; }
+.ln.is-plain { grid-template-columns: minmax(0, 1fr); }
+.ln.is-plain .ln-time, .ln.is-plain .ln-level { display: none; }
 .ln-time { color: #475569; }
 .ln-level { color: var(--dim); font-weight: 600; }
 .ln-body { color: #cbd5e1; }
@@ -373,6 +376,12 @@ mark.hit { background: rgba(94, 234, 212, .24); color: #d7fff7; border-radius: 3
 .cfg-group { border-radius: var(--r-lg); border: 1px solid var(--line); background: var(--panel); overflow: hidden; }
 .cfg-group > header { display: flex; align-items: center; gap: 10px; padding: 13px 16px; border-bottom: 1px solid var(--line); background: rgba(148, 163, 184, .05); }
 .cfg-group > header .chip { margin-left: auto; }
+.cfg-group > header { flex-wrap: wrap; }
+.cfg-group > header h3 { flex: 1 1 150px; }
+.cfg-group > header .chip { overflow-wrap: anywhere; }
+.cfg-state { white-space: nowrap; }
+.cfg-field, .feed-top b, .feed-top .meta, .visit-metrics dd { min-width: 0; overflow-wrap: anywhere; }
+.note #config-status, .cfg-field .hint { overflow-wrap: anywhere; }
 .cfg-body { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px 18px; padding: 16px; }
 .cfg-field > label > span { display: block; margin-bottom: 5px; font-size: 12.5px; color: var(--muted); }
 .cfg-field input[type="text"], .cfg-field input[type="number"], .cfg-field input[type="password"] {
@@ -425,21 +434,25 @@ mark.hit { background: rgba(94, 234, 212, .24); color: #d7fff7; border-radius: 3
 .kv-list .copy { flex: none; }
 
 /* ── 轻提示 ── */
-.toasts { position: fixed; top: 18px; right: 18px; display: grid; gap: 10px; z-index: 60; max-width: 340px; }
+.toasts { position: fixed; bottom: var(--toast-offset, 18px); right: 18px; display: grid; gap: 10px; z-index: 60; max-width: 340px; max-height: calc(100dvh - var(--toast-offset, 18px) - 18px); overflow-y: auto; pointer-events: none; }
 .toast {
-  padding: 11px 14px; border-radius: var(--r-md); border: 1px solid var(--line-2); background: rgba(15, 22, 38, .96);
+  position: relative; padding: 11px 40px 11px 14px; border-radius: var(--r-md); border: 1px solid var(--line-2); background: rgba(15, 22, 38, .96); pointer-events: auto; overflow-wrap: anywhere;
   box-shadow: var(--shadow); animation: drop .2s ease; font-size: 12.5px; color: var(--muted);
 }
 .toast b { display: block; color: var(--text); font-size: 13px; margin-bottom: 2px; }
 .toast.ok { border-color: rgba(52, 211, 153, .4); }
+.toast.warn { border-color: var(--warn-line); }
+.toast.warn b { color: var(--warn-text); }
 .toast.err { border-color: rgba(251, 113, 133, .42); }
 .toast.err b { color: #fecdd3; }
+.toast-close { position: absolute; top: 4px; right: 4px; width: 32px; height: 32px; border: 0; border-radius: var(--r-sm); color: var(--muted); background: transparent; font: 22px/1 var(--sans); cursor: pointer; }
+.toast-close:hover { background: var(--panel-3); color: var(--text); }
 @keyframes drop { from { opacity: 0; transform: translateY(-8px); } }
 
 /* ── 对话框 ── */
 .backdrop { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(3, 7, 18, .68); z-index: 70; animation: fade .16s ease; }
 @keyframes fade { from { opacity: 0; } }
-.dialog { width: min(400px, 92vw); padding: 22px; border-radius: var(--r-lg); border: 1px solid var(--line-2); background: var(--panel); box-shadow: var(--shadow); }
+.dialog { width: min(400px, 92vw); max-height: calc(100dvh - 32px); overflow: auto; padding: 22px; border-radius: var(--r-lg); border: 1px solid var(--line-2); background: var(--panel); box-shadow: var(--shadow); overflow-wrap: anywhere; }
 .dialog p { margin: 8px 0 18px; color: var(--muted); font-size: 13px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
@@ -595,6 +608,8 @@ mark.hit { background: rgba(94, 234, 212, .24); color: #d7fff7; border-radius: 3
   margin: 4px 0 14px;
 }
 .chip-tab {
+  max-width: 100%;
+  overflow-wrap: anywhere;
   border: 1px solid var(--line);
   background: rgba(148, 163, 184, .08);
   color: var(--muted);
@@ -643,6 +658,7 @@ mark.hit { background: rgba(94, 234, 212, .24); color: #d7fff7; border-radius: 3
   gap: 8px;
 }
 .channel-card {
+  min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -681,7 +697,7 @@ mark.hit { background: rgba(94, 234, 212, .24); color: #d7fff7; border-radius: 3
   background: rgba(94, 234, 212, .12);
   align-self: flex-start;
 }
-.ch-name { font-weight: 650; font-size: 13px; }
+.ch-name { max-width: 100%; overflow-wrap: anywhere; font-weight: 650; font-size: 13px; }
 .ch-sub { color: var(--muted); font-size: 11.5px; }
 .ch-id {
   font-family: var(--mono, ui-monospace, monospace);
@@ -907,6 +923,9 @@ form[inert] { opacity: .65; }
   .channel-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .channel-card { padding: 10px; }
   .logview { height: calc(100vh - 340px); }
+  .ln:not(.is-plain) { grid-template-columns: minmax(0, 1fr) auto; gap: 0 8px; }
+  .ln .ln-body { grid-column: 1 / -1; }
+  .ln + .ln { margin-top: 8px; }
   .toolbar .control { max-width: 100%; min-width: 0; }
   .kv-list dt { width: 70px; }
   .kv-list .kv { gap: 8px; }
@@ -989,13 +1008,25 @@ form[inert] { opacity: .65; }
 @media (max-width: 600px) { .maintenance-banner { align-items: start; flex-direction: column; gap: 16px; padding: 22px 0; } .maintenance-banner h2 { font-size: 23px; } .backup-row { align-items: start; flex-wrap: wrap; } }
 
 /* Keep session controls together; diagnostics stay behind the secondary tools tab. */
+.voice-output-card { margin: 16px 0; }
+.voice-output-controls { display: grid; grid-template-columns: auto minmax(180px, 1fr) auto; align-items: center; gap: 20px; margin-bottom: 12px; }
+.voice-output-controls .btn { min-height: 44px; }
+.voice-volume-control { min-width: 0; width: 100%; max-width: 600px; justify-self: center; }
+.voice-volume-control label { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 13px; }
+.voice-volume-control output { color: var(--accent); font-weight: 650; font-variant-numeric: tabular-nums; }
+.voice-volume-control input[type="range"] { display: block; width: 100%; min-height: 28px; margin: 6px 0 0; accent-color: var(--accent); cursor: pointer; }
+.voice-output-card .hint { overflow-wrap: anywhere; }
 #voice-join-card .card-head { flex-wrap: wrap; }
 #voice-join-card .card-head h3 { flex: 1 0 100%; }
 .config-summary, #maintenance-update-metadata, .voice-observation p { overflow-wrap: anywhere; }
 .config-summary { padding: 12px 0; color: var(--accent); }
 .btn[aria-busy="true"] { cursor: progress; }
 .btn:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+:is(.control, .field input, .cfg-field input, .cfg-field select):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-color: var(--accent); }
 @media (max-width: 600px) {
+  .voice-output-controls { grid-template-columns: minmax(0, 1fr) auto; gap: 12px; }
+  .voice-volume-control { grid-column: 1 / -1; grid-row: 2; }
+  #v-backend { font-size: 16px; }
   #voice-join-card .card-head { gap: 8px; }
   #voice-join, #voice-leave, #voice-stop { min-height: 44px; flex: 1; }
   #voice-targets-refresh, #voice-set-default { order: 1; }
@@ -1004,6 +1035,8 @@ form[inert] { opacity: .65; }
   .savebar { position: sticky; bottom: 8px; padding: 12px; gap: 8px; }
   .savebar #savebar-text { flex-basis: 100%; }
   .savebar .btn { min-height: 44px; }
+  .toasts { right: 16px; max-height: min(40dvh, 320px, calc(100dvh - var(--toast-offset, 18px) - 16px)); }
+  .toast-close { width: 36px; height: 36px; }
   .voice-observation .check-row p { line-height: 1.7; }
 }
 
@@ -1063,7 +1096,7 @@ form[inert] { opacity: .65; }
 <body>
 <aside class="preview-banner" role="note">离线交互预览 · 演示密码：<b>demo</b> · 操作仅影响本页演示数据</aside>
 <style>.preview-banner{position:sticky;top:0;z-index:1000;padding:8px 16px;text-align:center;background:#263b61;color:#fff;font:13px/1.6 system-ui}.preview-banner b{color:#fff}</style>
-<script>window.OOPTRA_PREVIEW={"groups":{"oopz":{"title":"Oopz 账号与目标","desc":"bot 在 Oopz 侧的身份与默认落点。登录凭据会自动维护，跑通后这里基本不用改。","source":"OOPZ_CONFIG","fields":{"default_area":{"type":"str","label":"默认域 ID","tier":"basic","hint":"OneBot 调用没带目标域时用它兜底","value":""},"default_channel":{"type":"str","label":"默认频道 ID","tier":"basic","hint":"同上，频道兜底","value":""},"proxy":{"type":"str","label":"网络出口","tier":"basic","hint":"留空=跟随系统代理，direct=直连，也可填 http://主机:端口","value":""},"login_phone":{"type":"str","label":"登录手机号","tier":"adv","section":"账号","value":""},"login_password":{"type":"str","label":"登录密码","sensitive":true,"tier":"adv","section":"账号","value":null,"is_set":false},"use_announcement_style":{"type":"bool","label":"公告样式","tier":"adv","section":"行为","hint":"bot 不是域主时保持关闭","value":false}}},"onebot":{"title":"OneBot v11 连接","desc":"本程序作为客户端拨出，连到对端框架的 OneBot v11 反向 WebSocket 服务；地址与令牌要和那边一致。","source":"ONEBOT_V11_CONFIG","fields":{"ws_reverse_url":{"type":"str","label":"反向 WS 地址","tier":"basic","prefix":["ws://","wss://"],"hint":"对端反向 WS 的监听地址，路径由对端决定，如 ws://127.0.0.1:6200/ws","value":"ws://127.0.0.1:6200/ws"},"access_token":{"type":"str","label":"access_token","sensitive":true,"tier":"basic","hint":"要和 OneBot 实现里的 token 相同；两边都留空即不校验","value":null,"is_set":false},"enabled":{"type":"bool","label":"启用 OneBot v11","tier":"adv","section":"连接","value":true},"enable_ws_reverse":{"type":"bool","label":"启用反向 WebSocket","tier":"adv","section":"连接","value":true},"ws_reverse_api_url":{"type":"str","label":"反向 WS API 地址","tier":"adv","section":"连接","prefix":["ws://","wss://"],"hint":"仅当对端区分 API/Event 时填写","value":""},"ws_reverse_event_url":{"type":"str","label":"反向 WS Event 地址","tier":"adv","section":"连接","prefix":["ws://","wss://"],"value":""},"secret":{"type":"str","label":"secret","sensitive":true,"tier":"adv","section":"连接","hint":"仅在需要签名校验时填写，一般留空","value":null,"is_set":false},"ws_reverse_reconnect_interval":{"type":"float","label":"重连间隔(秒)","tier":"adv","section":"连接","min":0.5,"max":300,"value":3.0},"enable_http":{"type":"bool","label":"本地 HTTP action","tier":"adv","section":"本地接入","value":false},"enable_ws":{"type":"bool","label":"本地正向 WebSocket","tier":"adv","section":"本地接入","hint":"反向桥接不需要，留给主动连过来的 OneBot 客户端","value":false},"host":{"type":"str","label":"本地监听地址","tier":"adv","section":"本地接入","value":"127.0.0.1"},"port":{"type":"int","label":"本地监听端口","tier":"adv","section":"本地接入","min":1,"max":65535,"value":6700},"enable_http_post":{"type":"bool","label":"HTTP POST 上报","tier":"adv","section":"本地接入","value":false},"http_post_urls":{"type":"list","label":"上报地址列表","tier":"adv","section":"本地接入","value":[]},"send_connect_event":{"type":"bool","label":"发送 connect 事件","tier":"adv","section":"推送与心跳","value":true},"heartbeat_enabled":{"type":"bool","label":"发送心跳","tier":"adv","section":"推送与心跳","value":true},"heartbeat_interval":{"type":"float","label":"心跳间隔(秒)","tier":"adv","section":"推送与心跳","min":1,"max":3600,"value":15.0},"member_list_max":{"type":"int","label":"成员列表上限","tier":"adv","section":"推送与心跳","min":0,"max":100000,"value":5000},"enable_area_scoped_group_ban":{"type":"bool","label":"禁言作用于整个域","tier":"adv","section":"域语义映射","value":false},"enable_set_group_kick_as_area_kick":{"type":"bool","label":"踢人=移出域","tier":"adv","section":"域语义映射","value":false},"enable_set_group_leave_as_area_leave":{"type":"bool","label":"退群=退出域","tier":"adv","section":"域语义映射","value":false},"enable_set_group_admin_as_area_role":{"type":"bool","label":"设置管理员=域身份组","tier":"adv","section":"域语义映射","value":false},"group_admin_role_id":{"type":"int","label":"管理员身份组 ID","tier":"adv","section":"域语义映射","min":0,"max":999999,"value":0},"db_path":{"type":"str","label":"映射数据库路径","tier":"adv","section":"数据","hint":"存 group_id/self_id 映射，删除会导致对端看到的群号全部变化","value":"data/onebot_v11.sqlite3"}}},"voice":{"title":"语音对话 Agent","desc":"Oopz 语音房 Live 对话（语音进语音出）。默认 Gemini Live；可选级联兜底。","source":"VOICE_AGENT_CONFIG","fields":{"enabled":{"type":"bool","label":"启用语音 Agent","tier":"basic","value":true},"backend":{"type":"select","label":"Live 模型厂商","tier":"basic","options":[{"value":"gemini_live","label":"Gemini Live（语音进语音出）"},{"value":"mimo_cascade","label":"MiMo 级联（ASR→LLM→TTS）"},{"value":"openai_realtime","label":"OpenAI Realtime（骨架）"}],"hint":"选择厂商后出现对应的模型与音色预设","value":"mimo_cascade"},"area":{"type":"str","label":"默认域 ID","tier":"basic","value":""},"channel":{"type":"str","label":"默认语音频道 ID","tier":"basic","value":""},"proxy":{"type":"select","label":"模型 API 网络代理","tier":"basic","options":[{"value":"","label":"不启用代理"},{"value":"clash","label":"启用代理 127.0.0.1:7890"},{"value":"direct","label":"强制直连"}],"allow_custom":true,"hint":"选填；模型接口走此代理，也可填 http://主机:端口；更新中心使用独立的更新 Git 代理","value":""},"gemini.api_key":{"type":"str","label":"Gemini API Key","sensitive":true,"tier":"basic","vendor":"gemini_live","hint":"或环境变量 GEMINI_API_KEY","value":null,"is_set":false},"gemini.base_url":{"type":"str","label":"Gemini 接口地址","tier":"basic","vendor":"gemini_live","hint":"Live WebSocket 端点；留空用官方默认，中转/代理可改自定义地址","placeholder":"wss://generativelanguage.googleapis.com/ws/...（默认）","value":"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"},"gemini.model":{"type":"select","label":"Gemini Live 模型","tier":"basic","vendor":"gemini_live","options":["gemini-2.0-flash-live-001","gemini-2.5-flash-live-preview","gemini-live-2.5-flash-preview"],"allow_custom":true,"value":"gemini-2.0-flash-live-001"},"gemini.voice":{"type":"select","label":"Gemini 音色","tier":"basic","vendor":"gemini_live","options":[{"value":"Puck","label":"Puck"},{"value":"Charon","label":"Charon"},{"value":"Kore","label":"Kore"},{"value":"Fenrir","label":"Fenrir"},{"value":"Aoede","label":"Aoede"},{"value":"Enceladus","label":"Enceladus"},{"value":"Iapetus","label":"Iapetus"},{"value":"Umbriel","label":"Umbriel"}],"allow_custom":true,"hint":"下拉预设音色，或选「自定义」填入任意音色名","value":"Puck"},"mimo.api_key":{"type":"str","label":"MiMo API Key","sensitive":true,"tier":"basic","vendor":"mimo_cascade","hint":"或环境变量 MIMO_API_KEY","value":null,"is_set":false},"mimo.base_url":{"type":"str","label":"MiMo 接口地址","tier":"basic","vendor":"mimo_cascade","value":"https://api.xiaomimimo.com/v1"},"mimo.asr_model":{"type":"select","label":"MiMo ASR 模型","tier":"basic","vendor":"mimo_cascade","options":["mimo-v2.5-asr"],"allow_custom":true,"value":"mimo-v2.5-asr"},"mimo.llm_model":{"type":"select","label":"MiMo LLM 模型","tier":"basic","vendor":"mimo_cascade","options":["mimo-v2.6-flash","mimo-v2.5-pro"],"allow_custom":true,"value":"mimo-v2.6-flash"},"mimo.tts_model":{"type":"select","label":"MiMo TTS 模型","tier":"basic","vendor":"mimo_cascade","options":["mimo-v2.5-tts"],"allow_custom":true,"value":"mimo-v2.5-tts"},"mimo.tts_voice":{"type":"select","label":"MiMo 音色","tier":"basic","vendor":"mimo_cascade","options":[{"value":"冰糖","label":"冰糖（活泼女声）"},{"value":"茉莉","label":"茉莉（知性女声）"},{"value":"苏打","label":"苏打（阳光男声）"},{"value":"白桦","label":"白桦（沉稳男声）"},{"value":"Mia","label":"Mia"},{"value":"Chloe","label":"Chloe"},{"value":"Milo","label":"Milo"},{"value":"Dean","label":"Dean"}],"allow_custom":true,"hint":"下拉预设音色，或选「自定义」填入任意音色名","value":"冰糖"},"openai.api_key":{"type":"str","label":"OpenAI API Key","sensitive":true,"tier":"basic","vendor":"openai_realtime","hint":"或环境变量 OPENAI_API_KEY","value":null,"is_set":false},"openai.base_url":{"type":"str","label":"OpenAI 接口地址","tier":"basic","vendor":"openai_realtime","hint":"兼容 OpenAI 的 API 根地址；留空用官方默认，中转站可改自定义","placeholder":"https://api.openai.com/v1（默认）","value":"https://api.openai.com/v1"},"openai.realtime_model":{"type":"select","label":"OpenAI Realtime 模型","tier":"basic","vendor":"openai_realtime","options":["gpt-4o-mini-realtime-preview","gpt-4o-realtime-preview"],"allow_custom":true,"value":"gpt-4o-mini-realtime-preview"},"openai.voice":{"type":"select","label":"OpenAI 音色","tier":"basic","vendor":"openai_realtime","options":[{"value":"alloy","label":"alloy"},{"value":"echo","label":"echo"},{"value":"fable","label":"fable"},{"value":"onyx","label":"onyx"},{"value":"nova","label":"nova"},{"value":"shimmer","label":"shimmer"}],"allow_custom":true,"hint":"下拉预设音色，或选「自定义」填入任意音色名","value":"alloy"},"reply_probability_percent":{"type":"int","label":"语音回复频率（概率 %）","tier":"basic","min":0,"max":100,"default":30,"hint":"默认 30，随机回应约三成发言；0 仅在命中强制关键词时接话，100 每次均允许回复。保存后对后续回合生效，快捷开口和进退房台词不受限制。Gemini Live 继续听取对话，按模型回复回合决定是否出声，不保证减少模型用量。","value":30},"force_reply_keywords":{"type":"list","label":"强制回复关键词列表","tier":"basic","default":[],"placeholder":"例如：Ooptra, 机器人, 小欧","hint":"多个词用英文逗号分隔；发言包含任一关键词时绕过回复概率（包括 0%）。忽略大小写、全半角、空格和标点；以语音转写为准，同音别名可加入列表。默认留空，保存后对后续回合生效；MiMo 启用关键词时需要先做语音识别。Gemini 延迟转写最多等待 2 秒；跨回合无法确认归属时仅按概率回复。","value":[]},"conversation_window_enabled":{"type":"bool","label":"连续对话窗口","tier":"basic","hint":"叫到关键词后，同一成员可连续追问；换房清除，需先配置强制回复关键词。","value":true},"conversation_window_seconds":{"type":"int","label":"连续追问窗口 / 秒","tier":"basic","min":1,"max":300,"value":30},"voice_leave_enabled":{"type":"bool","label":"语音控制退语音","tier":"basic","default":true,"hint":"默认开启，由 AI 判断真人是否要求 bot 退房；所有当前监听的成员均可触发。支持你出去吧、滚出去等明确对 bot 说的口语，否定和引用不执行。不受回复概率限制，先播放离场语再退出，按手动退房冷却。台词复用自动串门的分域退房预设（空列表时采用默认告别）。MiMo 开启后需要 ASR 和意图判断，可与聊天合并请求，仍可能增加模型用量。","value":true},"barge_in":{"type":"bool","label":"允许抢话打断","tier":"adv","section":"行为","value":true},"barge_in_hold_ms":{"type":"int","label":"抢话门限(毫秒)","tier":"adv","section":"行为","min":0,"max":3000,"hint":"某人要连续说话满这么久才算抢话；说完就断的咳嗽、笑声、键盘声会被忽略。0 = 关掉门限（一出声就打断，房间一热闹 bot 就说不完整句话）。房间越吵调越大，600~800 适合人多的时候。","value":300},"reply_text_to_channel":{"type":"bool","label":"字幕发到文字频道","tier":"adv","section":"行为","value":false},"silence_ms":{"type":"int","label":"静音断句(毫秒)","tier":"adv","section":"音频","min":200,"max":3000,"value":1200},"min_utterance_ms":{"type":"int","label":"最短回合(毫秒)","tier":"adv","section":"音频","min":0,"max":3000,"value":500},"reply_cooldown_ms":{"type":"int","label":"回复冷却(毫秒)","tier":"adv","section":"行为","min":0,"max":10000,"value":2500},"sample_rate_in":{"type":"int","label":"输入采样率","tier":"adv","section":"音频","min":8000,"max":48000,"value":16000},"sample_rate_out":{"type":"int","label":"输出采样率","tier":"adv","section":"音频","min":8000,"max":48000,"value":24000}}},"voice_api":{"title":"语音 HTTP API","desc":"供 AstrBot 插件或本机脚本查询语音状态、进退房、读写人格与记忆。","source":"VOICE_API_CONFIG","fields":{"enabled":{"type":"bool","label":"启用语音 API","tier":"basic","value":false},"host":{"type":"str","label":"监听地址","tier":"basic","nonempty":true,"hint":"127.0.0.1 仅本机","value":"127.0.0.1"},"port":{"type":"int","label":"监听端口","tier":"basic","min":1,"max":65535,"value":3091}}},"webui":{"title":"Web 控制台","desc":"本页面的监听地址与访问令牌；换端口后要用新地址重新打开。","source":"WEBUI_CONFIG","fields":{"update_proxy":{"type":"str","label":"更新 Git 代理","sensitive":true,"tier":"adv","section":"更新网络","default":"","hint":"部署服务器的 Git 更新出口：留空=系统环境代理，direct=直连，或完整 HTTP/HTTPS/SOCKS 代理 URL；保存后生效","value":null,"is_set":false},"update_mirror":{"type":"str","label":"更新 Git 备用镜像","tier":"adv","section":"更新网络","default":"","hint":"完整 HTTPS Git 仓库 URL（支持 Git smart HTTP），留空仅官方源；备用下载必须核对官方提交，不影响 pip/浏览器依赖","value":""},"host":{"type":"str","label":"监听地址","tier":"basic","nonempty":true,"hint":"127.0.0.1 仅本机；0.0.0.0 允许局域网访问","value":"127.0.0.1"},"port":{"type":"int","label":"监听端口","tier":"basic","min":1,"max":65535,"value":3090},"token":{"type":"str","label":"控制台密码 / 插件 API Token","nonempty":true,"max_length":1024,"sensitive":true,"tier":"basic","hint":"唯一共享密码。留空不修改；保存后立即生效并要求重新登录，外部插件也需填写同一个新 Token","value":null,"is_set":true},"enabled":{"type":"bool","label":"启用 Web 控制台","tier":"adv","section":"其他","value":true},"log_lines":{"type":"int","label":"日志默认行数","tier":"adv","section":"其他","min":50,"max":5000,"value":300}}}},"auto_visit":{"check_interval_minutes":[10,20],"daily_limit":3,"defaults":{"join_probability":0.2,"stay_minutes":[10,20],"auto_cooldown_minutes":[30,60],"manual_cooldown_minutes":[120,240],"enter_prompts":["在玩什么游戏？"],"leave_prompts":["拜拜，我下了"]},"areas":{}},"version":"3.2.1"};</script>
+<script>window.OOPTRA_PREVIEW={"groups":{"oopz":{"title":"Oopz 账号与目标","desc":"bot 在 Oopz 侧的身份与默认落点。登录凭据会自动维护，跑通后这里基本不用改。","source":"OOPZ_CONFIG","fields":{"default_area":{"type":"str","label":"默认域 ID","tier":"basic","hint":"OneBot 调用没带目标域时用它兜底","value":""},"default_channel":{"type":"str","label":"默认频道 ID","tier":"basic","hint":"同上，频道兜底","value":""},"proxy":{"type":"str","label":"网络出口","tier":"basic","hint":"留空=跟随系统代理，direct=直连，也可填 http://主机:端口","value":""},"login_phone":{"type":"str","label":"登录手机号","tier":"adv","section":"账号","value":""},"login_password":{"type":"str","label":"登录密码","sensitive":true,"tier":"adv","section":"账号","value":null,"is_set":false},"use_announcement_style":{"type":"bool","label":"公告样式","tier":"adv","section":"行为","hint":"bot 不是域主时保持关闭","value":false}}},"onebot":{"title":"OneBot v11 连接","desc":"本程序作为客户端拨出，连到对端框架的 OneBot v11 反向 WebSocket 服务；地址与令牌要和那边一致。","source":"ONEBOT_V11_CONFIG","fields":{"ws_reverse_url":{"type":"str","label":"反向 WS 地址","tier":"basic","prefix":["ws://","wss://"],"hint":"对端反向 WS 的监听地址，路径由对端决定，如 ws://127.0.0.1:6200/ws","value":"ws://127.0.0.1:6200/ws"},"access_token":{"type":"str","label":"access_token","sensitive":true,"tier":"basic","hint":"要和 OneBot 实现里的 token 相同；两边都留空即不校验","value":null,"is_set":false},"enabled":{"type":"bool","label":"启用 OneBot v11","tier":"adv","section":"连接","value":true},"enable_ws_reverse":{"type":"bool","label":"启用反向 WebSocket","tier":"adv","section":"连接","value":true},"ws_reverse_api_url":{"type":"str","label":"反向 WS API 地址","tier":"adv","section":"连接","prefix":["ws://","wss://"],"hint":"仅当对端区分 API/Event 时填写","value":""},"ws_reverse_event_url":{"type":"str","label":"反向 WS Event 地址","tier":"adv","section":"连接","prefix":["ws://","wss://"],"value":""},"secret":{"type":"str","label":"secret","sensitive":true,"tier":"adv","section":"连接","hint":"仅在需要签名校验时填写，一般留空","value":null,"is_set":false},"ws_reverse_reconnect_interval":{"type":"float","label":"重连间隔(秒)","tier":"adv","section":"连接","min":0.5,"max":300,"value":3.0},"enable_http":{"type":"bool","label":"本地 HTTP action","tier":"adv","section":"本地接入","value":false},"enable_ws":{"type":"bool","label":"本地正向 WebSocket","tier":"adv","section":"本地接入","hint":"反向桥接不需要，留给主动连过来的 OneBot 客户端","value":false},"host":{"type":"str","label":"本地监听地址","tier":"adv","section":"本地接入","value":"127.0.0.1"},"port":{"type":"int","label":"本地监听端口","tier":"adv","section":"本地接入","min":1,"max":65535,"value":6700},"enable_http_post":{"type":"bool","label":"HTTP POST 上报","tier":"adv","section":"本地接入","value":false},"http_post_urls":{"type":"list","label":"上报地址列表","tier":"adv","section":"本地接入","value":[]},"send_connect_event":{"type":"bool","label":"发送 connect 事件","tier":"adv","section":"推送与心跳","value":true},"heartbeat_enabled":{"type":"bool","label":"发送心跳","tier":"adv","section":"推送与心跳","value":true},"heartbeat_interval":{"type":"float","label":"心跳间隔(秒)","tier":"adv","section":"推送与心跳","min":1,"max":3600,"value":15.0},"member_list_max":{"type":"int","label":"成员列表上限","tier":"adv","section":"推送与心跳","min":0,"max":100000,"value":5000},"enable_area_scoped_group_ban":{"type":"bool","label":"禁言作用于整个域","tier":"adv","section":"域语义映射","value":false},"enable_set_group_kick_as_area_kick":{"type":"bool","label":"踢人=移出域","tier":"adv","section":"域语义映射","value":false},"enable_set_group_leave_as_area_leave":{"type":"bool","label":"退群=退出域","tier":"adv","section":"域语义映射","value":false},"enable_set_group_admin_as_area_role":{"type":"bool","label":"设置管理员=域身份组","tier":"adv","section":"域语义映射","value":false},"group_admin_role_id":{"type":"int","label":"管理员身份组 ID","tier":"adv","section":"域语义映射","min":0,"max":999999,"value":0},"db_path":{"type":"str","label":"映射数据库路径","tier":"adv","section":"数据","hint":"存 group_id/self_id 映射，删除会导致对端看到的群号全部变化","value":"data/onebot_v11.sqlite3"}}},"voice":{"title":"语音对话 Agent","desc":"Oopz 语音房 Live 对话（语音进语音出）。默认 Gemini Live；可选级联兜底。","source":"VOICE_AGENT_CONFIG","fields":{"enabled":{"type":"bool","label":"启用语音 Agent","tier":"basic","value":true},"output_volume":{"type":"int","label":"bot 语音音量（%）","tier":"basic","default":50,"min":10,"max":100,"hint":"默认 50%，可调 10-100%。保存立即生效；临时静音请使用语音台的麦克风按钮。","value":50},"voice_volume_enabled":{"type":"bool","label":"语音控制音量与开闭麦","tier":"basic","default":true,"hint":"明确对 bot 说调大、调小、设为某个百分比、闭麦或开麦。音量自动保存，闭麦为临时状态；不受回复概率限制。","value":true},"backend":{"type":"select","label":"Live 模型厂商","tier":"basic","options":[{"value":"gemini_live","label":"Gemini Live（语音进语音出）"},{"value":"mimo_cascade","label":"MiMo 级联（ASR→LLM→TTS）"},{"value":"openai_realtime","label":"OpenAI Realtime（骨架）"}],"hint":"选择厂商后出现对应的模型与音色预设","value":"mimo_cascade"},"area":{"type":"str","label":"默认域 ID","tier":"basic","value":""},"channel":{"type":"str","label":"默认语音频道 ID","tier":"basic","value":""},"proxy":{"type":"select","label":"模型 API 网络代理","tier":"basic","options":[{"value":"","label":"不启用代理"},{"value":"clash","label":"启用代理 127.0.0.1:7890"},{"value":"direct","label":"强制直连"}],"allow_custom":true,"hint":"选填；模型接口走此代理，也可填 http://主机:端口；更新中心使用独立的更新 Git 代理","value":""},"gemini.api_key":{"type":"str","label":"Gemini API Key","sensitive":true,"tier":"basic","vendor":"gemini_live","hint":"或环境变量 GEMINI_API_KEY","value":null,"is_set":false},"gemini.base_url":{"type":"str","label":"Gemini 接口地址","tier":"basic","vendor":"gemini_live","hint":"Live WebSocket 端点；留空用官方默认，中转/代理可改自定义地址","placeholder":"wss://generativelanguage.googleapis.com/ws/...（默认）","value":"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"},"gemini.model":{"type":"select","label":"Gemini Live 模型","tier":"basic","vendor":"gemini_live","options":["gemini-2.0-flash-live-001","gemini-2.5-flash-live-preview","gemini-live-2.5-flash-preview"],"allow_custom":true,"value":"gemini-2.0-flash-live-001"},"gemini.voice":{"type":"select","label":"Gemini 音色","tier":"basic","vendor":"gemini_live","options":[{"value":"Puck","label":"Puck"},{"value":"Charon","label":"Charon"},{"value":"Kore","label":"Kore"},{"value":"Fenrir","label":"Fenrir"},{"value":"Aoede","label":"Aoede"},{"value":"Enceladus","label":"Enceladus"},{"value":"Iapetus","label":"Iapetus"},{"value":"Umbriel","label":"Umbriel"}],"allow_custom":true,"hint":"下拉预设音色，或选「自定义」填入任意音色名","value":"Puck"},"mimo.api_key":{"type":"str","label":"MiMo API Key","sensitive":true,"tier":"basic","vendor":"mimo_cascade","hint":"或环境变量 MIMO_API_KEY","value":null,"is_set":false},"mimo.base_url":{"type":"str","label":"MiMo 接口地址","tier":"basic","vendor":"mimo_cascade","value":"https://api.xiaomimimo.com/v1"},"mimo.asr_model":{"type":"select","label":"MiMo ASR 模型","tier":"basic","vendor":"mimo_cascade","options":["mimo-v2.5-asr"],"allow_custom":true,"value":"mimo-v2.5-asr"},"mimo.llm_model":{"type":"select","label":"MiMo LLM 模型","tier":"basic","vendor":"mimo_cascade","options":["mimo-v2.6-flash","mimo-v2.5-pro"],"allow_custom":true,"value":"mimo-v2.6-flash"},"mimo.tts_model":{"type":"select","label":"MiMo TTS 模型","tier":"basic","vendor":"mimo_cascade","options":["mimo-v2.5-tts"],"allow_custom":true,"value":"mimo-v2.5-tts"},"mimo.tts_voice":{"type":"select","label":"MiMo 音色","tier":"basic","vendor":"mimo_cascade","options":[{"value":"冰糖","label":"冰糖（活泼女声）"},{"value":"茉莉","label":"茉莉（知性女声）"},{"value":"苏打","label":"苏打（阳光男声）"},{"value":"白桦","label":"白桦（沉稳男声）"},{"value":"Mia","label":"Mia"},{"value":"Chloe","label":"Chloe"},{"value":"Milo","label":"Milo"},{"value":"Dean","label":"Dean"}],"allow_custom":true,"hint":"下拉预设音色，或选「自定义」填入任意音色名","value":"冰糖"},"openai.api_key":{"type":"str","label":"OpenAI API Key","sensitive":true,"tier":"basic","vendor":"openai_realtime","hint":"或环境变量 OPENAI_API_KEY","value":null,"is_set":false},"openai.base_url":{"type":"str","label":"OpenAI 接口地址","tier":"basic","vendor":"openai_realtime","hint":"兼容 OpenAI 的 API 根地址；留空用官方默认，中转站可改自定义","placeholder":"https://api.openai.com/v1（默认）","value":"https://api.openai.com/v1"},"openai.realtime_model":{"type":"select","label":"OpenAI Realtime 模型","tier":"basic","vendor":"openai_realtime","options":["gpt-4o-mini-realtime-preview","gpt-4o-realtime-preview"],"allow_custom":true,"value":"gpt-4o-mini-realtime-preview"},"openai.voice":{"type":"select","label":"OpenAI 音色","tier":"basic","vendor":"openai_realtime","options":[{"value":"alloy","label":"alloy"},{"value":"echo","label":"echo"},{"value":"fable","label":"fable"},{"value":"onyx","label":"onyx"},{"value":"nova","label":"nova"},{"value":"shimmer","label":"shimmer"}],"allow_custom":true,"hint":"下拉预设音色，或选「自定义」填入任意音色名","value":"alloy"},"reply_probability_percent":{"type":"int","label":"语音回复频率（概率 %）","tier":"basic","min":0,"max":100,"default":30,"hint":"默认 30，随机回应约三成发言；0 仅在命中强制关键词时接话，100 每次均允许回复。保存后对后续回合生效，快捷开口和进退房台词不受限制。Gemini Live 继续听取对话，按模型回复回合决定是否出声，不保证减少模型用量。","value":30},"force_reply_keywords":{"type":"list","label":"强制回复关键词列表","tier":"basic","default":[],"placeholder":"例如：Ooptra, 机器人, 小欧","hint":"多个词用英文逗号分隔；发言包含任一关键词时绕过回复概率（包括 0%）。忽略大小写、全半角、空格和标点；以语音转写为准，同音别名可加入列表。默认留空，保存后对后续回合生效；MiMo 启用关键词时需要先做语音识别。Gemini 延迟转写最多等待 2 秒；跨回合无法确认归属时仅按概率回复。","value":[]},"conversation_window_enabled":{"type":"bool","label":"连续对话窗口","tier":"basic","hint":"叫到关键词后，同一成员可连续追问；换房清除，需先配置强制回复关键词。","value":true},"conversation_window_seconds":{"type":"int","label":"连续追问窗口 / 秒","tier":"basic","min":1,"max":300,"value":30},"voice_leave_enabled":{"type":"bool","label":"语音控制退语音","tier":"basic","default":true,"hint":"默认开启，由 AI 判断真人是否要求 bot 退房；所有当前监听的成员均可触发。支持你出去吧、滚出去等明确对 bot 说的口语，否定和引用不执行。不受回复概率限制，先播放离场语再退出，按手动退房冷却。台词复用自动串门的分域退房预设（空列表时采用默认告别）。MiMo 开启后需要 ASR 和意图判断，可与聊天合并请求，仍可能增加模型用量。","value":true},"barge_in":{"type":"bool","label":"允许抢话打断","tier":"adv","section":"行为","value":true},"barge_in_hold_ms":{"type":"int","label":"抢话门限(毫秒)","tier":"adv","section":"行为","min":0,"max":3000,"hint":"某人要连续说话满这么久才算抢话；说完就断的咳嗽、笑声、键盘声会被忽略。0 = 关掉门限（一出声就打断，房间一热闹 bot 就说不完整句话）。房间越吵调越大，600~800 适合人多的时候。","value":300},"reply_text_to_channel":{"type":"bool","label":"字幕发到文字频道","tier":"adv","section":"行为","value":false},"silence_ms":{"type":"int","label":"静音断句(毫秒)","tier":"adv","section":"音频","min":200,"max":3000,"value":1200},"min_utterance_ms":{"type":"int","label":"最短回合(毫秒)","tier":"adv","section":"音频","min":0,"max":3000,"value":500},"reply_cooldown_ms":{"type":"int","label":"回复冷却(毫秒)","tier":"adv","section":"行为","min":0,"max":10000,"value":2500},"sample_rate_in":{"type":"int","label":"输入采样率","tier":"adv","section":"音频","min":8000,"max":48000,"value":16000},"sample_rate_out":{"type":"int","label":"输出采样率","tier":"adv","section":"音频","min":8000,"max":48000,"value":24000}}},"voice_api":{"title":"语音 HTTP API","desc":"供 AstrBot 插件或本机脚本查询语音状态、进退房、读写人格与记忆。","source":"VOICE_API_CONFIG","fields":{"enabled":{"type":"bool","label":"启用语音 API","tier":"basic","value":false},"host":{"type":"str","label":"监听地址","tier":"basic","nonempty":true,"hint":"127.0.0.1 仅本机","value":"127.0.0.1"},"port":{"type":"int","label":"监听端口","tier":"basic","min":1,"max":65535,"value":3091}}},"webui":{"title":"Web 控制台","desc":"本页面的监听地址与访问令牌；换端口后要用新地址重新打开。","source":"WEBUI_CONFIG","fields":{"update_proxy":{"type":"str","label":"更新 Git 代理","sensitive":true,"tier":"adv","section":"更新网络","default":"","hint":"部署服务器的 Git 更新出口：留空=系统环境代理，direct=直连，或完整 HTTP/HTTPS/SOCKS 代理 URL；保存后生效","value":null,"is_set":false},"update_mirror":{"type":"str","label":"更新 Git 备用镜像","tier":"adv","section":"更新网络","default":"","hint":"完整 HTTPS Git 仓库 URL（支持 Git smart HTTP），留空仅官方源；备用下载必须核对官方提交，不影响 pip/浏览器依赖","value":""},"host":{"type":"str","label":"监听地址","tier":"basic","nonempty":true,"hint":"127.0.0.1 仅本机；0.0.0.0 允许局域网访问","value":"127.0.0.1"},"port":{"type":"int","label":"监听端口","tier":"basic","min":1,"max":65535,"value":3090},"token":{"type":"str","label":"控制台密码 / 插件 API Token","nonempty":true,"max_length":1024,"sensitive":true,"tier":"basic","hint":"唯一共享密码。留空不修改；保存后立即生效并要求重新登录，外部插件也需填写同一个新 Token","value":null,"is_set":true},"enabled":{"type":"bool","label":"启用 Web 控制台","tier":"adv","section":"其他","value":true},"log_lines":{"type":"int","label":"日志默认行数","tier":"adv","section":"其他","min":50,"max":5000,"value":300}}}},"auto_visit":{"check_interval_minutes":[10,20],"daily_limit":3,"defaults":{"join_probability":0.2,"stay_minutes":[10,20],"auto_cooldown_minutes":[30,60],"manual_cooldown_minutes":[120,240],"enter_prompts":["在玩什么游戏？"],"leave_prompts":["拜拜，我下了"]},"areas":{}},"version":"3.2.1"};</script>
 <script>
 /* Offline API fixtures only. Production HTML/CSS/JS remain the canonical UI. */
 'use strict';
@@ -1081,6 +1114,7 @@ form[inert] { opacity: .65; }
     next_check_at: new Date(Date.now() + 720000).toISOString(), areas: {},
     empty_room: {state: 'occupied', remaining_seconds: null}};
   const voice = {enabled: true, joined: false, backend: 'mimo_cascade', area: '', channel: '',
+    output_volume: 50, output_muted: false,
     turns: 2, speaking: false, last_user_text: '今天一起玩什么？', last_reply: '你们想玩合作游戏吗？',
     model_connection: {state: 'ready'}, voice_observation: {recent_decisions: []}};
   const areas = [{id: 'demo-area-1', name: '朋友的游戏小屋'}, {id: 'demo-area-2', name: '周末闲聊'}];
@@ -1164,6 +1198,10 @@ form[inert] { opacity: .65; }
         }
         if (body.updates?.voice?.backend) voice.backend = body.updates.voice.backend;
         if (body.updates?.voice?.enabled !== undefined) voice.enabled = body.updates.voice.enabled;
+        if (body.updates?.voice?.output_volume !== undefined) {
+          voice.output_volume = body.updates.voice.output_volume;
+          voice.output_muted = false;
+        }
         if (body.updates?.webui?.token !== undefined) {
           if (!body.updates.webui.token) throw {status: 400, error: '演示密码不可为空'};
           password = body.updates.webui.token; authenticated = false;
@@ -1179,11 +1217,25 @@ form[inert] { opacity: .65; }
     if (endpoint === '/api/oopz/areas') return {areas, default_area: areas[0].id, default_channel: channels[0].id};
     if (endpoint === '/api/oopz/channels') return {channels};
     if (endpoint === '/api/voice/status') return {status: voice, auto_visit: visitStatus};
+    if (endpoint === '/api/voice/output') {
+      if (body.volume !== undefined) {
+        if (!Number.isInteger(body.volume) || body.volume < 10 || body.volume > 100) throw {status: 400, error: '音量须为 10-100 的整数'};
+        voice.output_volume = body.volume;
+        voice.output_muted = false;
+        groups.voice.fields.output_volume.value = body.volume;
+      }
+      if (body.muted !== undefined) {
+        if (!voice.joined || typeof body.muted !== 'boolean') throw {status: 400, error: '进房后才能控制麦克风'};
+        voice.output_muted = body.muted;
+      }
+      return {volume: voice.output_volume, muted: voice.output_muted, saved: body.volume !== undefined,
+        message: body.muted !== undefined ? (voice.output_muted ? '麦克风已关闭，仍在接听' : '麦克风已打开') : '语音音量已保存'};
+    }
     if (endpoint === '/api/voice/join') {
-      Object.assign(voice, {joined: true, area: body.area || areas[0].id, channel: body.channel || channels[0].id, join_source: 'manual'});
+      Object.assign(voice, {joined: true, output_muted: false, area: body.area || areas[0].id, channel: body.channel || channels[0].id, join_source: 'manual'});
       return {status: voice};
     }
-    if (endpoint === '/api/voice/leave') {Object.assign(voice, {joined: false, area: '', channel: '', join_source: null}); return {status: voice};}
+    if (endpoint === '/api/voice/leave') {Object.assign(voice, {joined: false, output_muted: false, area: '', channel: '', join_source: null}); return {status: voice};}
     if (endpoint === '/api/voice/stop') {voice.speaking = false; return {};}
     if (endpoint === '/api/voice/speak') {
       if (!voice.joined) throw {status: 400, error: '请先在演示中进房'};
@@ -1553,6 +1605,22 @@ form[inert] { opacity: .65; }
           <input type="hidden" id="join-channel" value="" />
         </section>
 
+        <section class="card voice-output-card">
+          <header class="card-head">
+            <h3>麦克风与音量</h3>
+            <span class="hint" id="voice-output-state" aria-live="polite">读取状态…</span>
+          </header>
+          <div class="voice-output-controls">
+            <button class="btn ghost" id="voice-mic-toggle" type="button" aria-pressed="false" disabled>关闭麦克风</button>
+            <div class="voice-volume-control">
+              <label for="voice-output-volume">语音音量 <output id="voice-volume-value" for="voice-output-volume">50%</output></label>
+              <input id="voice-output-volume" type="range" min="10" max="100" step="1" value="50" aria-describedby="voice-output-hint" />
+            </div>
+            <button class="btn primary" id="voice-volume-save" type="button" disabled>保存音量</button>
+          </div>
+          <p class="hint" id="voice-output-hint">音量 10%–100%，默认 50%，保存后重启保留。闭麦只暂停 bot 发声，仍可听取“开麦”；调节音量会自动开麦，退房后恢复打开。音乐音量独立。</p>
+        </section>
+
         <div class="tiles">
           <article class="tile">
             <header><i class="dot"></i>模型</header>
@@ -1913,13 +1981,37 @@ async function api(path, opts = {}) {
 }
 
 function toast(title, text, kind) {
+  const host = $('toasts');
+  const key = JSON.stringify([title, text || '', kind || '']);
+  const existing = [...host.children].find(item => item.dataset.key === key);
+  if (existing) existing.remove();
   const box = document.createElement('div');
   box.className = 'toast ' + (kind || '');
-  box.innerHTML = '<b></b><span></span>';
+  box.dataset.key = key;
+  box.setAttribute('role', kind === 'err' ? 'alert' : 'status');
+  box.innerHTML = '<b></b><span></span><button class="toast-close" type="button" aria-label="关闭通知">×</button>';
   box.querySelector('b').textContent = title;
   box.querySelector('span').textContent = text || '';
-  $('toasts').appendChild(box);
-  setTimeout(() => box.remove(), kind === 'err' ? 6000 : 3600);
+  host.appendChild(box);
+  while (host.childElementCount > 3) host.firstElementChild.remove();
+  host.scrollTop = host.scrollHeight;
+  positionToasts();
+  let timer;
+  const dismiss = () => { clearTimeout(timer); box.remove(); };
+  const resume = () => { clearTimeout(timer); timer = setTimeout(dismiss, kind === 'err' ? 8000 : 4000); };
+  box.querySelector('button').addEventListener('click', dismiss);
+  box.addEventListener('focusin', () => clearTimeout(timer));
+  box.addEventListener('focusout', resume);
+  resume();
+}
+
+function positionToasts() {
+  const host = $('toasts');
+  if (!host?.childElementCount) return;
+  const bar = $('savebar');
+  const bounds = bar && !bar.hidden ? bar.getBoundingClientRect() : null;
+  const offset = bounds?.width && bounds.top < innerHeight ? Math.max(18, Math.ceil(innerHeight - bounds.top + 12)) : 18;
+  host.style.setProperty('--toast-offset', offset + 'px');
 }
 
 function fmtDuration(seconds) {
@@ -2001,20 +2093,64 @@ function copyText(value) {
   return Promise.resolve();
 }
 
+let dialogPending = false;
+let cancelActiveDialog = null;
+
 function confirmDialog(title, message, yesLabel) {
+  if (dialogPending) return Promise.resolve(false);
+  dialogPending = true;
   return new Promise((resolve) => {
+    const previousFocus = document.activeElement;
+    const backdrop = $('dialog');
+    const panel = backdrop.querySelector('.dialog');
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-modal', 'true');
+    panel.setAttribute('aria-labelledby', 'dialog-title');
+    panel.setAttribute('aria-describedby', 'dialog-text');
+    const surfaces = [$('screen-app'), $('screen-login')].map(el => ({el, inert: el.inert}));
+    surfaces.forEach(({el}) => { el.inert = true; });
     $('dialog-title').textContent = title;
     $('dialog-text').textContent = message;
     $('dialog-yes').textContent = yesLabel || '确定';
-    show($('dialog'), true);
+    show(backdrop, true);
     const done = (ok) => {
-      show($('dialog'), false);
+      show(backdrop, false);
+      dialogPending = false;
+      cancelActiveDialog = null;
+      surfaces.forEach(({el, inert}) => { el.inert = inert; });
+      document.removeEventListener('keydown', onKey, true);
       $('dialog-yes').onclick = $('dialog-no').onclick = null;
+      if (previousFocus && previousFocus.isConnected) previousFocus.focus({preventScroll: true});
       resolve(ok);
     };
+    const onKey = (event) => {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); done(false); }
+      if (event.key === 'Tab') {
+        event.preventDefault();
+        const next = document.activeElement === $('dialog-no') ? $('dialog-yes') : $('dialog-no');
+        next.focus();
+      }
+    };
+    document.addEventListener('keydown', onKey, true);
+    cancelActiveDialog = () => done(false);
     $('dialog-yes').onclick = () => done(true);
     $('dialog-no').onclick = () => done(false);
+    $('dialog-no').focus();
   });
+}
+
+async function withButtonBusy(button, action, label) {
+  if (button.disabled) return;
+  const previousLabel = button.textContent;
+  button.disabled = true;
+  button.setAttribute('aria-busy', 'true');
+  button.textContent = label;
+  try { return await action(); }
+  finally {
+    button.disabled = false;
+    button.removeAttribute('aria-busy');
+    button.textContent = previousLabel;
+  }
 }
 
 function credsUsable(creds) {
@@ -2059,6 +2195,7 @@ let state = {};
 let loginGate = 'token';
 
 function showLogin(result) {
+  if (cancelActiveDialog) cancelActiveDialog();
   stopPolling();
   stopLogStream();
   clearTimeout(loginPollTimer);
@@ -2146,7 +2283,7 @@ function enterApp() {
   setupNav();
   refreshCredentials();
   loadLogFiles();
-  switchPage('overview');
+  switchPage(pageFromLocation(), '', {replace: true});
   startPolling();
 }
 
@@ -2159,6 +2296,7 @@ async function logout() {
   stopPolling();
   dirty = {};
   configSchema = null;
+  if (window.resetVoiceOutput) window.resetVoiceOutput();
   logBuffer = [];
   state = {};
   updateSavebar();
@@ -2168,10 +2306,54 @@ async function logout() {
 /* ───────── 导航 ───────── */
 
 let navReady = false;
+const PAGE_PATHS = {overview: '/overview', logs: '/logs', voice: '/voice', maintenance: '/maintenance', config: '/config', account: '/account'};
+let pageHistoryIndex = Number(history.state?.ooptraPageIndex) || 0;
+let restoringPageHistory = false;
+let pageHistoryRequest = 0;
+
+function pageFromLocation() {
+  const path = location.protocol === 'file:' ? location.hash.replace(/^#/, '') : location.pathname;
+  return Object.keys(PAGE_PATHS).find(name => PAGE_PATHS[name] === path) || 'overview';
+}
+
+function writePageLocation(name, replace) {
+  const url = new URL(location.href);
+  if (url.protocol === 'file:') url.hash = PAGE_PATHS[name];
+  else {
+    url.pathname = replace && name === 'overview' && url.pathname === '/' ? '/' : PAGE_PATHS[name];
+    url.hash = '';
+  }
+  const same = url.href === location.href;
+  if (!replace && same) return;
+  if (!replace) pageHistoryIndex++;
+  history[replace ? 'replaceState' : 'pushState']({...history.state, ooptraPageIndex: pageHistoryIndex}, '', url);
+}
+
+async function followPageHistory() {
+  const request = ++pageHistoryRequest;
+  if (restoringPageHistory) { restoringPageHistory = false; return; }
+  const nextIndex = Number(history.state?.ooptraPageIndex);
+  if ($('screen-app').hidden) { if (Number.isFinite(nextIndex)) pageHistoryIndex = nextIndex; return; }
+  const current = document.querySelector('.page.is-active')?.id.replace('page-', '') || 'overview';
+  const changed = await switchPage(pageFromLocation(), '', {fromHistory: true});
+  if (request !== pageHistoryRequest) return;
+  if (changed) { if (Number.isFinite(nextIndex)) pageHistoryIndex = nextIndex; }
+  else if (Number.isFinite(nextIndex) && nextIndex !== pageHistoryIndex) {
+    restoringPageHistory = true;
+    history.go(pageHistoryIndex - nextIndex);
+  } else writePageLocation(current, true);
+}
 
 function setupNav() {
   if (navReady) return;
   navReady = true;
+  window.addEventListener('resize', positionToasts);
+  window.addEventListener('scroll', positionToasts, {passive: true});
+  window.addEventListener('popstate', followPageHistory);
+  if (location.protocol === 'file:') window.addEventListener('hashchange', () => {
+    // Hash edits emit popstate too; the active page check avoids opening two dialogs.
+    if (!navigationPending && !isPage(pageFromLocation())) followPageHistory();
+  });
   document.querySelectorAll('.nav-item[data-page]').forEach((item) => {
     item.addEventListener('click', () => switchPage(item.dataset.page, item.dataset.tab || ''));
   });
@@ -2189,14 +2371,18 @@ function setupNav() {
 
 let navigationPending = false;
 
-async function switchPage(name, tab) {
-  if (navigationPending) return;
+async function switchPage(name, tab, options = {}) {
+  if (!Object.prototype.hasOwnProperty.call(PAGE_PATHS, name)) name = 'overview';
+  if (navigationPending) return false;
   if (name !== 'config' && isPage('config') && draftCount()) {
     navigationPending = true;
     const leave = await confirmDialog('配置尚未保存', '离开后草稿仍会保留在本页，返回配置可继续编辑。刷新或关闭页面前请保存。', '保留草稿并离开');
     navigationPending = false;
-    if (!leave) return;
+    if (!leave) return false;
+    if (options.fromHistory && pageFromLocation() !== name) return false;
   }
+  const changed = !isPage(name);
+  if (!options.fromHistory) writePageLocation(name, !!options.replace);
   const meta = PAGE_META[name] || PAGE_META.overview;
   document.querySelectorAll('.nav-item[data-page]').forEach((item) => {
     const match = item.dataset.page === name && (!item.dataset.tab || item.dataset.tab === (tab || ''));
@@ -2223,28 +2409,40 @@ async function switchPage(name, tab) {
     if (tab) switchVoiceTab(tab);
     refreshVoiceStatus();
   }
+  if (changed) window.scrollTo(0, 0);
+  return true;
 }
 
 function renderPageTools(name) {
   const tools = $('page-tools');
   if (name === 'overview') {
     tools.innerHTML = '<span class="chip" id="updated-at">—</span><button class="btn ghost sm" id="tool-refresh">立即刷新</button>';
-    $('tool-refresh').addEventListener('click', () => { refreshStatus(); toast('已刷新', '状态已重新读取', 'ok'); });
+    const button = $('tool-refresh');
+    button.addEventListener('click', () => withButtonBusy(button, async () => {
+      if (await refreshStatus()) toast('已刷新', '状态已重新读取', 'ok');
+      else if (!$('screen-app').hidden) toast('刷新失败', '状态尚未更新，请检查后端连接后重试。', 'err');
+    }, '刷新中…'));
   } else if (name === 'account') {
     tools.innerHTML = '<button class="btn ghost sm" id="tool-cred">刷新凭据</button>';
-    $('tool-cred').addEventListener('click', refreshCredentials);
+    const button = $('tool-cred');
+    button.addEventListener('click', () => withButtonBusy(button, refreshCredentials, '读取中…'));
   } else if (name === 'config') {
     tools.innerHTML = '<button class="btn ghost sm" id="tool-adv">高级选项</button>' +
       '<button class="btn ghost sm" id="tool-reload">重新读取</button>';
     const adv = $('tool-adv');
     adv.classList.toggle('toggle-on', showAdvanced);
+    adv.setAttribute('aria-pressed', String(showAdvanced));
     adv.addEventListener('click', () => {
       showAdvanced = !showAdvanced;
       localStorage.setItem(ADV_KEY, showAdvanced ? '1' : '0');
       adv.classList.toggle('toggle-on', showAdvanced);
+      adv.setAttribute('aria-pressed', String(showAdvanced));
       renderConfig();
     });
-    $('tool-reload').addEventListener('click', async () => { await loadConfig(); toast('已重新读取', '保留当前未保存的草稿', 'ok'); });
+    const reload = $('tool-reload');
+    reload.addEventListener('click', () => withButtonBusy(reload, async () => {
+      if (await loadConfig()) toast('已重新读取', '保留当前未保存的草稿', 'ok');
+    }, '读取中…'));
   } else {
     tools.innerHTML = '';
   }
@@ -2357,10 +2555,13 @@ async function refreshStatus() {
   try {
     state = { ...state, ...(await api('/api/status')) };
   } catch (err) {
-    if (err instanceof AuthError) { stopPolling(); return showLogin({ gate: 'token' }); }
+    if (err instanceof AuthError) { stopPolling(); showLogin({ gate: 'token' }); return false; }
     text('verdict-title', '读取状态失败');
     text('verdict-detail', err.message);
-    return;
+    $('verdict').dataset.tone = 'err';
+    text('updated-at', '连接失败 · 显示上次状态');
+    renderRailMeta('err', '状态读取失败');
+    return false;
   }
   renderPageToolsIfNeeded();
   renderVersion();
@@ -2377,6 +2578,7 @@ async function refreshStatus() {
     if ($('vpane-auto-visit').classList.contains('is-active')) await refreshAutoVisit(false);
   }
   if (isPage('maintenance') && window.refreshMaintenance) await window.refreshMaintenance();
+  return true;
 }
 
 const isPage = (name) => document.querySelector('.page.is-active')?.id === 'page-' + name;
@@ -2450,7 +2652,7 @@ function logNode(raw) {
   let time = '', level = '', body = raw;
   if (match) { time = match[1].slice(11); level = match[3]; body = '[' + match[2] + '] ' + match[4]; }
   const node = document.createElement('div');
-  node.className = 'ln ' + levelTone(level);
+  node.className = 'ln ' + levelTone(level) + (match ? '' : ' is-plain');
   node.innerHTML = '<span class="ln-time">' + escapeHtml(time) + '</span>' +
     '<span class="ln-level">' + escapeHtml(level || '·') + '</span>' +
     '<span class="ln-body">' + highlight(escapeHtml(body), logTerms) + '</span>';
@@ -2775,14 +2977,16 @@ async function loadConfig() {
   const request = ++configRequest;
   try {
     const data = await api('/api/config');
-    if (request !== configRequest) return;
+    if (request !== configRequest) return false;
     configSchema = data.groups || {};
     text('config-status', data.path);
     renderConfig();
     updateSavebar();
+    return true;
   } catch (err) {
     text('config-status', err.message);
     toast('配置读取失败', err.message, 'err');
+    return false;
   }
 }
 
@@ -2810,6 +3014,7 @@ function renderConfigTabs() {
       if (!btn) return;
       localStorage.setItem('ooptra.preview.cfgtab', btn.dataset.tab);
       renderConfig();
+      $('config-tabs').querySelector('[data-tab="' + btn.dataset.tab + '"]')?.focus();
     });
   }
   const current = activeConfigTab();
@@ -2819,7 +3024,7 @@ function renderConfigTabs() {
     ['system', '系统'],
   ].map(([id, label]) =>
     '<button type="button" class="subtab' + (current === id ? ' is-active' : '') +
-    '" data-tab="' + id + '">' + label + '</button>'
+    '" data-tab="' + id + '" aria-pressed="' + (current === id) + '">' + label + '</button>'
   ).join('');
 }
 
@@ -2958,6 +3163,7 @@ function selectFieldRow(group, field, meta, wrap) {
 
   const select = wrap.querySelector('select');
   const custom = wrap.querySelector('.cfg-custom');
+  if (custom) custom.setAttribute('aria-label', (meta.label || field) + '：自定义值');
 
   if (inPreset) {
     select.value = current;
@@ -3019,6 +3225,7 @@ function markDirty(group, field, meta, value, wrap) {
 function updateSavebar() {
   const count = draftCount();
   show($('savebar'), count > 0);
+  positionToasts();
   if (count) text('savebar-text', '有 ' + count + ' 项改动待保存');
   const labels = Object.entries(dirty).flatMap(([group, fields]) => Object.keys(fields).map(field => configSchema?.[group]?.fields?.[field]?.label || field));
   text('config-summary', count ? '待保存：' + labels.join('、') : '');
@@ -3056,11 +3263,10 @@ async function saveConfig(restartAfter) {
       return;
     }
     const notes = result.notes || [];
-    if (notes.length) {
-      // 语音配置会真正热应用，把后端回传的结果如实告诉用户
-      toast('已保存并热生效', notes.join('；'), 'ok');
+    if (result.hot_reload_failed) {
+      toast('配置已保存，部分未生效', notes.join('；') || '设置已写入，请检查连接状态和日志后重试。', 'warn');
     } else {
-      toast('配置已保存', fields, 'ok');
+      toast('配置已保存', notes.length ? notes.join('；') : fields, 'ok');
     }
     await loadConfig();
     if (restartAfter) {
@@ -3114,6 +3320,80 @@ let voiceAreaNames = {};
 let voiceChannelNames = {};
 let voiceDefaultArea = '';
 let voiceDefaultChannel = '';
+let voiceOutputState = null;
+let voiceVolumeDraft = null;
+let voiceOutputBusy = false;
+let voiceOutputRevision = 0;
+let voiceOutputOperation = 0;
+
+function resetVoiceOutput() {
+  voiceOutputOperation++;
+  voiceOutputRevision++;
+  voiceOutputState = null;
+  voiceVolumeDraft = null;
+  voiceOutputBusy = false;
+  renderVoiceOutput();
+}
+
+function renderVoiceOutput(st) {
+  if (st) voiceOutputState = st;
+  const state = voiceOutputState;
+  const mic = $('voice-mic-toggle');
+  const slider = $('voice-output-volume');
+  const save = $('voice-volume-save');
+  if (!mic || !slider || !save) return;
+  const available = state && Number.isInteger(state.output_volume);
+  const muted = !!state?.output_muted;
+  text('voice-output-state', !available ? '状态暂不可用' : !state.joined ? '未进房' : muted ? '麦克风关闭 · 仍在接听' : '麦克风打开');
+  mic.textContent = muted ? '打开麦克风' : '关闭麦克风';
+  mic.setAttribute('aria-pressed', String(muted));
+  mic.disabled = voiceOutputBusy || !available || !state.joined;
+  slider.disabled = voiceOutputBusy || !available;
+  slider.value = voiceVolumeDraft ?? state?.output_volume ?? 50;
+  text('voice-volume-value', slider.value + '%');
+  save.disabled = voiceOutputBusy || !available || voiceVolumeDraft === null || (voiceVolumeDraft === state.output_volume && !muted);
+  save.textContent = voiceOutputBusy ? '应用中…' : '保存音量';
+}
+
+async function changeVoiceOutput(body) {
+  if (voiceOutputBusy) return;
+  const operation = ++voiceOutputOperation;
+  voiceOutputRevision++;
+  voiceOutputBusy = true;
+  renderVoiceOutput();
+  try {
+    const result = await api('/api/voice/output', {method: 'POST', body});
+    if (operation !== voiceOutputOperation) return;
+    voiceOutputRevision++;
+    if (body.volume !== undefined) {
+      voiceVolumeDraft = null;
+      // A second editor may contain unsaved fields; refresh its volume only when clean.
+      if (configSchema?.voice?.fields?.output_volume) {
+        configSchema.voice.fields.output_volume.value = result.volume;
+        if (!draftCount()) renderConfig();
+      }
+    }
+    renderVoiceOutput({...voiceOutputState, output_volume: result.volume, output_muted: result.muted});
+    toast('已应用', result.message, 'ok');
+  } catch (err) {
+    if (operation !== voiceOutputOperation) return;
+    voiceOutputRevision++;
+    toast('语音输出设置失败', err.message, 'err');
+    // Re-read the actual state, including a persisted volume whose live application failed.
+    try {
+      const data = await api('/api/voice/status');
+      if (operation === voiceOutputOperation) renderVoiceOutput(data.status || {});
+    } catch (_) {
+      if (operation === voiceOutputOperation) {voiceOutputState = null; renderVoiceOutput();}
+    }
+  } finally {
+    if (operation === voiceOutputOperation) {
+      voiceOutputRevision++;
+      voiceOutputBusy = false;
+      renderVoiceOutput();
+    }
+  }
+}
 
 function currentJoinArea() {
   const el = $('join-area');
@@ -3246,6 +3526,7 @@ function switchVoiceTab(tab) {
   const name = tab || 'session';
   document.querySelectorAll('#voice-tabs .subtab').forEach((el) => {
     el.classList.toggle('is-active', el.dataset.tab === name);
+    el.setAttribute('aria-pressed', String(el.dataset.tab === name));
   });
   document.querySelectorAll('.vpane').forEach((el) => {
     el.classList.toggle('is-active', el.id === 'vpane-' + name);
@@ -3262,6 +3543,12 @@ function switchVoiceTab(tab) {
 function setupVoice() {
   if (voiceReady) return;
   voiceReady = true;
+  $('voice-mic-toggle').onclick = () => changeVoiceOutput({muted: !voiceOutputState?.output_muted});
+  $('voice-output-volume').addEventListener('input', event => {
+    voiceVolumeDraft = Number(event.target.value);
+    renderVoiceOutput();
+  });
+  $('voice-volume-save').onclick = () => changeVoiceOutput({volume: voiceVolumeDraft});
   const tabs = $('voice-tabs');
   if (tabs) {
     tabs.addEventListener('click', (event) => {
@@ -3369,9 +3656,11 @@ async function voiceSpeak() {
 
 async function refreshVoiceStatus() {
   setupVoice();
+  const outputRevision = voiceOutputRevision;
   try {
     const data = await api('/api/voice/status');
     const st = data.status || {};
+    if (outputRevision === voiceOutputRevision && !voiceOutputBusy) renderVoiceOutput(st);
     const joined = !!st.joined;
     const live = String(st.backend || '').includes('gemini');
     text('speak-title', live ? 'AI 语音回答' : '直接朗读');
@@ -3407,6 +3696,10 @@ async function refreshVoiceStatus() {
     renderTranscript(st);
     renderVoiceDecisions(st.voice_observation || data.voice_observation);
   } catch (err) {
+    if (outputRevision === voiceOutputRevision && !voiceOutputBusy) {
+      voiceOutputState = null;
+      renderVoiceOutput();
+    }
     const detail = $('voice-verdict-detail');
     if (detail) detail.textContent = err.message;
   }

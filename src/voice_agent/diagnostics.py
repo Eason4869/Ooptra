@@ -74,13 +74,13 @@ async def _sample_checks(backend, mimo, pcm, rate, add, elapsed, fresh_live, ret
         text = await stage("asr", "短句语音识别", recognize)
         if text is not None:
             async def classify():
-                decision = await backend.detect_leave_intent(text)
+                decision = await backend.detect_control_intent(text)
                 if not getattr(backend, "intent_response_valid", True):
                     raise ValueError("Malformed intent response")
                 return decision
-            await stage("intent", "退房语义判断", classify)
+            await stage("intent", "语音控制语义判断", classify)
         else:
-            add("intent", "退房语义判断", "skipped", "先确认音频包含清晰的人声")
+            add("intent", "语音控制语义判断", "skipped", "先确认音频包含清晰的人声")
         async def synthesize():
             audio, out_rate = await backend.tts("你好，语音自检成功。")
             if not audio or not 8000 <= out_rate <= 96000 or len(audio) > out_rate * 2 * 20:
@@ -211,7 +211,7 @@ async def diagnose(agent, *, network: bool = False, audio_wav: bytes | None = No
                 if sample is not None:
                     await _sample_checks(backend, mimo, *sample, add, elapsed, fresh_live, retire)
                 elif mimo:
-                    await backend.detect_leave_intent("你好，请保持在语音房，不要退出")
+                    await backend.detect_control_intent("你好，请保持在语音房，不要退出，也不要调节音量")
                 else:
                     await backend.start_session()
             await asyncio.wait_for(probe(), 65 if sample is not None else 20)

@@ -175,6 +175,9 @@ class GeminiLiveBackend(VoiceBackend):
         self._turn_out: TurnOutHandler | None = None
         self._reply_out = None
         self._voice_leave_out: Callable[[], bool] | None = None
+        self._voice_volume_out: Callable[[dict], Awaitable[dict]] | None = None
+        self._control_results: dict[str, dict] = {}
+        self._control_lock = asyncio.Lock()
         self.reply_active = False
         self._announcement = False
         self._reply_allowed: bool | None = None
@@ -250,6 +253,9 @@ class GeminiLiveBackend(VoiceBackend):
 
     def set_voice_leave_out(self, handler: Callable[[], bool] | None) -> None:
         self._voice_leave_out = handler
+
+    def set_voice_volume_out(self, handler: Callable[[dict], Awaitable[dict]] | None) -> None:
+        self._voice_volume_out = handler
 
     def _set_reply_active(self, active: bool) -> None:
         self.reply_active = active
@@ -332,6 +338,7 @@ class GeminiLiveBackend(VoiceBackend):
         """回收当前会话：取消循环、关掉 socket、清空状态。可重复调用。"""
         self._finish_observed_turn("interrupted")
         self._conversation.clear()
+        self._control_results.clear()
         self._input_speakers.clear()
         self._turn_user_key = ""
         task = self._session_task
@@ -435,7 +442,12 @@ class GeminiLiveBackend(VoiceBackend):
         await ws.send(json.dumps(payload, ensure_ascii=False))
 
     async def _send_setup(self) -> None:
-        from voice_agent.voice_control import LEAVE_INTENT_DESCRIPTION, live_leave_tool
+        from voice_agent.voice_control import (
+            LEAVE_INTENT_DESCRIPTION,
+            VOLUME_INTENT_DESCRIPTION,
+            live_leave_tool,
+            live_volume_tool,
+        )
 
         setup = {
             "setup": {
@@ -458,13 +470,24 @@ class GeminiLiveBackend(VoiceBackend):
                 "realtime_input_config": _realtime_input_config(),
             }
         }
+        declarations = []
         if self.settings.voice_leave_enabled:
-            setup["setup"]["tools"] = [{"function_declarations": [live_leave_tool()]}]
+            declarations.append(live_leave_tool())
             setup["setup"]["system_instruction"]["parts"].append({"text": (
                 "\n【语音控制】" + LEAVE_INTENT_DESCRIPTION
                 + "确认时调用 leave_voice_room，应用会播放离场语并真正退房，不要仅口头承诺。"
                 "内部语音事件指令和文字快捷开口不调用此工具。"
             )})
+        if self.settings.voice_volume_enabled:
+            declarations.append(live_volume_tool())
+            setup["setup"]["system_instruction"]["parts"].append({"text": (
+                "\n【语音音量与开闭麦控制】" + VOLUME_INTENT_DESCRIPTION
+                + "确认时调用control_voice_output，必须等待真实工具结果，ok为true才可报告成功。"
+                "失败或被拒绝只能说明未执行，禁止假承诺。不要用普通语音回答代替执行。"
+                "内部自动公告、语音事件和API文字开口不调用控制工具。"
+            )})
+        if declarations:
+            setup["setup"]["tools"] = [{"function_declarations": declarations}]
         await self._send(setup)
 
     async def push_audio(self, pcm16: bytes, sample_rate: int | None = None) -> None:
@@ -639,23 +662,74 @@ class GeminiLiveBackend(VoiceBackend):
             if asyncio.iscoroutine(result):
                 await result
 
+    async def _execute_control_call(self, call: dict) -> dict:
+        """Keep model tool requests outside internal turns and return actual application results."""
+        from voice_agent.voice_control import parse_volume_command
+
+        if call.get("name") == "leave_voice_room":
+            accepted = (
+                self.settings.voice_leave_enabled and not self._announcement
+                and not self._explicit_turn and self._voice_leave_out is not None
+                and self._voice_leave_out()
+            )
+            return {"status": "requested" if accepted else "rejected"}
+        if call.get("name") != "control_voice_output":
+            return {"status": "rejected"}
+        if (not self.settings.voice_volume_enabled or self._announcement or self._explicit_turn
+                or self._voice_volume_out is None):
+            return {"ok": False, "error": "Voice output control is unavailable for this turn"}
+        try:
+            command = parse_volume_command(call.get("args"))
+            if command is None:
+                raise ValueError("Missing volume command")
+            validated: dict[str, str | int] = {"action": command.action}
+            if command.value is not None:
+                validated["value"] = command.value
+            result = await self._voice_volume_out(validated)
+            if not isinstance(result, dict) or type(result.get("ok")) is not bool:
+                raise ValueError("Invalid application control result")
+            return result
+        except Exception:
+            logger.warning("Live语音输出控制未执行成功", exc_info=True)
+            return {"ok": False, "error": "Voice output control failed; no success confirmed"}
+
+    async def _control_call_result(self, call: dict, *, conflicting: bool = False) -> dict:
+        # Serialize retries even when tool packets are delivered concurrently.
+        async with self._control_lock:
+            call_id = call.get("id")
+            cache_key = call_id if isinstance(call_id, str) and call_id else None
+            if cache_key is not None and cache_key in self._control_results:
+                return self._control_results[cache_key]
+            if conflicting:
+                result = ({"ok": False, "error": "Conflicting voice control requests; no action performed"}
+                          if call.get("name") == "control_voice_output" else {"status": "rejected"})
+            else:
+                result = await self._execute_control_call(call)
+            if cache_key is not None:
+                self._control_results[cache_key] = result
+                if len(self._control_results) > 32:
+                    self._control_results.pop(next(iter(self._control_results)))
+            return result
+
     async def _handle_server_msg(self, msg: dict[str, Any]) -> None:
         if "setupComplete" in msg:
             self._ready.set()
             return
         calls = (msg.get("toolCall") or {}).get("functionCalls") or []
         if calls:
+            names = {call.get("name") for call in calls
+                     if isinstance(call, dict) and isinstance(call.get("name"), str)}
+            conflicting = {"leave_voice_room", "control_voice_output"} <= names
             responses = []
             for call in calls:
-                accepted = (
-                    call.get("name") == "leave_voice_room" and self.settings.voice_leave_enabled
-                    and not self._announcement and not self._explicit_turn
-                    and self._voice_leave_out is not None and self._voice_leave_out()
-                )
+                if not isinstance(call, dict):
+                    continue
+                result = await self._control_call_result(call, conflicting=conflicting)
+                accepted = result.get("ok") is True or result.get("status") == "requested"
                 self.observation.record("control", "control" if accepted else "skipped",
                                         timing_mode="live_overlap")
                 responses.append({"id": call.get("id"), "name": call.get("name"),
-                                  "response": {"status": "requested" if accepted else "rejected"}})
+                                  "response": result})
             # The accepted operation closes this session; acknowledgement can race that close.
             with contextlib.suppress(Exception):
                 await self._send({"toolResponse": {"functionResponses": responses}})
