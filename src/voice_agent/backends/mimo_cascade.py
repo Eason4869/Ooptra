@@ -256,6 +256,13 @@ def resample_pcm16(pcm: bytes, src_rate: int, dst_rate: int) -> bytes:
     return struct.pack("<" + "h" * len(out), *out)
 
 
+def _parse_decision_json(raw: str):
+    # Some compatible endpoints wrap valid JSON in a whole Markdown code block.
+    # Do not extract objects from prose or relax control-field validation.
+    fenced = re.fullmatch(r"\s*```(?:json)?[ \t]*\r?\n(.*?)\r?\n```\s*", raw, re.S | re.I)
+    return json.loads(fenced.group(1) if fenced else raw)
+
+
 class MimoCascadeBackend(VoiceBackend):
     name = "mimo_cascade"
 
@@ -349,6 +356,9 @@ class MimoCascadeBackend(VoiceBackend):
                 + CONTROL_DECISION_FORMAT
                 + '对当前用户发言同时判断控制意图并生成回复，JSON另加reply字符串字段。'
                 + '有任何控制意图时reply必须为空，禁止口头承诺控制成功，真实执行由系统处理。'
+                + '必须包含leave、volume、reply三个字段。无控制示例：'
+                + '{"leave": false, "volume": null, "reply": "你好呀。"}。'
+                + '退房示例：{"leave": true, "volume": null, "reply": ""}。'
                 + "JSON 格式要求优先于正文输出规则，reply 字段仍遵守语音房规则。"
             )
         body = {
@@ -361,6 +371,8 @@ class MimoCascadeBackend(VoiceBackend):
             # 兜底，正常情况由上面的输出规则约束长度
             "max_tokens": 256,
         }
+        if _with_intent:
+            body["response_format"] = {"type": "json_object"}
         session = await self._http()
         url = self.settings.mimo_base_url.rstrip("/") + "/chat/completions"
         async with session.post(
@@ -368,7 +380,7 @@ class MimoCascadeBackend(VoiceBackend):
         ) as resp:
             data = await resp.json(content_type=None)
             if resp.status >= 400:
-                raise RuntimeError(f"LLM failed HTTP {resp.status}: {data}")
+                raise RuntimeError(f"LLM failed HTTP {resp.status}")
         choices = data.get("choices") or []
         if not choices:
             return ""
@@ -393,7 +405,7 @@ class MimoCascadeBackend(VoiceBackend):
     async def chat_with_intent(self, user_text: str, *, user_key: str = "") -> tuple[VoiceControlDecision, str]:
         raw = await self.chat(user_text, user_key=user_key, _with_intent=True)
         try:
-            decision = json.loads(raw)
+            decision = _parse_decision_json(raw)
         except (ValueError, TypeError) as exc:
             raise ValueError("Invalid combined voice decision") from exc
         if not isinstance(decision, dict) or not isinstance(decision.get("reply"), str):
@@ -414,6 +426,7 @@ class MimoCascadeBackend(VoiceBackend):
                 {"role": "user", "content": user_text},
             ],
             "stream": False, "thinking": {"type": "disabled"}, "max_tokens": 64,
+            "response_format": {"type": "json_object"},
         }
         session = await self._http()
         url = self.settings.mimo_base_url.rstrip("/") + "/chat/completions"
@@ -425,7 +438,7 @@ class MimoCascadeBackend(VoiceBackend):
                 raise RuntimeError(f"voice intent failed HTTP {resp.status}")
         raw = str((((data.get("choices") or [{}])[0] or {}).get("message") or {}).get("content") or "")
         try:
-            decision = parse_control_decision(json.loads(raw))
+            decision = parse_control_decision(_parse_decision_json(raw))
         except (ValueError, TypeError):
             logger.warning("语音控制意图返回不合法，本轮不执行控制")
             return VoiceControlDecision()
@@ -548,8 +561,10 @@ class MimoCascadeBackend(VoiceBackend):
         selected = not short and (preselected or addressed or allow_reply(percent))
         trace.reason = ("short" if short else "keyword" if matches_force_keyword(text, keywords)
                         else "window" if addressed else "reply" if selected else "probability")
+        reply_reason = trace.reason
         reply_text = ""
         failed = False
+        needs_chat = not control_enabled
         control = VoiceControlDecision()
         if control_enabled:
             if selected:
@@ -558,10 +573,16 @@ class MimoCascadeBackend(VoiceBackend):
                     with trace.measure("chat"):
                         control, reply_text = await self.chat_with_intent(text, user_key=user_key)
                     trace.timings["intent"] = trace.timings["chat"]
-                except Exception:
+                except Exception as exc:
                     # A malformed/failed combined reply must still check semantic control.
                     failed = True
+                    needs_chat = True
                     trace.reason, trace.outcome = "error", "error"
+                    trace.timing_mode = "stages"
+                    logger.warning(
+                        "语音意图与聊天合并请求失败（%s），改用独立意图判断",
+                        type(exc.__cause__ or exc).__name__,
+                    )
             if not selected or failed:
                 try:
                     with trace.measure("intent"):
@@ -569,6 +590,11 @@ class MimoCascadeBackend(VoiceBackend):
                     if not self.intent_response_valid:
                         failed = True
                         trace.reason, trace.outcome = "error", "error"
+                    else:
+                        # A fresh, valid decision permits ordinary chat again. Never
+                        # speak the malformed combined result or bypass a control.
+                        failed = False
+                        trace.reason, trace.outcome = reply_reason, "skipped"
                 except Exception:
                     failed = True
                     trace.reason, trace.outcome = "error", "error"
@@ -595,7 +621,7 @@ class MimoCascadeBackend(VoiceBackend):
             if not short:
                 self.memory.append("user", text, user_key=user_key, channel_key=channel_key)
             return VoiceReply(user_text=text, user_key=user_key)
-        if not control_enabled:
+        if needs_chat:
             with trace.measure("chat"):
                 reply_text = await self.chat(text, user_key=user_key)
         # Read old history first; store this turn only after completing the model request.

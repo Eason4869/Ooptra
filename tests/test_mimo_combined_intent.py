@@ -64,6 +64,7 @@ def test_malformed_combined_result_never_triggers_leave_or_leaks_json_to_tts(tmp
         agent.settings.voice_leave_enabled = True
         agent.settings.min_utterance_ms = 0
         agent.settings.mimo_api_key = "test"
+        responses = iter([raw, "你好呀"])
         class Response:
             status = 200
             async def __aenter__(self):
@@ -71,7 +72,7 @@ def test_malformed_combined_result_never_triggers_leave_or_leaks_json_to_tts(tmp
             async def __aexit__(self, *args):
                 pass
             async def json(self, **kwargs):
-                return {"choices": [{"message": {"content": raw}}]}
+                return {"choices": [{"message": {"content": next(responses)}}]}
         class Session:
             def post(self, *args, **kwargs):
                 return Response()
@@ -81,13 +82,14 @@ def test_malformed_combined_result_never_triggers_leave_or_leaks_json_to_tts(tmp
             return "你好"
         async def intent(text):
             return VoiceControlDecision()
-        async def tts(*args):
-            pytest.fail("malformed control response must not be spoken")
+        async def tts(text):
+            assert text == "你好呀", "only the fresh ordinary reply may be spoken"
+            return b"\x01\x00" * 32, 24000
         monkeypatch.setattr(agent.backend, "_http", http)
         agent.backend.asr, agent.backend.detect_control_intent, agent.backend.tts = asr, intent, tts
         reply = await agent.backend.handle_utterance(b"audio", sample_rate=16000)
-        assert not reply.pcm16 and not reply.raw.get("voice_control")
-        assert agent.status()["voice_observation"]["recent_decisions"][-1]["reason"] == "error"
+        assert reply.pcm16 and not reply.raw.get("voice_control")
+        assert agent.status()["voice_observation"]["recent_decisions"][-1]["reason"] == "reply"
         await agent.backend.aclose()
     asyncio.run(run())
 
