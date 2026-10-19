@@ -47,7 +47,7 @@ def remaining(deadline, stage, maximum=None):
     return min(seconds, maximum) if maximum is not None else seconds
 
 
-def run_command(root: Path, args: list[str], timeout: int = 30, env=None) -> str:
+def run_command(root: Path, args: list[str], timeout: float = 30, env=None) -> str:
     """Never accept shell commands or arbitrary arguments from the HTTP caller."""
     child_env = dict(os.environ if env is None else env)
     if Path(args[0]).stem.lower() == "git":
@@ -166,7 +166,7 @@ class MaintenanceService:
             storage, _ = inventory(self.root, backups, job)
         except ValueError as exc:
             storage = {"error": str(exc), "backups_count": len(backups), "backups_bytes": sum(row["size"] for row in backups)}
-        storage["sampled_at"] = time.time()
+        storage = {**storage, "sampled_at": time.time()}
         if generation == self._read_generation:
             self._storage_cache = (time.monotonic(), storage)
         return storage
@@ -482,8 +482,10 @@ class MaintenanceService:
                     dest = source / member.name
                     if not dest.resolve().is_relative_to(source) or not (member.isfile() or member.isdir()):
                         raise ValueError("目标代码归档包含不安全路径")
-                filters = {"filter": "data"} if hasattr(tarfile, "data_filter") else {}
-                archive.extractall(source, **filters)
+                if hasattr(tarfile, "data_filter"):
+                    archive.extractall(source, filter="data")
+                else:
+                    archive.extractall(source)
             environment = self.root / f".venv-update-{job['id']}"
             server_source = source / "src/webui/server.py"
             server_text = server_source.read_text(encoding="utf-8") if server_source.is_file() else ""

@@ -12,6 +12,7 @@ SDK 自带的 ``HttpTransport`` / ``WebSocketTransport`` 直接 ``aiohttp.Client
 
 from __future__ import annotations
 
+import importlib
 from typing import Any
 
 import aiohttp
@@ -28,13 +29,13 @@ def _connector(settings: ProxySettings) -> aiohttp.BaseConnector | None:
     if not settings.is_socks:
         return None
     try:
-        from aiohttp_socks import ProxyConnector
+        socks = importlib.import_module("aiohttp_socks")
     except ImportError as exc:  # 可选依赖缺失时给出可执行的提示
         raise RuntimeError(
             "OOPZ_CONFIG.proxy 配置了 socks5 代理，但缺少可选依赖："
             "pip install -r requirements-optional.txt"
         ) from exc
-    return ProxyConnector.from_url(str(settings.server))
+    return socks.ProxyConnector.from_url(str(settings.server))
 
 
 def _new_session(headers: Any, settings: ProxySettings) -> aiohttp.ClientSession:
