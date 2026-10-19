@@ -488,6 +488,53 @@ async function main() {
         }
       }
     }
+    let bindings = [{group_id: '123456', area: 'qa', areas: ['qa'], channel: 'room', label: '开黑群'}];
+    await page.route('**/api/voice/astrbot/bindings', async route => {
+      const body = route.request().postDataJSON();
+      if (body?.action === 'save') {
+        if (body.group_id === '999999') return route.fulfill({status: 400, json: {error: '绑定冲突：范围与 QQ 群 123456 重叠'}});
+        bindings = [{...body, area: body.areas[0]}];
+      }
+      if (body?.action === 'delete') bindings = [];
+      await route.fulfill({json: {ok: true, bindings}});
+    });
+    await nav('voice');
+    await page.locator('#voice-tabs [data-tab="bindings"]').click();
+    await page.waitForFunction(() => document.querySelector('#binding-list').textContent.includes('开黑群'));
+    assert((await page.locator('#binding-list').innerText()).includes('验收域'));
+    await page.locator('#binding-list button').filter({hasText: '编辑'}).click();
+    assert.equal(await page.locator('#binding-group').isEditable(), false);
+    await page.locator('#binding-label').fill('更新备注');
+    await page.locator('#binding-save').click();
+    await page.waitForFunction(() => document.querySelector('#binding-list').textContent.includes('更新备注'));
+    await page.locator('#binding-area').selectOption('qa');
+    await page.locator('#binding-channel').selectOption('room');
+    await page.locator('#binding-group').fill('999999');
+    await page.locator('#binding-save').click();
+    await page.waitForFunction(() => document.querySelector('#binding-status').textContent.includes('绑定冲突'));
+    assert.equal(await page.locator('#binding-group').inputValue(), '999999', 'failed save retains draft');
+    for (const width of [1440, 390, 320]) {
+      await page.setViewportSize({width, height: 1000});
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false, 'binding page overflow ' + width);
+      if (process.env.OOPTRA_BROWSER_ARTIFACTS) await page.screenshot({path: path.join(process.env.OOPTRA_BROWSER_ARTIFACTS, 'bindings-' + width + '.png'), fullPage: true});
+    }
+    await page.locator('#binding-list button').filter({hasText: '移除'}).click();
+    await page.locator('#dialog-yes').click();
+    await page.waitForFunction(() => document.querySelector('#binding-count').textContent === '0');
+    let inheritedPersona = true;
+    await page.route('**/api/persona', route => route.fulfill({json: {ok: true, persona: 'local persona', effective_persona: inheritedPersona ? 'AstrBot persona' : 'local persona', astrbot_context: {active: inheritedPersona}}}));
+    await page.route('**/api/voice/status', route => route.fulfill({json: {ok: true, status: {enabled: true, joined: true, backend: 'gemini_live'}, astrbot_context: {active: inheritedPersona, connected: false, group_id: '123', persona_id: 'selected', provider: 'memory_companion', pending_writes: 0}}}));
+    await nav('voice');
+    await page.locator('#page-voice .subtab[data-tab="persona"]').click();
+    await page.waitForFunction(() => document.querySelector('#persona-text').value === 'AstrBot persona');
+    assert.equal(await page.locator('#persona-text').isEditable(), false);
+    assert.equal(await page.locator('#persona-save').isDisabled(), true);
+    inheritedPersona = false;
+    await page.locator('#page-voice .subtab[data-tab="session"]').click();
+    await page.locator('#page-voice .subtab[data-tab="persona"]').click();
+    await page.waitForFunction(() => document.querySelector('#persona-text').value === 'local persona');
+    assert.equal(await page.locator('#persona-text').isEditable(), true);
+    assert.equal(await page.locator('#persona-save').isDisabled(), false);
     assert.deepEqual(errors, [], 'page scripts must load without errors');
     await nav('config');
     await page.locator('#config-tabs [data-tab="system"]').click();

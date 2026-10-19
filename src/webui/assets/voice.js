@@ -221,6 +221,7 @@ function switchVoiceTab(tab) {
     el.classList.toggle('is-active', el.id === 'vpane-' + name);
   });
   if (name === 'members') refreshMembers();
+  if (name === 'bindings') loadBindings();
   if (name === 'auto-visit') refreshAutoVisit(true);
   if (name === 'persona') {
     loadPersona();
@@ -287,6 +288,12 @@ function setupVoice() {
   if (memRefresh) memRefresh.onclick = loadMemory;
   if (memClear) memClear.onclick = clearMemory;
   if (personaSave) personaSave.onclick = savePersona;
+  $('astrbot-context-refresh').onclick = async (event) => {
+    const button = event.currentTarget; button.disabled = true;
+    try { await api('/api/voice/astrbot/refresh', {method: 'POST', body: {}}); await loadPersona(); }
+    catch (error) { text('astrbot-context-status', error.message); }
+    finally { button.disabled = false; }
+  };
   if (memberRefresh) memberRefresh.onclick = refreshMembers;
 }
 
@@ -494,9 +501,17 @@ async function refreshMembers() {
 
 async function loadPersona() {
   try {
+    const voice = await api('/api/voice/status');
+    const shared = voice.astrbot_context || {};
+    text('astrbot-context-status', shared.active
+      ? `已接入 QQ 群 ${shared.group_id} · 人格 ${shared.persona_id || '未设置'} · 记忆 ${shared.provider || '未接入'} · 待写 ${shared.pending_writes || 0} 条。${shared.error || shared.memory_error || ''}`
+      : `使用本地设置。${shared.error || ''}`);
     const data = await api('/api/persona');
     const ta = $('persona-text');
-    if (ta) ta.value = data.persona || '';
+    const inherited = data.astrbot_context?.active === true;
+    if (ta) {ta.value = inherited ? data.effective_persona || '' : data.persona || ''; ta.readOnly = inherited;}
+    const save = $('persona-save');
+    if (save) save.disabled = inherited;
     const status = $('persona-status');
     if (status) status.textContent = '';
   } catch (err) {

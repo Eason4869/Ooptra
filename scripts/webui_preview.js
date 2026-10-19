@@ -19,6 +19,7 @@
     model_connection: {state: 'ready'}, voice_observation: {recent_decisions: []}};
   const areas = [{id: 'demo-area-1', name: '朋友的游戏小屋'}, {id: 'demo-area-2', name: '周末闲聊'}];
   const channels = [{id: 'demo-channel-1', name: '游戏语音'}, {id: 'demo-channel-2', name: '休息室'}];
+  let bindings = [{group_id: '123456789', area: areas[0].id, areas: [areas[0].id], channel: channels[0].id, label: '演示开黑群'}];
   const logs = ['14:20:00 INFO [Preview] 离线演示已启动，没有连接真实服务。',
     '14:20:01 INFO [Bridge] 演示数据：Oopz / OneBot 已连接',
     '14:20:02 INFO [Voice] 回复概率 30%，连续对话窗口 30 秒，独处 30 秒退出'];
@@ -116,6 +117,15 @@
     if (endpoint === '/api/logs/tail') return {lines: logs};
     if (endpoint === '/api/oopz/areas') return {areas, default_area: areas[0].id, default_channel: channels[0].id};
     if (endpoint === '/api/oopz/channels') return {channels};
+    if (endpoint === '/api/voice/astrbot/bindings') {
+      if (body.action === 'save') {
+        if (bindings.some(row => row.group_id !== body.group_id && body.areas.includes(row.area) && (!body.channel || !row.channel || row.channel === body.channel))) throw {status: 400, error: '绑定冲突：所选范围已对应其他 QQ 群'};
+        bindings = bindings.filter(row => row.group_id !== body.group_id);
+        bindings.push({...body, area: body.areas[0]});
+      }
+      if (body.action === 'delete') bindings = bindings.filter(row => row.group_id !== body.group_id);
+      return {bindings};
+    }
     if (endpoint === '/api/voice/status') return {status: voice, auto_visit: visitStatus};
     if (endpoint === '/api/voice/output') {
       if (body.volume !== undefined) {

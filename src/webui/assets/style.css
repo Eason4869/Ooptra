@@ -1045,3 +1045,22 @@ form[inert] { opacity: .65; }
   .login-intro h2 { font-size: 29px; }
   .login-card { padding: 22px; }
 }
+
+.binding-layout { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(280px, 1fr); gap: 20px; align-items: start; }
+.binding-layout > * { min-width: 0; }
+.binding-editor form { display: grid; gap: 16px; }
+.binding-editor label { display: grid; gap: 8px; font-size: 13px; font-weight: 600; }
+.binding-editor [hidden] { display: none; }
+.binding-editor .control, .binding-overview > .control { width: 100%; min-width: 0; }
+.binding-list { display: grid; gap: 14px; margin: 18px 0; }
+.binding-row { border: 1px solid var(--line, #cbd5e1); border-radius: 12px; padding: 18px; }
+.binding-route { display: grid; grid-template-columns: minmax(0, 1fr) 24px minmax(0, .7fr); gap: 12px; align-items: center; margin-bottom: 16px; }
+.binding-route > div { display: grid; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+.binding-route strong { font-size: 16px; }
+.binding-channel-name { font-size: 14px; }
+.binding-id { opacity: .58; font-size: 11px; font-family: monospace; overflow-wrap: anywhere; }
+.binding-arrow { color: var(--accent, #426ce4); font-size: 22px; }
+.binding-summary { padding: 14px; background: var(--panel-3); border-radius: 10px; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.binding-warning { color: var(--warn-text); font-size: 12px; line-height: 1.6; margin: 12px 0 0; }
+@media (max-width: 1000px) { .binding-layout { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 400px) { .binding-row { padding: 12px; } .binding-route { gap: 6px; grid-template-columns: minmax(0, 1fr) 16px minmax(0, .85fr); } .binding-route strong { font-size: 14px; } }

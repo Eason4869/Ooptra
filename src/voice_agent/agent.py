@@ -15,10 +15,12 @@ import os
 import random
 import time
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
 from voice_agent.backends import create_backend
 from voice_agent.backends.base import ConnectionReporter, SessionStarter
+from voice_agent.context_bridge import ContextBridge
 from voice_agent.duplex import VoiceDuplex
 from voice_agent.memory import MemoryStore
 from voice_agent.operations import VoiceOperation
@@ -118,6 +120,9 @@ class VoiceAgent:
         self.memory = MemoryStore(settings.memory_path, settings.memory_max_turns)
         self.memory.set_persona(settings.persona)
         self.backend = create_backend(settings, self.memory)
+        self.context_bridge = ContextBridge(
+            outbox_path=Path(self.memory.path).with_name("astrbot_voice_outbox.json"))
+        self.backend.context_bridge = self.context_bridge
         self.live_mode = _is_live_backend(self.backend)
         self.duplex: VoiceDuplex | None = None
         self.output_controls = VoiceOutputControls(settings, lambda: self.duplex, lambda: self._joined)
@@ -171,6 +176,13 @@ class VoiceAgent:
         # Existing test helpers and integrations construct an agent with __new__.
         if not hasattr(self, "_operation_lock"):
             self._init_operations()
+        self._ensure_context_bridge()
+
+    def _ensure_context_bridge(self) -> ContextBridge:
+        if not hasattr(self, "context_bridge"):
+            self.context_bridge = ContextBridge()
+            self.backend.context_bridge = self.context_bridge
+        return self.context_bridge
 
     def set_operation_callback(self, handler: Callable[[VoiceOperation], Awaitable[None]] | None) -> None:
         self._ensure_operations()
@@ -495,6 +507,7 @@ class VoiceAgent:
             self._operation_epoch += 1
             await self.backend.aclose()
             self.backend = create_backend(self.settings, self.memory)
+            self.backend.context_bridge = self.context_bridge
             self.live_mode = _is_live_backend(self.backend)
             # 信箱消费端必须跟着模式走：live→cascade 不拉起它，句子进了信箱
             # 就没人消费，bot 直接变哑巴；cascade→live 不收掉它，它会抱着
@@ -652,6 +665,7 @@ class VoiceAgent:
         self._speaking = False
         self._rearm_barge_in()
         try:
+            await self.context_bridge.prepare(area, channel)
             await duplex.enable_listen(True)
 
             # 级联：拉起单槽信箱的消费端。Live 走服务端 VAD，不需要它。
@@ -714,6 +728,7 @@ class VoiceAgent:
             # 返回值 {ok: False, error: "not joined"} 被丢弃），日志里只有
             # 「模型出了回合」，排查时完全看不出音频根本没进房间。
             if isinstance(result, dict) and result.get("ok") is False:
+                self.backend._bridge_output_failed = True
                 if self._announcement_active and self._announcement_collecting:
                     self._announcement_error = result.get("error") or "audio push failed"
                 if not push_failed:
@@ -864,6 +879,7 @@ class VoiceAgent:
         # 退房就关掉 Live 会话：否则 Gemini 会话会一直挂着（既计费又占并发），
         # 而且下次进房时 start_session 会因为旧会话状态而变成空操作。
         self._joined = False
+        self.context_bridge.clear()
         self._ensure_output_controls().reset_mute()
         self._retiring_visit_id = ""
         self._reply_generating = False
@@ -875,6 +891,7 @@ class VoiceAgent:
 
     def status(self) -> dict[str, Any]:
         return {
+            "astrbot_context": self._ensure_context_bridge().status(),
             "voice_observation": self.backend.observation.snapshot() if hasattr(self.backend, "observation") else {"recent_decisions": [], "limit": 40},
             "enabled": self.settings.enabled,
             "model_connection": self.backend.connection_status() if isinstance(self.backend, ConnectionReporter) else None,
@@ -1207,6 +1224,7 @@ class VoiceAgent:
                 self._reply_tasks.discard(task)
 
     async def _handle_utterance_reply(self, uid: str, pcm: bytes, sample_rate: int) -> None:
+        self._ensure_context_bridge()
         if not pcm or getattr(self, "_announcement_active", False):
             return
         async with self._busy:
@@ -1247,6 +1265,8 @@ class VoiceAgent:
             if reply.text:
                 self.last_reply = reply.text
 
+            interrupted = False
+            delivery_failed = False
             if reply.pcm16 and self.duplex is not None:
                 self._speaking = True
                 self.turns += 1
@@ -1256,6 +1276,7 @@ class VoiceAgent:
                     data = reply.pcm16
                     for i in range(0, len(data), chunk):
                         if not self._speaking:
+                            interrupted = True
                             break
                         result = await self.duplex.push_tts_pcm(
                             data[i : i + chunk],
@@ -1267,6 +1288,7 @@ class VoiceAgent:
                         # 那个「页面已经不是当前会话、音频根本没进房间，日志却一切
                         # 正常」的坑，级联模式下一直没补上。
                         if isinstance(result, dict) and result.get("ok") is False:
+                            delivery_failed = True
                             if not push_failed:
                                 push_failed = True
                                 logger.warning(
@@ -1280,6 +1302,9 @@ class VoiceAgent:
                         await self.duplex.push_tts_pcm(b"", reply.sample_rate, finish=True)
                 finally:
                     self._speaking = False
+            self.context_bridge.record_turn(reply.user_text or "",
+                reply.text if reply.pcm16 and not delivery_failed else "",
+                speaker=uid, interrupted=interrupted)
 
     async def speak_text(self, text: str) -> dict[str, Any]:
         self._ensure_operations()
@@ -1352,6 +1377,23 @@ class VoiceAgent:
         self.last_reply = text
         self.turns += 1
         return {"ok": True, "chars": len(text), "pcm_bytes": len(pcm or b""), "mode": "cascade"}
+
+    async def refresh_astrbot_context(self) -> dict[str, Any]:
+        self._ensure_operations()
+        async with self._operation_lock:
+            if not self._joined:
+                self.context_bridge.clear()
+                return {"astrbot_context": self.context_bridge.status()}
+            await self._stop_reply_locked(restart=False)
+            await self.context_bridge.prepare(self._area, self._channel)
+            if self.live_mode:
+                await self._wire_live()
+                start = getattr(self.backend, "start_session", None)
+                if start is not None:
+                    await start()
+            else:
+                await self._start_round_worker()
+            return {"astrbot_context": self.context_bridge.status()}
 
     def update_persona(self, persona: str) -> None:
         self.settings.persona = str(persona or self.settings.persona)
