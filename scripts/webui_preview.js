@@ -19,6 +19,8 @@
     model_connection: {state: 'ready'}, voice_observation: {recent_decisions: []}};
   const areas = [{id: 'demo-area-1', name: '朋友的游戏小屋'}, {id: 'demo-area-2', name: '周末闲聊'}];
   const channels = [{id: 'demo-channel-1', name: '游戏语音'}, {id: 'demo-channel-2', name: '休息室'}];
+  let bindings = [{group_id: 'Demo:GroupMessage:123456789', umo: 'Demo:GroupMessage:123456789', area: areas[0].id, areas: [areas[0].id], channel: '', label: '演示开黑群'}];
+  let sourceRules = [];
   const logs = ['14:20:00 INFO [Preview] 离线演示已启动，没有连接真实服务。',
     '14:20:01 INFO [Bridge] 演示数据：Oopz / OneBot 已连接',
     '14:20:02 INFO [Voice] 回复概率 30%，连续对话窗口 30 秒，独处 30 秒退出'];
@@ -116,6 +118,19 @@
     if (endpoint === '/api/logs/tail') return {lines: logs};
     if (endpoint === '/api/oopz/areas') return {areas, default_area: areas[0].id, default_channel: channels[0].id};
     if (endpoint === '/api/oopz/channels') return {channels};
+    if (endpoint === '/api/voice/astrbot/bindings') {
+      if (body.action === 'save') {
+        bindings = bindings.filter(row => row.group_id !== body.group_id && row.group_id !== body.previous_key);
+        bindings.push({...body, umo: body.group_id, area: body.areas[0]});
+      }
+      if (body.action === 'delete') bindings = bindings.filter(row => row.group_id !== body.group_id);
+      if (['source-save', 'source-delete'].includes(body.action)) {
+        sourceRules = sourceRules.filter(row => row.area !== body.area || row.channel !== body.channel);
+        if (body.action === 'source-save') sourceRules.push(body);
+      }
+      if (body.action === 'source-options') return {groups: [{name: '演示开黑群', umo: 'Demo:GroupMessage:123456789', kind: 'qq'}, {name: '演示私聊', umo: 'Demo:FriendMessage:456', kind: 'session'}]};
+      return {ok: true, source_management: true, bindings, context_sources: {rules: sourceRules}, platforms: [{id: 'Demo', name: '演示实例'}], context_sync: {personas: [{id: '语音伙伴', name: '语音伙伴'}]}};
+    }
     if (endpoint === '/api/voice/status') return {status: voice, auto_visit: visitStatus};
     if (endpoint === '/api/voice/output') {
       if (body.volume !== undefined) {

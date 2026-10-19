@@ -36,11 +36,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import asdict
 from typing import Any
 
 from aiohttp import web
+
+from onebot_v11.sdk_integration import find_sdk_onebot_v11
+from oopz_sdk.adapters.onebot.v11.types import make_group_source
 
 logger = logging.getLogger(__name__)
 
@@ -268,6 +272,7 @@ def build_voice_routes(
             # WebUI 兼容
             "status": st,
             "join_source": st.get("join_source", ""),
+            "astrbot_context": st.get("astrbot_context", {}),
         }
 
     from voice_agent.preview import PreviewService
@@ -615,9 +620,17 @@ def build_voice_routes(
 
     # ── 人格 / 记忆 ──
     async def persona_get(_request: web.Request) -> web.Response:
-        return ok({"persona": current_agent().settings.persona})
+        agent = current_agent()
+        bridge = getattr(agent, "context_bridge", None)
+        shared = bridge.status() if bridge else {}
+        return ok({"persona": agent.settings.persona,
+                   "effective_persona": bridge.persona if bridge and bridge.active else agent.settings.persona,
+                   "astrbot_context": shared})
 
     async def persona_put(request: web.Request) -> web.Response:
+        bridge = getattr(current_agent(), "context_bridge", None)
+        if bridge is not None and bridge.active:
+            return err("当前人格由 AstrBot 管理，请在配套插件选择人格；停用同步并刷新上下文后可编辑本地人格", 409)
         agent = current_agent()
         body = await read_json(request)
         persona = body.get("persona")
@@ -669,7 +682,71 @@ def build_voice_routes(
         return ok({"removed": removed})
 
     # ── 路由：插件契约 + /api 别名 ──
+    async def context_poll(request: web.Request) -> web.Response:
+        client_id = request.query.get("client_id", "")
+        if not re.fullmatch(r"[0-9a-f]{32}", client_id):
+            return err("缺少有效桥接实例标识")
+        try:
+            events = await current_agent().context_bridge.poll(client_id=client_id)
+        except ValueError as exc:
+            return err(str(exc), 409)
+        return ok({"protocol": 1, "events": events})
+
+    async def context_result(request: web.Request) -> web.Response:
+        body = await read_json(request)
+        request_id, result = body.get("request_id"), body.get("result")
+        if body.get("client_id") != current_agent().context_bridge.peer_id:
+            return err("桥接实例已变化", 409)
+        if (not isinstance(request_id, str) or len(request_id) > 100
+                or not isinstance(result, dict) or type(result.get("ok")) is not bool
+                or len(str(result)) > 50000):
+            return err("桥接结果格式不正确")
+        accepted = current_agent().context_bridge.resolve(request_id, result)
+        return ok({"accepted": accepted})
+
+    async def context_refresh(_request: web.Request) -> web.Response:
+        return ok(await current_agent().refresh_astrbot_context())
+
+    async def context_text_channels(request: web.Request) -> web.Response:
+        bot = getattr(current_agent(), "_bot", None)
+        adapter = find_sdk_onebot_v11(bot)
+        if bot is None or adapter is None:
+            return err("Oopz OneBot v11 桥接未就绪，请先启用文字桥接并连接 AstrBot。", 503)
+        area = request.query.get("area", "").strip()
+        if not area or len(area) > 256:
+            return err("请选择 Oopz 文字频道所在域")
+        groups = await bot.areas.get_area_channels(area)
+        rows = []
+        for group in groups or []:
+            for channel in getattr(group, "channels", None) or []:
+                kind = getattr(channel, "channel_type", "")
+                if str(getattr(kind, "value", kind)).upper() not in {"TEXT", "CHAT"}:
+                    continue
+                cid = str(getattr(channel, "channel_id", "") or "")
+                if not cid:
+                    continue
+                mapped = adapter.ids.createId(make_group_source(area=area, channel=cid))
+                rows.append({"id": cid, "name": str(getattr(channel, "name", "") or cid),
+                             "group_id": str(mapped.number), "area": area})
+        return ok({"channels": rows, "bot_id": str(adapter.self_id)})
+
+    async def context_bindings(request: web.Request) -> web.Response:
+        bridge = current_agent().context_bridge
+        if not bridge.connected:
+            return err("插件未连接。请启用 astrbot_plugin_ooptra 2.0.0 或以上版本，并检查 api_base 与 api_token。", 503)
+        body = {"action": "list"} if request.method == "GET" else await read_json(request)
+        if body.get("action") not in {"list", "save", "delete", "source-save", "source-delete", "source-options"}:
+            return err("不支持的绑定操作")
+        result = await bridge.request("bindings", body)
+        return ok(result) if result.get("ok") is True else err(result.get("error", "绑定操作失败"))
+
     pairs = [
+        ("GET", "/voice/astrbot/events", context_poll),
+        ("POST", "/voice/astrbot/result", context_result),
+        ("POST", "/voice/astrbot/refresh", context_refresh),
+        ("GET", "/voice/astrbot/text-channels", context_text_channels),
+        ("GET", "/voice/astrbot/bindings", context_bindings),
+        ("POST", "/voice/astrbot/bindings", context_bindings),
         ("GET", "/health", health),
         ("GET", "/voice/status", voice_status),
         ("POST", "/voice/diagnostics", voice_diagnostics),
