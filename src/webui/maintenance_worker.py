@@ -53,7 +53,8 @@ def stop_owned(process):
 def runtime_health(status, *, expected_pid=None, update_id=None, expected_python=None):
     """Local startup and supervision gate a switch; remote links only describe degradation."""
     status = status if isinstance(status, dict) else {}
-    actual = status.get("process") if isinstance(status.get("process"), dict) else {}
+    actual = status.get("process")
+    actual = actual if isinstance(actual, dict) else {}
     process_ok = bool(status.get("ok") and actual.get("pid"))
     if expected_pid is not None:
         process_ok = process_ok and actual.get("pid") == expected_pid
@@ -64,15 +65,18 @@ def runtime_health(status, *, expected_pid=None, update_id=None, expected_python
         # A venv's Python can link to the same base as another environment.
         # Preserve the invoked path instead of resolving those links away.
         process_ok = process_ok and isinstance(executable, str) and bool(executable) and os.path.normcase(os.path.abspath(executable)) == os.path.normcase(os.path.abspath(expected_python))
-    bridge = status.get("bridge") if isinstance(status.get("bridge"), dict) else {}
-    runtime = bridge.get("runtime") if isinstance(bridge.get("runtime"), dict) else {}
+    bridge = status.get("bridge")
+    bridge = bridge if isinstance(bridge, dict) else {}
+    runtime = bridge.get("runtime")
+    runtime = runtime if isinstance(runtime, dict) else {}
     local_ready = actual.get("bootstrap_ready") is True and runtime.get("supervisor_alive") is True
     detail = "服务已响应，本地启动和桥接监督已就绪" if process_ok and local_ready else (
         "本地启动尚未完成或桥接监督未运行" if process_ok else "服务未响应或进程身份不匹配")
     process_ok = process_ok and local_ready
     checks = [{"id": "process", "title": "服务进程", "state": "pass" if process_ok else "fail", "detail": detail}]
     for key, title in [("oopz", "Oopz 连接"), ("onebot", "OneBot 连接")]:
-        link = bridge.get(key) if isinstance(bridge.get(key), dict) else {}
+        link = bridge.get(key)
+        link = link if isinstance(link, dict) else {}
         connected = bool(link.get("connected"))
         checks.append({"id": key, "title": title, "state": "pass" if connected else "degraded",
                        "detail": "已连接" if connected else "连接暂不可用；服务继续运行，不因此回滚"})
@@ -178,7 +182,8 @@ def supervise(root):
     job_file = root / "data/maintenance/job.json"
     try:
         abandoned = json.loads(job_file.read_text(encoding="utf-8"))
-        if abandoned.get("phase") in {"preparing", "awaiting_restart", "switching", "checking", "rolling_back"}:
+        if (isinstance(abandoned, dict) and isinstance(abandoned.get("phase"), str)
+                and abandoned["phase"] in {"preparing", "awaiting_restart", "switching", "checking", "rolling_back"}):
             abandoned.update(phase="failed", detail="启动器维护任务被中断；请核对版本与数据，必要时用安全备份恢复", updated_at=time.time())
             atomic_json(job_file, abandoned)
     except (OSError, ValueError):
@@ -187,10 +192,11 @@ def supervise(root):
     browsers = ""
     try:
         runtime = json.loads((root / "data/maintenance/runtime.json").read_text(encoding="utf-8"))
-        saved = runtime["python"]
-        if Path(saved).is_file():
+        saved = runtime.get("python") if isinstance(runtime, dict) else None
+        if isinstance(saved, str) and Path(saved).is_file():
             python = saved
-            browsers = runtime.get("browser_path", "")
+            saved_browsers = runtime.get("browser_path", "")
+            browsers = saved_browsers if isinstance(saved_browsers, str) else ""
     except (OSError, ValueError, KeyError):
         pass
     process = spawn(root, python, browser_path=browsers)
@@ -201,7 +207,7 @@ def supervise(root):
                 job = json.loads(job_file.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 return code
-            if job.get("phase") != "awaiting_restart" or job.get("service_pid") != process.pid:
+            if not isinstance(job, dict) or job.get("phase") != "awaiting_restart" or job.get("service_pid") != process.pid:
                 return code
             process = switch(root, job)
             if process is None:

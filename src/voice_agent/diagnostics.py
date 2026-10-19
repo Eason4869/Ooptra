@@ -13,6 +13,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from voice_agent.backends import create_backend
+from voice_agent.backends.base import ControlIntentDetector, SessionStarter
 from voice_agent.backends.mimo_cascade import wav_to_pcm16
 from voice_agent.preview import EphemeralMemory
 from voice_agent.settings import resolve_agent_proxy_url
@@ -150,7 +151,7 @@ async def diagnose(agent, *, network: bool = False, audio_wav: bytes | None = No
         checks.append({"id": key, "title": title, "state": state, "detail": detail})
     elapsed = {}
     settings = agent.settings
-    mimo = settings.backend in {"mimo", "mimo_cascade", "cascade", "cascade_mimo"}
+    mimo = (settings.backend or "").strip().lower() in {"mimo", "mimo_cascade", "cascade", "cascade_mimo"}
     add("python", "Python 环境", "pass" if sys.version_info >= (3, 10) else "fail",
         ".".join(map(str, sys.version_info[:3])))
     available = importlib.util.find_spec("playwright") is not None
@@ -158,7 +159,8 @@ async def diagnose(agent, *, network: bool = False, audio_wav: bytes | None = No
         "已安装" if available else "请安装 requirements-optional.txt，再安装 Chromium")
     if available:
         try:
-            from playwright.async_api import async_playwright
+            # This dependency is optional and may be absent in headless installs.
+            async_playwright = importlib.import_module("playwright.async_api").async_playwright
             async with async_playwright() as manager:
                 installed = Path(manager.chromium.executable_path).is_file()
             add("chromium", "Chromium", "pass" if installed else "fail",
@@ -210,10 +212,12 @@ async def diagnose(agent, *, network: bool = False, audio_wav: bytes | None = No
             async def probe():
                 if sample is not None:
                     await _sample_checks(backend, mimo, *sample, add, elapsed, fresh_live, retire)
-                elif mimo:
+                elif isinstance(backend, ControlIntentDetector):
                     await backend.detect_control_intent("你好，请保持在语音房，不要退出，也不要调节音量")
-                else:
+                elif isinstance(backend, SessionStarter):
                     await backend.start_session()
+                else:
+                    raise TypeError("Backend does not support a diagnostic connection probe")
             await asyncio.wait_for(probe(), 65 if sample is not None else 20)
             if sample is not None:
                 failed = any(item["state"] == "fail" for item in checks if item["id"] in {"asr", "intent", "tts"})
