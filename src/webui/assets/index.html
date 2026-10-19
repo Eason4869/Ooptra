@@ -239,6 +239,7 @@
         <button class="subtab is-active" data-tab="session">会话控制</button>
         <button class="subtab" data-tab="auto-visit">自动串门</button>
         <button class="subtab" data-tab="members">房间成员</button>
+        <button class="subtab" data-tab="bindings">会话对应</button>
         <button class="subtab" data-tab="persona">人格与记忆</button>
         <button class="subtab" data-tab="tools">自检与试听</button>
       </div>
@@ -459,27 +460,30 @@
         </section>
       </div>
 
+      <div class="vpane" id="vpane-bindings"><div id="session-manager"></div></div>
+
       <!-- 人格与记忆 -->
       <div class="vpane" id="vpane-persona">
+        <section class="card"><header class="card-head"><h3>AstrBot 人格与记忆</h3><button class="btn sm" id="astrbot-context-refresh">刷新 AstrBot 上下文</button></header><p class="hint" id="astrbot-context-status">未接入 AstrBot，使用本地设置。</p><p class="hint">在 astrbot_plugin_ooptra 工作台开启同步并选择人格、记忆插件。在「会话对应」选择一个人格 UMO，并勾选需要查询和写回的全部记忆会话。</p></section>
         <div class="split">
           <section class="card">
             <header class="card-head">
               <h3>人格提示词</h3>
               <button class="btn primary sm" id="persona-save">保存</button>
             </header>
-            <p class="hint">人格统一在此管理；保存后写入配置文件并热生效，重启后保留。</p>
+            <p class="hint">本地人格，保存后重启仍保留。接入 AstrBot 时，当前会话采用插件选择的人格。</p>
             <textarea class="control grow ta" id="persona-text" rows="10" placeholder="你是……"></textarea>
             <p class="hint" id="persona-status"></p>
           </section>
           <section class="card">
             <header class="card-head">
-              <h3>共享记忆</h3>
+              <h3>本地语音记录</h3>
               <div class="btn-row">
                 <button class="btn ghost sm" id="memory-refresh">刷新</button>
                 <button class="btn warn sm" id="memory-clear">清空</button>
               </div>
             </header>
-            <p class="hint">JSONL 记忆，可被 AstrBot 插件读写，保证多端人格一致。</p>
+            <p class="hint">保存在本地的 JSONL 对话记录。AstrBot 长期记忆由对应记忆插件管理；清空这里不会删除 QQ 群记忆。</p>
             <ul class="feed" id="memory-list"></ul>
           </section>
         </div>
@@ -610,6 +614,8 @@
 <script src="/assets/app.js"></script>
 <script src="/assets/config.js"></script>
 <script src="/assets/voice.js"></script>
+<script src="/assets/session-manager.js"></script>
+<script src="/assets/bindings.js"></script>
 <script src="/assets/maintenance.js"></script>
 </body>
 </html>

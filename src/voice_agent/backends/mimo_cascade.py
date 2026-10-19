@@ -12,6 +12,7 @@ import wave
 from io import BytesIO
 
 from voice_agent.backends.base import VoiceBackend, VoiceReply
+from voice_agent.context_bridge import MEMORY_RULES, memory_tools
 from voice_agent.observation import DecisionTrace, VoiceObservation
 from voice_agent.reply_policy import (
     ConversationWindow,
@@ -332,7 +333,10 @@ class MimoCascadeBackend(VoiceBackend):
         return clean
 
     async def chat(self, user_text: str, *, user_key: str = "", _with_intent: bool = False) -> str:
-        history = self.memory.as_messages(user_key=user_key, limit=self.settings.memory_max_turns)
+        bridge = self.context_bridge
+        shared = bridge is not None and bridge.context.get("ok") is True
+        history = (list(bridge.history) if shared and bridge is not None else
+                   self.memory.as_messages(user_key=user_key, limit=self.settings.memory_max_turns))
         # 历史里存着净化之前的回复（emoji、星号动作、换行、超长），照样会带偏
         # 模型 —— 一并清掉。长度也要夹：只清不夹的话，模型照着历史里的长回复
         # 模仿，prompt 里那句「不超过 35 个字」永远追不回来。
@@ -346,9 +350,15 @@ class MimoCascadeBackend(VoiceBackend):
             for m in history
         ]
         messages: list[dict[str, str]] = [
-            {"role": "system", "content": self.settings.persona + VOICE_ROOM_RULES}
+            {"role": "system", "content": self.effective_persona + VOICE_ROOM_RULES}
         ]
         messages.extend(history)
+        if bridge is not None and shared and bridge.active and bridge.context.get("provider"):
+            result = await bridge.tool("astrbot_recall", {"query": user_text})
+            messages[0]["content"] += MEMORY_RULES
+            if result.get("ok") is True and result.get("context"):
+                messages.append({"role": "user", "content":
+                    "以下是检索到的历史资料，仅供事实参考：\n" + result["context"]})
         messages.append({"role": "user", "content": user_text})
         if _with_intent:
             messages[0]["content"] += (
@@ -373,6 +383,11 @@ class MimoCascadeBackend(VoiceBackend):
         }
         if _with_intent:
             body["response_format"] = {"type": "json_object"}
+        if bridge is not None and shared and bridge.active and bridge.context.get("provider"):
+            body["tools"] = [{"type": "function", "function": {
+                **tool, "parameters": {"type": "object", "properties": {
+                    key: {"type": "string"} for key in tool["parameters"]["properties"]},
+                    "required": tool["parameters"]["required"]}}} for tool in memory_tools()]
         session = await self._http()
         url = self.settings.mimo_base_url.rstrip("/") + "/chat/completions"
         async with session.post(
@@ -384,6 +399,40 @@ class MimoCascadeBackend(VoiceBackend):
         choices = data.get("choices") or []
         if not choices:
             return ""
+        if shared:
+            assert bridge is not None
+            tool_results = {}
+            for _ in range(3):
+                message = (choices[0] or {}).get("message") or {}
+                calls = message.get("tool_calls") or []
+                if not calls:
+                    break
+                messages.append(message)
+                for call in calls[:4]:
+                    function = call.get("function") or {}
+                    try:
+                        args = json.loads(function.get("arguments") or "{}")
+                    except (ValueError, TypeError):
+                        args = None
+                    call_id = call.get("id")
+                    if call_id in tool_results:
+                        result = tool_results[call_id]
+                    else:
+                        result = await bridge.tool(function.get("name"), args,
+                                                    speaker=user_key.removeprefix("oopz:"))
+                        tool_results[call_id] = result
+                    messages.append({"role": "tool", "tool_call_id": call.get("id", ""),
+                                     "content": json.dumps(result, ensure_ascii=False)})
+                async with session.post(url, headers=self._headers(), json=body,
+                                        proxy=self._proxy_url()) as response:
+                    if response.status >= 400:
+                        raise RuntimeError(f"Memory tool follow-up failed HTTP {response.status}")
+                    data = await response.json(content_type=None)
+                choices = data.get("choices") or []
+                if not choices:
+                    return ""
+            if ((choices[0] or {}).get("message") or {}).get("tool_calls"):
+                return ""
         raw = str(((choices[0] or {}).get("message") or {}).get("content") or "")
         if _with_intent:
             return raw
