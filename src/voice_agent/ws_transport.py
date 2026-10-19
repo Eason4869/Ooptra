@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import importlib
 import logging
 from collections.abc import AsyncIterator
 from typing import Any
@@ -92,7 +93,7 @@ async def open_live_ws(
         return _AiohttpWs(ws, session)
 
     try:
-        import websockets
+        websockets = importlib.import_module("websockets")
     except ModuleNotFoundError as exc:
         raise RuntimeError("Live 后端需要 websockets：pip install websockets") from exc
 
