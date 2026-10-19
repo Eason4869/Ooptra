@@ -139,6 +139,8 @@ VOICE_AGENT_CONFIG = {
 
     "sample_rate_in": 16000,
     "sample_rate_out": 24000,
+    "output_volume": 50,             # bot 语音输出音量：10~100%；闭麦使用临时状态，默认降低 50%
+    "voice_volume_enabled": True,     # AI 判断语音调音量、开闭麦意图；音量自动保存，闭麦临时
     # 说完多久算一句。700ms 对中文太短 —— 想词、换气的自然停顿就会被当成
     # 「说完了」，一句话被切成好几段，bot 于是逐段回（表现为「我每句话必回」）。
     "silence_ms": 1200,

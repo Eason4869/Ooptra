@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,8 @@ class VoiceDuplex:
         self._handler: RemotePcmHandler | None = None
         self._pump_task: asyncio.Task | None = None
         self._owner_loop: asyncio.AbstractEventLoop | None = None
+        self.output_volume: int = 50
+        self.output_muted: bool = False
 
     @property
     def transport(self) -> Any:
@@ -92,7 +94,23 @@ class VoiceDuplex:
     ) -> dict[str, Any]:
         if not pcm16 and not finish:
             return {"ok": True, "empty": True}
-        return await self._transport.push_tts_pcm(pcm16, sample_rate, finish=finish)
+        return await self._transport.push_tts_pcm(
+            pcm16, sample_rate, finish=finish, volume=0 if self.output_muted else self.output_volume,
+        )
+
+    async def set_output_volume(self, volume: int) -> dict[str, Any]:
+        self.output_volume = volume
+        result = await self._transport.set_tts_volume(0 if self.output_muted else volume)
+        # Oopz's member indicator uses a separate state broadcast from the audio gain.
+        broadcast = getattr(self._transport, "set_voice_state", None)
+        if result.get("ok") and callable(broadcast):
+            broadcast_state = cast(Callable[..., Awaitable[bool]], broadcast)
+            try:
+                if not await broadcast_state(mic_muted=self.output_muted, speaker_muted=False):
+                    logger.warning("语音音频已应用，但房间麦克风状态广播失败")
+            except Exception:
+                logger.warning("语音音频已应用，但房间麦克风状态广播失败", exc_info=True)
+        return result
 
     async def stop_tts(self) -> dict[str, Any]:
         return await self._transport.stop_tts()

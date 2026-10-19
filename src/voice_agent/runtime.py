@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,7 @@ class VoiceRuntime:
     def __init__(self, *, state_path: str | Path | None = None) -> None:
         self.agent_settings, self.api_settings = load_voice_agent_settings()
         self.agent = VoiceAgent(self.agent_settings, self.api_settings)
+        self.agent.set_output_volume_saver(self._save_output_volume)
         self.api = VoiceApiServer(self, self.api_settings)
         self.auto_visit = AutoVisitController(
             self.agent, parse_auto_visit_config(getattr(runtime_config, "VOICE_AUTO_VISIT_CONFIG", None)),
@@ -37,6 +39,11 @@ class VoiceRuntime:
     @property
     def enabled(self) -> bool:
         return bool(self.agent_settings.enabled or self.api_settings.enabled)
+
+    async def _save_output_volume(self, volume: int) -> None:
+        from webui import config_editor
+
+        await asyncio.to_thread(config_editor.apply_updates, {"voice": {"output_volume": volume}})
 
     def bind_bot(self, bot: Any) -> None:
         self.agent.bind_bot(bot)
@@ -107,6 +114,10 @@ class VoiceRuntime:
     # ------------------------------------------------------------------
 
     async def reload_settings(self) -> dict[str, Any]:
+        async with self.agent.output_controls.configuration_update():
+            return await self._reload_settings_locked()
+
+    async def _reload_settings_locked(self) -> dict[str, Any]:
         """重新读 config.py，把变化**真正应用**到运行中的对象上。
 
         过去 WebUI 保存只改了 config 模块的 dict，VoiceRuntime 里的 dataclass
@@ -136,10 +147,12 @@ class VoiceRuntime:
         ]
 
         notes: list[str] = []
+        hot_reload_failed = False
         try:
             notes.extend(await self.agent.refresh(changed))
         except Exception as exc:
             logger.exception("voice agent refresh failed")
+            hot_reload_failed = True
             notes.append(f"语音配置应用失败：{exc}")
 
         # WebUI can enable voice even if the process booted with both switches off.
@@ -158,6 +171,7 @@ class VoiceRuntime:
                     notes.append("语音对话已停用")
             except Exception as exc:
                 logger.exception("voice agent toggle failed")
+                hot_reload_failed = True
                 notes.append(f"语音总开关切换失败：{exc}")
 
         # 独立端口开关的热切换
@@ -173,6 +187,7 @@ class VoiceRuntime:
                     notes.append("独立语音端口已停止")
             except Exception as exc:
                 logger.exception("VOICE_API toggle failed")
+                hot_reload_failed = True
                 notes.append(f"独立语音端口切换失败：{exc}")
 
         if restart_keys:
@@ -183,6 +198,7 @@ class VoiceRuntime:
             "api_changed": api_changed,
             "notes": notes,
             "restart_keys": restart_keys,
+            "hot_reload_failed": hot_reload_failed or any("失败" in note for note in notes),
         }
 
 

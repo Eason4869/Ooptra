@@ -42,6 +42,7 @@ def make_agent(tmp_path):
 
     agent = VoiceAgent(VoiceAgentSettings(
         enabled=True, backend="mimo_cascade", reply_probability_percent=100, voice_leave_enabled=False,
+        voice_volume_enabled=False,
         memory_path=str(tmp_path / "memory.jsonl")
     ), VoiceApiSettings(), bot=SimpleNamespace(voice=Voice()))
     agent.duplex = Duplex()

@@ -552,6 +552,19 @@ def build_voice_routes(
             return err(str(result.get("error") or "speak failed"))
         return ok(result)
 
+    async def voice_output(request: web.Request) -> web.Response:
+        body = await read_json(request)
+        if not body or set(body) - {"volume", "muted"}:
+            return err("请提供 volume 或 muted，不支持其他字段")
+        if "volume" in body and (type(body["volume"]) is not int or not 10 <= body["volume"] <= 100):
+            return err("音量必须为 10-100 的整数")
+        if "muted" in body and type(body["muted"]) is not bool:
+            return err("muted 必须为布尔值")
+        result = await current_agent().set_output_controls(**body)
+        if not result.get("ok"):
+            return err(str(result.get("error") or "语音输出调整失败"), 502)
+        return ok(result)
+
     # ── 域/频道（WebUI 用）──
     async def oopz_areas(_request: web.Request) -> web.Response:
         agent = current_agent()
@@ -672,6 +685,7 @@ def build_voice_routes(
         ("POST", "/voice/leave", voice_leave),
         ("POST", "/voice/stop", voice_stop),
         ("POST", "/voice/speak", voice_speak),
+        ("POST", "/voice/output", voice_output),
         ("GET", "/oopz/areas", oopz_areas),
         ("GET", "/oopz/channels", oopz_channels),
         ("GET", "/persona", persona_get),

@@ -18,6 +18,13 @@ def _get(cfg: dict[str, Any], key: str, default: Any) -> Any:
     return default if value is None else value
 
 
+def _output_volume(value: Any) -> int:
+    try:
+        return max(10, min(100, int(str(value).strip())))
+    except (TypeError, ValueError):
+        return 50
+
+
 @dataclass
 class VoiceAgentSettings:
     enabled: bool = False
@@ -38,8 +45,10 @@ class VoiceAgentSettings:
     conversation_window_enabled: bool = True
     conversation_window_seconds: int = 30
     voice_leave_enabled: bool = True
+    voice_volume_enabled: bool = True
     sample_rate_in: int = 16000
     sample_rate_out: int = 24000
+    output_volume: int = 50
     #: 说完多久算一句。700ms 对中文太短 —— 想词、换气的自然停顿就会被当成
     #: 「说完了」，一句话被切成几段，bot 逐段回（表现为「我每句话必回」）。
     silence_ms: int = 1200
@@ -124,8 +133,10 @@ def load_voice_agent_settings() -> tuple[VoiceAgentSettings, VoiceApiSettings]:
         conversation_window_enabled=bool(_get(agent_raw, "conversation_window_enabled", True)),
         conversation_window_seconds=max(1, min(300, int(_get(agent_raw, "conversation_window_seconds", 30)))),
         voice_leave_enabled=bool(_get(agent_raw, "voice_leave_enabled", True)),
+        voice_volume_enabled=bool(_get(agent_raw, "voice_volume_enabled", True)),
         sample_rate_in=int(_get(agent_raw, "sample_rate_in", 16000)),
         sample_rate_out=int(_get(agent_raw, "sample_rate_out", 24000)),
+        output_volume=_output_volume(_get(agent_raw, "output_volume", 50)),
         silence_ms=int(_get(agent_raw, "silence_ms", 1200)),
         max_utterance_ms=int(_get(agent_raw, "max_utterance_ms", 15000)),
         min_utterance_ms=int(_get(agent_raw, "min_utterance_ms", 500)),

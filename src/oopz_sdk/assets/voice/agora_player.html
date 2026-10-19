@@ -859,6 +859,8 @@ function selectSpeaker(uid, rms) {
 
 let ttsCtx = null;
 let ttsDest = null;
+let ttsGain = null;
+let ttsVolume = 50;
 let ttsTrack = null;
 let ttsPublished = false;
 // ttsTrack 是**绑定在某个 Agora client 上**发布的：client 一换（退房重进、换频道），
@@ -871,6 +873,15 @@ let ttsGeneration = 0;
 let ttsNextTime = 0;        // 下一片应当开始播放的 AudioContext 时刻
 const ttsSources = new Set(); // 已排期未播完的 source，用于打断
 const TTS_LEAD = 0.08;      // 首片/欠载后预留的缓冲（秒），吸收到达抖动
+
+window.agoraSetTtsVolume = (volume) => {
+  const parsed = Number(volume);
+  if (!Number.isFinite(parsed)) return { ok: false, error: "invalid voice volume" };
+  ttsVolume = Math.max(0, Math.min(100, parsed));
+  // 独立增益作用于已排队和新到的语音分片，不改变音乐或接听音量。
+  if (ttsGain) ttsGain.gain.value = ttsVolume / 100;
+  return { ok: true, volume: ttsVolume };
+};
 
 function floatTo16BitPCM(float32) {
   const out = new Int16Array(float32.length);
@@ -1066,6 +1077,7 @@ async function teardownTtsPipeline() {
   }
   ttsCtx = null;
   ttsDest = null;
+  ttsGain = null;
   ttsNextTime = 0;
 }
 
@@ -1079,10 +1091,13 @@ async function ensureTtsTrack(sampleRate) {
   if (!ttsCtx) {
     ttsCtx = new AudioContext({ sampleRate: sampleRate || 24000 });
     ttsDest = ttsCtx.createMediaStreamDestination();
+    ttsGain = ttsCtx.createGain();
+    ttsGain.gain.value = ttsVolume / 100;
+    ttsGain.connect(ttsDest);
     ttsNextTime = 0; // 新上下文时间轴从 0 起算
     const mst = ttsDest.stream.getAudioTracks()[0];
     ttsTrack = AgoraRTC.createCustomAudioTrack({ mediaStreamTrack: mst });
-    ttsTrack.setVolume(_currentVolume);
+    ttsTrack.setVolume(100);
   }
   if (!ttsPublished && ttsTrack) {
     await client.publish([ttsTrack]);
@@ -1114,14 +1129,16 @@ window.agoraStopTts = async () => {
   try {
     if (ttsTrack) ttsTrack.setVolume(0);
     await new Promise((r) => setTimeout(r, 30));
-    if (ttsTrack) ttsTrack.setVolume(_currentVolume);
+    if (ttsTrack) ttsTrack.setVolume(100);
   } catch (_) {}
   return { ok: true };
 };
 
-window.agoraPushTtsPcm = async (b64, sampleRate, finish) => {
+window.agoraPushTtsPcm = async (b64, sampleRate, finish, volume = ttsVolume) => {
   try {
     if (!client) return { ok: false, error: "not joined" };
+    const volumeResult = window.agoraSetTtsVolume(volume);
+    if (!volumeResult.ok) return volumeResult;
     const clientRef = client;
     const generation = ttsGeneration;
     if (b64 && b64.length) {
@@ -1136,7 +1153,7 @@ window.agoraPushTtsPcm = async (b64, sampleRate, finish) => {
         for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 32768;
         const src = ttsCtx.createBufferSource();
         src.buffer = buf;
-        src.connect(ttsDest);
+        src.connect(ttsGain);
         // 接在前一片的尾巴后面排队，而不是「立刻开始」：分片到达快了就攒着慢慢放，
         // 到达抖动了也不会重叠。缓冲耗尽（欠载）时才重新起一个 lead。
         const now = ttsCtx.currentTime;

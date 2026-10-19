@@ -21,6 +21,7 @@ from voice_agent.backends import create_backend
 from voice_agent.duplex import VoiceDuplex
 from voice_agent.memory import MemoryStore
 from voice_agent.operations import VoiceOperation
+from voice_agent.output_controls import VoiceOutputControls
 from voice_agent.settings import VoiceAgentSettings, VoiceApiSettings
 from voice_agent.vad import EnergyVad, VadvConfig
 from voice_agent.voice_control import VOICE_CONTROL_MIN_MS
@@ -81,6 +82,7 @@ def _dump_remote_pcm(uid: str, pcm: bytes, sample_rate: int) -> None:
 _MEMORY_FIELDS = {"memory_path", "memory_max_turns"}
 _VAD_FIELDS = {"sample_rate_in", "silence_ms", "max_utterance_ms"}
 _SESSION_FIELDS = {
+    "voice_volume_enabled",
     "voice_leave_enabled",
     "persona",
     "proxy",
@@ -117,6 +119,7 @@ class VoiceAgent:
         self.backend = create_backend(settings, self.memory)
         self.live_mode = _is_live_backend(self.backend)
         self.duplex: VoiceDuplex | None = None
+        self.output_controls = VoiceOutputControls(settings, lambda: self.duplex, lambda: self._joined)
         #: 正在收尾的旧 duplex。bind_bot 是同步上下文，close() 只能交给事件循环；
         #: 留引用是为了有地方 await，也避免「Task exception was never retrieved」。
         self._duplex_close_tasks: set[asyncio.Task] = set()
@@ -377,6 +380,7 @@ class VoiceAgent:
         self.duplex = None
         # bot 都没了，房间自然也不在了；不复位会让 speak_text 继续往死页面推
         self._joined = False
+        self._ensure_output_controls().reset_mute()
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -387,6 +391,7 @@ class VoiceAgent:
 
     def bind_duplex(self, duplex: VoiceDuplex) -> None:
         self.duplex = duplex
+        self._ensure_output_controls().attach(duplex)
         duplex.set_remote_pcm_handler(self._on_remote_pcm)
 
     async def start(self) -> None:
@@ -448,6 +453,9 @@ class VoiceAgent:
         )
 
     async def refresh(self, changed: list[str]) -> list[str]:
+        # 音量只改播放增益；不取消播报，也不等待进退房或重建模型会话。
+        if changed == ["output_volume"]:
+            return [await self._apply_output_volume()]
         self._ensure_operations()
         await self._cancel_voice_control()
         await self._cancel_announcement()
@@ -463,6 +471,9 @@ class VoiceAgent:
             return []
         changed_set = set(changed)
         notes: list[str] = []
+
+        if "output_volume" in changed_set:
+            notes.append(await self._apply_output_volume())
 
         if _MEMORY_FIELDS & changed_set:
             self.memory = MemoryStore(self.settings.memory_path, self.settings.memory_max_turns)
@@ -521,6 +532,43 @@ class VoiceAgent:
     # ------------------------------------------------------------------
     # 进退房
     # ------------------------------------------------------------------
+
+    async def _apply_output_volume(self) -> str:
+        await self._ensure_output_controls().sync_volume(unmute=True)
+        return f"语音音量已设为 {self.settings.output_volume}%"
+
+    def _ensure_output_controls(self) -> VoiceOutputControls:
+        if not hasattr(self, "output_controls"):
+            self.output_controls = VoiceOutputControls(self.settings, lambda: self.duplex, lambda: self._joined)
+        return self.output_controls
+
+    @property
+    def output_muted(self) -> bool:
+        return self._ensure_output_controls().muted
+
+    def set_output_volume_saver(self, saver) -> None:
+        self._ensure_output_controls().set_saver(saver)
+
+    async def set_output_controls(self, *, volume: int | None = None, muted: bool | None = None) -> dict[str, Any]:
+        return await self._ensure_output_controls().set(volume=volume, muted=muted)
+
+    async def apply_voice_volume(self, raw: Any) -> dict[str, Any]:
+        from voice_agent.voice_control import parse_volume_command
+
+        if (not self.settings.enabled or not self.settings.voice_volume_enabled or not self._joined
+                or not self._connection_ready or self._voice_suspended or self._announcement_active
+                or self._retiring_visit_id):
+            return {"ok": False, "error": "当前不能执行语音音量控制"}
+        try:
+            command = parse_volume_command(raw)
+            if command is None:
+                raise ValueError("缺少音量控制指令")
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        result = await self._ensure_output_controls().command(command)
+        self.last_reply = result.get("message") or "语音输出调整失败：" + result.get("error", "")
+        logger.info("语音输出控制：%s → %s", command.action, self.last_reply)
+        return result
 
     def _resolve_target(self, area: str, channel: str) -> tuple[str, str]:
         area = (area or self._area or "").strip()
@@ -592,6 +640,7 @@ class VoiceAgent:
         self._area = area
         self._channel = channel
         self._joined = True
+        self._ensure_output_controls().reset_mute()
         self._voice_suspended = False
         self._retiring_visit_id = ""
         self._speaking = False
@@ -723,6 +772,13 @@ class VoiceAgent:
         setter_control = getattr(self.backend, "set_voice_leave_out", None)
         if setter_control is not None:
             setter_control(lambda: current() and self.request_voice_leave())
+        setter_volume = getattr(self.backend, "set_voice_volume_out", None)
+        if setter_volume is not None:
+            async def on_volume(command: dict[str, Any]) -> dict[str, Any]:
+                if not current():
+                    return {"ok": False, "error": "语音会话已变化"}
+                return await self.apply_voice_volume(command)
+            setter_volume(on_volume)
 
     async def _start_round_worker(self) -> None:
         """拉起信箱消费端。重复进房时先收掉旧的，避免两个 worker 抢同一条。"""
@@ -802,6 +858,7 @@ class VoiceAgent:
         # 退房就关掉 Live 会话：否则 Gemini 会话会一直挂着（既计费又占并发），
         # 而且下次进房时 start_session 会因为旧会话状态而变成空操作。
         self._joined = False
+        self._ensure_output_controls().reset_mute()
         self._retiring_visit_id = ""
         self._reply_generating = False
         self._speaking = False
@@ -823,6 +880,8 @@ class VoiceAgent:
             "area": self._area,
             "channel": self._channel,
             "speaking": self._speaking,
+            "output_volume": self.settings.output_volume,
+            "output_muted": self.output_muted,
             "turns": self.turns,
             "last_user_text": self.last_user_text,
             "last_reply": self.last_reply,
@@ -1022,7 +1081,7 @@ class VoiceAgent:
             # 「嗯嗯，知道了。」—— 用户听到的就是「它每句都接」。
             # 实测（2026-10-01 的 58 个回合）这类占相当一部分，且全是噪音。
             min_ms = max(0, int(getattr(self.settings, "min_utterance_ms", 0) or 0))
-            if self.settings.voice_leave_enabled:
+            if self.settings.voice_leave_enabled or self.settings.voice_volume_enabled:
                 # Short commands still reach intent detection. The cascade keeps
                 # the original threshold for non-command chat replies after ASR.
                 min_ms = min(min_ms, VOICE_CONTROL_MIN_MS)
@@ -1170,6 +1229,11 @@ class VoiceAgent:
             self.last_user_text = reply.user_text or self.last_user_text
             if reply.raw.get("voice_control") == "leave":
                 self.request_voice_leave()
+                return
+            if reply.raw.get("voice_control") == "volume":
+                result = await self.apply_voice_volume(reply.raw.get("volume_command"))
+                if not self.output_muted:
+                    await self.speak_text(result.get("message") or "语音输出调整失败，请查看控制台。")
                 return
             if reply.text:
                 self.last_reply = reply.text

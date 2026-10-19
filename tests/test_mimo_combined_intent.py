@@ -6,11 +6,14 @@ import json
 import pytest
 from test_voice_operations import make_agent
 
+from voice_agent.voice_control import VoiceControlDecision
+
 
 @pytest.mark.parametrize("leave,percent,expected_models", [(False, 100, ["chat", "tts"]), (True, 100, ["chat"]), (True, 0, ["intent"])])
 def test_selected_turn_combines_intent_and_chat_but_zero_percent_can_leave(tmp_path, monkeypatch, leave, percent, expected_models):
     async def run():
         agent = make_agent(tmp_path)
+        agent.settings.voice_volume_enabled = False
         agent.settings.voice_leave_enabled = True
         agent.settings.reply_probability_percent = percent
         agent.settings.min_utterance_ms = 0
@@ -57,9 +60,11 @@ def test_selected_turn_combines_intent_and_chat_but_zero_percent_can_leave(tmp_p
 def test_malformed_combined_result_never_triggers_leave_or_leaks_json_to_tts(tmp_path, monkeypatch, raw):
     async def run():
         agent = make_agent(tmp_path)
+        agent.settings.voice_volume_enabled = False
         agent.settings.voice_leave_enabled = True
         agent.settings.min_utterance_ms = 0
         agent.settings.mimo_api_key = "test"
+        responses = iter([raw, "你好呀"])
         class Response:
             status = 200
             async def __aenter__(self):
@@ -67,7 +72,7 @@ def test_malformed_combined_result_never_triggers_leave_or_leaks_json_to_tts(tmp
             async def __aexit__(self, *args):
                 pass
             async def json(self, **kwargs):
-                return {"choices": [{"message": {"content": raw}}]}
+                return {"choices": [{"message": {"content": next(responses)}}]}
         class Session:
             def post(self, *args, **kwargs):
                 return Response()
@@ -76,14 +81,15 @@ def test_malformed_combined_result_never_triggers_leave_or_leaks_json_to_tts(tmp
         async def asr(*args):
             return "你好"
         async def intent(text):
-            return False
-        async def tts(*args):
-            pytest.fail("malformed control response must not be spoken")
+            return VoiceControlDecision()
+        async def tts(text):
+            assert text == "你好呀", "only the fresh ordinary reply may be spoken"
+            return b"\x01\x00" * 32, 24000
         monkeypatch.setattr(agent.backend, "_http", http)
-        agent.backend.asr, agent.backend.detect_leave_intent, agent.backend.tts = asr, intent, tts
+        agent.backend.asr, agent.backend.detect_control_intent, agent.backend.tts = asr, intent, tts
         reply = await agent.backend.handle_utterance(b"audio", sample_rate=16000)
-        assert not reply.pcm16 and not reply.raw.get("voice_control")
-        assert agent.status()["voice_observation"]["recent_decisions"][-1]["reason"] == "error"
+        assert reply.pcm16 and not reply.raw.get("voice_control")
+        assert agent.status()["voice_observation"]["recent_decisions"][-1]["reason"] == "reply"
         await agent.backend.aclose()
     asyncio.run(run())
 
@@ -91,6 +97,7 @@ def test_malformed_combined_result_never_triggers_leave_or_leaks_json_to_tts(tmp
 def test_failed_combined_request_still_checks_semantic_leave_and_never_speaks(tmp_path, monkeypatch):
     async def run():
         agent = make_agent(tmp_path)
+        agent.settings.voice_volume_enabled = False
         agent.settings.voice_leave_enabled = True
         agent.settings.min_utterance_ms = 0
         async def asr(*args):
@@ -99,11 +106,11 @@ def test_failed_combined_request_still_checks_semantic_leave_and_never_speaks(tm
             raise RuntimeError("upstream unavailable")
         async def intent(text):
             assert text == "你暂时不用在这里陪着了"
-            return True
+            return VoiceControlDecision(leave=True)
         async def tts(*args):
             pytest.fail("control must leave farewell to the agent operation")
         agent.backend.asr, agent.backend.chat_with_intent = asr, combined
-        agent.backend.detect_leave_intent, agent.backend.tts = intent, tts
+        agent.backend.detect_control_intent, agent.backend.tts = intent, tts
         reply = await agent.backend.handle_utterance(b"audio", sample_rate=16000)
         assert reply.raw["voice_control"] == "leave"
         assert not reply.pcm16
@@ -114,6 +121,7 @@ def test_failed_combined_request_still_checks_semantic_leave_and_never_speaks(tm
 def test_malformed_isolated_intent_is_observed_as_error_not_probability(tmp_path, monkeypatch):
     async def run():
         agent = make_agent(tmp_path)
+        agent.settings.voice_volume_enabled = False
         agent.settings.voice_leave_enabled = True
         agent.settings.reply_probability_percent = 0
         agent.settings.min_utterance_ms = 0

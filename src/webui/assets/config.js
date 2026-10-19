@@ -18,14 +18,16 @@ async function loadConfig() {
   const request = ++configRequest;
   try {
     const data = await api('/api/config');
-    if (request !== configRequest) return;
+    if (request !== configRequest) return false;
     configSchema = data.groups || {};
     text('config-status', data.path);
     renderConfig();
     updateSavebar();
+    return true;
   } catch (err) {
     text('config-status', err.message);
     toast('配置读取失败', err.message, 'err');
+    return false;
   }
 }
 
@@ -53,6 +55,7 @@ function renderConfigTabs() {
       if (!btn) return;
       localStorage.setItem('oopz.webui.cfgtab', btn.dataset.tab);
       renderConfig();
+      $('config-tabs').querySelector('[data-tab="' + btn.dataset.tab + '"]')?.focus();
     });
   }
   const current = activeConfigTab();
@@ -62,7 +65,7 @@ function renderConfigTabs() {
     ['system', '系统'],
   ].map(([id, label]) =>
     '<button type="button" class="subtab' + (current === id ? ' is-active' : '') +
-    '" data-tab="' + id + '">' + label + '</button>'
+    '" data-tab="' + id + '" aria-pressed="' + (current === id) + '">' + label + '</button>'
   ).join('');
 }
 
@@ -201,6 +204,7 @@ function selectFieldRow(group, field, meta, wrap) {
 
   const select = wrap.querySelector('select');
   const custom = wrap.querySelector('.cfg-custom');
+  if (custom) custom.setAttribute('aria-label', (meta.label || field) + '：自定义值');
 
   if (inPreset) {
     select.value = current;
@@ -262,6 +266,7 @@ function markDirty(group, field, meta, value, wrap) {
 function updateSavebar() {
   const count = draftCount();
   show($('savebar'), count > 0);
+  positionToasts();
   if (count) text('savebar-text', '有 ' + count + ' 项改动待保存');
   const labels = Object.entries(dirty).flatMap(([group, fields]) => Object.keys(fields).map(field => configSchema?.[group]?.fields?.[field]?.label || field));
   text('config-summary', count ? '待保存：' + labels.join('、') : '');
@@ -299,11 +304,10 @@ async function saveConfig(restartAfter) {
       return;
     }
     const notes = result.notes || [];
-    if (notes.length) {
-      // 语音配置会真正热应用，把后端回传的结果如实告诉用户
-      toast('已保存并热生效', notes.join('；'), 'ok');
+    if (result.hot_reload_failed) {
+      toast('配置已保存，部分未生效', notes.join('；') || '设置已写入，请检查连接状态和日志后重试。', 'warn');
     } else {
-      toast('配置已保存', fields, 'ok');
+      toast('配置已保存', notes.length ? notes.join('；') : fields, 'ok');
     }
     await loadConfig();
     if (restartAfter) {

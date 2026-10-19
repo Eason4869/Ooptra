@@ -9,6 +9,80 @@ let voiceAreaNames = {};
 let voiceChannelNames = {};
 let voiceDefaultArea = '';
 let voiceDefaultChannel = '';
+let voiceOutputState = null;
+let voiceVolumeDraft = null;
+let voiceOutputBusy = false;
+let voiceOutputRevision = 0;
+let voiceOutputOperation = 0;
+
+function resetVoiceOutput() {
+  voiceOutputOperation++;
+  voiceOutputRevision++;
+  voiceOutputState = null;
+  voiceVolumeDraft = null;
+  voiceOutputBusy = false;
+  renderVoiceOutput();
+}
+
+function renderVoiceOutput(st) {
+  if (st) voiceOutputState = st;
+  const state = voiceOutputState;
+  const mic = $('voice-mic-toggle');
+  const slider = $('voice-output-volume');
+  const save = $('voice-volume-save');
+  if (!mic || !slider || !save) return;
+  const available = state && Number.isInteger(state.output_volume);
+  const muted = !!state?.output_muted;
+  text('voice-output-state', !available ? '状态暂不可用' : !state.joined ? '未进房' : muted ? '麦克风关闭 · 仍在接听' : '麦克风打开');
+  mic.textContent = muted ? '打开麦克风' : '关闭麦克风';
+  mic.setAttribute('aria-pressed', String(muted));
+  mic.disabled = voiceOutputBusy || !available || !state.joined;
+  slider.disabled = voiceOutputBusy || !available;
+  slider.value = voiceVolumeDraft ?? state?.output_volume ?? 50;
+  text('voice-volume-value', slider.value + '%');
+  save.disabled = voiceOutputBusy || !available || voiceVolumeDraft === null || (voiceVolumeDraft === state.output_volume && !muted);
+  save.textContent = voiceOutputBusy ? '应用中…' : '保存音量';
+}
+
+async function changeVoiceOutput(body) {
+  if (voiceOutputBusy) return;
+  const operation = ++voiceOutputOperation;
+  voiceOutputRevision++;
+  voiceOutputBusy = true;
+  renderVoiceOutput();
+  try {
+    const result = await api('/api/voice/output', {method: 'POST', body});
+    if (operation !== voiceOutputOperation) return;
+    voiceOutputRevision++;
+    if (body.volume !== undefined) {
+      voiceVolumeDraft = null;
+      // A second editor may contain unsaved fields; refresh its volume only when clean.
+      if (configSchema?.voice?.fields?.output_volume) {
+        configSchema.voice.fields.output_volume.value = result.volume;
+        if (!draftCount()) renderConfig();
+      }
+    }
+    renderVoiceOutput({...voiceOutputState, output_volume: result.volume, output_muted: result.muted});
+    toast('已应用', result.message, 'ok');
+  } catch (err) {
+    if (operation !== voiceOutputOperation) return;
+    voiceOutputRevision++;
+    toast('语音输出设置失败', err.message, 'err');
+    // Re-read the actual state, including a persisted volume whose live application failed.
+    try {
+      const data = await api('/api/voice/status');
+      if (operation === voiceOutputOperation) renderVoiceOutput(data.status || {});
+    } catch (_) {
+      if (operation === voiceOutputOperation) {voiceOutputState = null; renderVoiceOutput();}
+    }
+  } finally {
+    if (operation === voiceOutputOperation) {
+      voiceOutputRevision++;
+      voiceOutputBusy = false;
+      renderVoiceOutput();
+    }
+  }
+}
 
 function currentJoinArea() {
   const el = $('join-area');
@@ -141,6 +215,7 @@ function switchVoiceTab(tab) {
   const name = tab || 'session';
   document.querySelectorAll('#voice-tabs .subtab').forEach((el) => {
     el.classList.toggle('is-active', el.dataset.tab === name);
+    el.setAttribute('aria-pressed', String(el.dataset.tab === name));
   });
   document.querySelectorAll('.vpane').forEach((el) => {
     el.classList.toggle('is-active', el.id === 'vpane-' + name);
@@ -157,6 +232,12 @@ function switchVoiceTab(tab) {
 function setupVoice() {
   if (voiceReady) return;
   voiceReady = true;
+  $('voice-mic-toggle').onclick = () => changeVoiceOutput({muted: !voiceOutputState?.output_muted});
+  $('voice-output-volume').addEventListener('input', event => {
+    voiceVolumeDraft = Number(event.target.value);
+    renderVoiceOutput();
+  });
+  $('voice-volume-save').onclick = () => changeVoiceOutput({volume: voiceVolumeDraft});
   const tabs = $('voice-tabs');
   if (tabs) {
     tabs.addEventListener('click', (event) => {
@@ -264,9 +345,11 @@ async function voiceSpeak() {
 
 async function refreshVoiceStatus() {
   setupVoice();
+  const outputRevision = voiceOutputRevision;
   try {
     const data = await api('/api/voice/status');
     const st = data.status || {};
+    if (outputRevision === voiceOutputRevision && !voiceOutputBusy) renderVoiceOutput(st);
     const joined = !!st.joined;
     const live = String(st.backend || '').includes('gemini');
     text('speak-title', live ? 'AI 语音回答' : '直接朗读');
@@ -302,6 +385,10 @@ async function refreshVoiceStatus() {
     renderTranscript(st);
     renderVoiceDecisions(st.voice_observation || data.voice_observation);
   } catch (err) {
+    if (outputRevision === voiceOutputRevision && !voiceOutputBusy) {
+      voiceOutputState = null;
+      renderVoiceOutput();
+    }
     const detail = $('voice-verdict-detail');
     if (detail) detail.textContent = err.message;
   }

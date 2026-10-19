@@ -14,6 +14,7 @@
     next_check_at: new Date(Date.now() + 720000).toISOString(), areas: {},
     empty_room: {state: 'occupied', remaining_seconds: null}};
   const voice = {enabled: true, joined: false, backend: 'mimo_cascade', area: '', channel: '',
+    output_volume: 50, output_muted: false,
     turns: 2, speaking: false, last_user_text: '今天一起玩什么？', last_reply: '你们想玩合作游戏吗？',
     model_connection: {state: 'ready'}, voice_observation: {recent_decisions: []}};
   const areas = [{id: 'demo-area-1', name: '朋友的游戏小屋'}, {id: 'demo-area-2', name: '周末闲聊'}];
@@ -97,6 +98,10 @@
         }
         if (body.updates?.voice?.backend) voice.backend = body.updates.voice.backend;
         if (body.updates?.voice?.enabled !== undefined) voice.enabled = body.updates.voice.enabled;
+        if (body.updates?.voice?.output_volume !== undefined) {
+          voice.output_volume = body.updates.voice.output_volume;
+          voice.output_muted = false;
+        }
         if (body.updates?.webui?.token !== undefined) {
           if (!body.updates.webui.token) throw {status: 400, error: '演示密码不可为空'};
           password = body.updates.webui.token; authenticated = false;
@@ -112,11 +117,25 @@
     if (endpoint === '/api/oopz/areas') return {areas, default_area: areas[0].id, default_channel: channels[0].id};
     if (endpoint === '/api/oopz/channels') return {channels};
     if (endpoint === '/api/voice/status') return {status: voice, auto_visit: visitStatus};
+    if (endpoint === '/api/voice/output') {
+      if (body.volume !== undefined) {
+        if (!Number.isInteger(body.volume) || body.volume < 10 || body.volume > 100) throw {status: 400, error: '音量须为 10-100 的整数'};
+        voice.output_volume = body.volume;
+        voice.output_muted = false;
+        groups.voice.fields.output_volume.value = body.volume;
+      }
+      if (body.muted !== undefined) {
+        if (!voice.joined || typeof body.muted !== 'boolean') throw {status: 400, error: '进房后才能控制麦克风'};
+        voice.output_muted = body.muted;
+      }
+      return {volume: voice.output_volume, muted: voice.output_muted, saved: body.volume !== undefined,
+        message: body.muted !== undefined ? (voice.output_muted ? '麦克风已关闭，仍在接听' : '麦克风已打开') : '语音音量已保存'};
+    }
     if (endpoint === '/api/voice/join') {
-      Object.assign(voice, {joined: true, area: body.area || areas[0].id, channel: body.channel || channels[0].id, join_source: 'manual'});
+      Object.assign(voice, {joined: true, output_muted: false, area: body.area || areas[0].id, channel: body.channel || channels[0].id, join_source: 'manual'});
       return {status: voice};
     }
-    if (endpoint === '/api/voice/leave') {Object.assign(voice, {joined: false, area: '', channel: '', join_source: null}); return {status: voice};}
+    if (endpoint === '/api/voice/leave') {Object.assign(voice, {joined: false, output_muted: false, area: '', channel: '', join_source: null}); return {status: voice};}
     if (endpoint === '/api/voice/stop') {voice.speaking = false; return {};}
     if (endpoint === '/api/voice/speak') {
       if (!voice.joined) throw {status: 400, error: '请先在演示中进房'};
