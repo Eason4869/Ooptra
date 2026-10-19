@@ -218,10 +218,12 @@ python -m pip install -r requirements-dev.txt
 ruff check .
 python scripts/build_webui_preview.py --check
 pytest -q
-pyright  # 可选：类型检查
+pyright
 ```
 
-CI 在 PR 和 `main` / `beta` / `dev` 推送时执行 Ruff、pytest 与真实浏览器交互测试；Python 覆盖 Ubuntu（3.10 / 3.13）和 Windows（3.13），浏览器任务独立安装 Node／Playwright，不增加运行部署依赖。
+类型检查前，按快速开始从示例创建 `config.py`；保留已有配置即可，不要覆盖账号凭据。CI 使用示例配置执行 Pyright，不要求安装语音或 SOCKS 可选依赖。
+
+CI 在 PR 和 `main` / `beta` / `dev` 推送时执行 Ruff、Pyright、pytest 与真实浏览器交互测试；Python 覆盖 Ubuntu（3.10 / 3.13）和 Windows（3.13），浏览器任务独立安装 Node／Playwright，不增加运行部署依赖。
 源码目录与测试注意事项见[开发说明](docs/operations.md#开发说明)。
 
 ## 许可与鸣谢

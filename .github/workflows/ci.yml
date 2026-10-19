@@ -19,6 +19,10 @@ jobs:
           pip install -r requirements-dev.txt
       - name: ruff
         run: ruff check .
+      - name: Type check with example configuration
+        run: |
+          python -c "import shutil; shutil.copyfile('config.example.py', 'config.py')"
+          pyright
       - name: Verify standalone WebUI preview is current
         run: python scripts/build_webui_preview.py --check
 

@@ -151,7 +151,7 @@ class BackupStore:
             target.unlink(missing_ok=True)
             raise
 
-    def list(self, limit=50) -> list[dict]:
+    def list(self, limit: int | None = 50) -> list[dict]:
         result = []
         for path in sorted(self.directory.glob("*.zip"), key=lambda p: (p.stat().st_mtime_ns, p.name), reverse=True):
             if not re.fullmatch(r"[a-f0-9]{32}", path.stem) or path.is_symlink():

@@ -2,6 +2,28 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from typing import Protocol, runtime_checkable
+
+from voice_agent.voice_control import VoiceControlDecision
+
+
+@runtime_checkable
+class SessionStarter(Protocol):
+    """Live-only capability; cascade backends do not own a session."""
+
+    async def start_session(self) -> None: ...
+
+
+@runtime_checkable
+class ConnectionReporter(Protocol):
+    def connection_status(self) -> dict[str, object]: ...
+
+
+@runtime_checkable
+class ControlIntentDetector(Protocol):
+    """Standalone intent classification, available on cascade backends."""
+
+    async def detect_control_intent(self, user_text: str) -> VoiceControlDecision: ...
 
 
 @dataclass

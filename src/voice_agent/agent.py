@@ -18,6 +18,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from voice_agent.backends import create_backend
+from voice_agent.backends.base import ConnectionReporter, SessionStarter
 from voice_agent.duplex import VoiceDuplex
 from voice_agent.memory import MemoryStore
 from voice_agent.operations import VoiceOperation
@@ -261,6 +262,7 @@ class VoiceAgent:
                     await asyncio.wait_for(self.duplex.enable_listen(True), 1.0)
                 if self.live_mode:
                     await self._wire_live()
+                    assert isinstance(self.backend, SessionStarter), "Live backend requires start_session"
                     await asyncio.wait_for(self.backend.start_session(), 5.0)
                 else:
                     await self._start_round_worker()
@@ -632,9 +634,13 @@ class VoiceAgent:
             if old is not None:
                 with contextlib.suppress(Exception):
                     await old.close()
-            self.bind_duplex(VoiceDuplex(backend))
-            await self.duplex.start()
-            await self.duplex.enable_listen(True)
+            duplex = VoiceDuplex(backend)
+            self.bind_duplex(duplex)
+            await duplex.start()
+            await duplex.enable_listen(True)
+
+        duplex = self.duplex
+        assert duplex is not None, "Voice duplex must be bound before joining"
 
         sign = await self._bot.voice.join(area=area, channel=channel)
         self._area = area
@@ -646,7 +652,7 @@ class VoiceAgent:
         self._speaking = False
         self._rearm_barge_in()
         try:
-            await self.duplex.enable_listen(True)
+            await duplex.enable_listen(True)
 
             # 级联：拉起单槽信箱的消费端。Live 走服务端 VAD，不需要它。
             if not self.live_mode:
@@ -669,7 +675,7 @@ class VoiceAgent:
             "channel": channel,
             "rtc_channel": getattr(sign, "rtc_channel_name", ""),
             "mode": "live" if self.live_mode else "cascade",
-            "model_connection": self.backend.connection_status() if hasattr(self.backend, "connection_status") else None,
+            "model_connection": self.backend.connection_status() if isinstance(self.backend, ConnectionReporter) else None,
             "conversation_window_seconds": self.settings.conversation_window_seconds if self.settings.conversation_window_enabled else 0,
         }
         logger.info("voice agent joined %s/%s mode=%s", area, channel, payload["mode"])
@@ -871,7 +877,7 @@ class VoiceAgent:
         return {
             "voice_observation": self.backend.observation.snapshot() if hasattr(self.backend, "observation") else {"recent_decisions": [], "limit": 40},
             "enabled": self.settings.enabled,
-            "model_connection": self.backend.connection_status() if hasattr(self.backend, "connection_status") else None,
+            "model_connection": self.backend.connection_status() if isinstance(self.backend, ConnectionReporter) else None,
             "conversation_window_seconds": self.settings.conversation_window_seconds if self.settings.conversation_window_enabled else 0,
             "backend": self.settings.backend,
             "mode": "live" if self.live_mode else "cascade",
@@ -929,6 +935,7 @@ class VoiceAgent:
             # only safe boundary after a timed-out reply; old audio stays muted.
             if restart and self._joined:
                 await self._wire_live()
+                assert isinstance(self.backend, SessionStarter), "Live backend requires start_session"
                 await asyncio.wait_for(self.backend.start_session(), 5.0)
         elif restart and self._joined:
             await self._start_round_worker()
@@ -1191,11 +1198,13 @@ class VoiceAgent:
     async def _handle_utterance(self, uid: str, pcm: bytes, sample_rate: int) -> None:
         self._ensure_operations()
         task = asyncio.current_task()
-        self._reply_tasks.add(task)
+        if task is not None:
+            self._reply_tasks.add(task)
         try:
             await self._handle_utterance_reply(uid, pcm, sample_rate)
         finally:
-            self._reply_tasks.discard(task)
+            if task is not None:
+                self._reply_tasks.discard(task)
 
     async def _handle_utterance_reply(self, uid: str, pcm: bytes, sample_rate: int) -> None:
         if not pcm or getattr(self, "_announcement_active", False):
@@ -1278,7 +1287,8 @@ class VoiceAgent:
             return {"ok": False, "error": "announcement active"}
         self._reply_generating = True
         task = asyncio.current_task()
-        self._reply_tasks.add(task)
+        if task is not None:
+            self._reply_tasks.add(task)
         try:
             result = await self._speak_text(text)
             if not self.live_mode or not result.get("ok"):
@@ -1288,7 +1298,8 @@ class VoiceAgent:
             self._reply_generating = False
             raise
         finally:
-            self._reply_tasks.discard(task)
+            if task is not None:
+                self._reply_tasks.discard(task)
 
     async def _speak_text(self, text: str) -> dict[str, Any]:
         """快捷开口：Live 走 realtimeInput.text；级联走 TTS。"""

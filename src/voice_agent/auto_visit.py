@@ -115,9 +115,11 @@ class AutoVisitController:
             self._fail_state(exc)
             raise
 
-    def _schedule_check(self) -> None:
-        self._next_check = self.clock.monotonic() + self.rng.uniform(
+    def _schedule_check(self) -> float:
+        next_check = self.clock.monotonic() + self.rng.uniform(
             *self.config.check_interval_minutes) * 60
+        self._next_check = next_check
+        return next_check
 
     def _utc_deadline(self, value: float | None) -> str | None:
         if value is None:
@@ -325,9 +327,10 @@ class AutoVisitController:
                         "global", snapshot["global_cooldown_until"]) else "waiting"
                 await self._sleep_or_wake(5 if self.agent.status().get("joined") else 60)
                 continue
-            if self._next_check is None:
-                self._schedule_check()
-            delay = self._next_check - self.clock.monotonic()
+            next_check = self._next_check
+            if next_check is None:
+                next_check = self._schedule_check()
+            delay = next_check - self.clock.monotonic()
             if delay > 0:
                 self._phase = "waiting"
                 await self._sleep_or_wake(delay)
@@ -516,9 +519,11 @@ class AutoVisitController:
             return False
         self._empty_state = "alone"
         now = self.clock.monotonic()
-        if self._empty_since is None:
-            self._empty_since = now
-        if now - self._empty_since < 30:
+        empty_since = self._empty_since
+        if empty_since is None:
+            empty_since = now
+            self._empty_since = empty_since
+        if now - empty_since < 30:
             return False
         try:
             verified = await only_self()
@@ -536,7 +541,8 @@ class AutoVisitController:
     async def _check_empty_room(self) -> None:
         async with self._empty_check_lock:
             key = self._room_key()
-            if not await self._room_empty_confirmed() or key != self._room_key():
+            confirmed = await self._room_empty_confirmed()
+            if key is None or not confirmed or key != self._room_key():
                 return
             try:
                 source = "auto" if self.agent.status().get("join_source") == "auto" else "manual"

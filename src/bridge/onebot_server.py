@@ -9,14 +9,19 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any
+from typing import Any, Protocol
 
 from aiohttp import WSMsgType
 
 from bridge.state import BridgeState, describe_error
 from oopz_sdk.adapters.onebot.v11 import OneBotV11Server
+from oopz_sdk.adapters.onebot.v11.server import WsRole
 
 logger = logging.getLogger("bridge.onebot")
+
+
+class _TextWebSocket(Protocol):
+    async def send_str(self, data: str) -> None: ...
 
 
 class BridgeOneBotV11Server(OneBotV11Server):
@@ -42,7 +47,7 @@ class BridgeOneBotV11Server(OneBotV11Server):
     # 反向 WebSocket
     # ------------------------------------------------------------------
 
-    async def _connect_reverse_ws(self, url: str, role: str) -> None:
+    async def _connect_reverse_ws(self, url: str, role: WsRole) -> None:
         link = self._state.reverse_ws
         link.mark_attempt(url)
         if self._session is None:
@@ -103,6 +108,11 @@ class BridgeOneBotV11Server(OneBotV11Server):
             raise
         finally:
             link.mark_disconnected(error_text)
+
+    @staticmethod
+    async def _ws_send_json(ws: _TextWebSocket, data: Any) -> None:
+        # 正向与反向连接共享相同的 JSON 帧格式。
+        await ws.send_str(json.dumps(data, ensure_ascii=False))
 
     # ------------------------------------------------------------------
     # action 计数

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import importlib
 import time
 from typing import Any
 
@@ -31,9 +32,8 @@ def mask(value: Any, keep: int = 4) -> str:
 
 def _has_private_key() -> bool:
     try:
-        from private_key import get_private_key
-
-        return bool(get_private_key())
+        private_key = importlib.import_module("private_key")
+        return bool(private_key.get_private_key())
     except Exception:
         return False
 
