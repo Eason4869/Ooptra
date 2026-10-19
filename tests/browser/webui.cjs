@@ -488,6 +488,69 @@ async function main() {
         }
       }
     }
+    let bindings = [{group_id: 'Bot:GroupMessage:123456', umo: 'Bot:GroupMessage:123456', area: 'qa', areas: ['qa'], channel: '', label: '开黑群'}];
+    let sourceRules = [];
+    await page.route('**/api/voice/astrbot/bindings', async route => {
+      const body = route.request().postDataJSON();
+      if (body?.action === 'save') {
+        if (body.group_id === 'invalid') return route.fulfill({status: 400, json: {error: 'UMO 格式无效'}});
+        bindings = bindings.filter(row => row.group_id !== body.previous_key && row.group_id !== body.group_id);
+        bindings.push({...body, umo: body.group_id, area: body.areas[0]});
+      }
+      if (body?.action === 'delete') bindings = bindings.filter(row => row.group_id !== body.group_id);
+      if (body?.action === 'source-save') sourceRules = [body];
+      await route.fulfill({json: {ok: true, source_management: true, bindings, context_sources: {rules: sourceRules}, context_sync: {personas: [{id: '助手', name: '助手'}]}}});
+    });
+    await nav('voice');
+    await page.locator('#voice-tabs [data-tab="bindings"]').click();
+    const sm = page.locator('#session-manager');
+    await sm.locator('[data-list]').getByText('开黑群', {exact: true}).waitFor();
+    assert((await sm.locator('[data-list]').innerText()).includes('验收域'));
+    await sm.locator('[data-list] button').filter({hasText: '编辑'}).click();
+    await sm.locator('[data-label]').fill('更新备注');
+    await sm.locator('[data-map-form] button[type=submit]').click();
+    await sm.locator('[data-list]').getByText('更新备注', {exact: true}).waitFor();
+    await sm.locator('[data-umo]').fill('Bot:FriendMessage:456');
+    await sm.locator('[data-label]').fill('私聊来源');
+    await sm.locator('[data-control]').uncheck();
+    await sm.locator('[data-map-form] button[type=submit]').click();
+    await sm.locator('[data-list]').getByText('私聊来源', {exact: true}).waitFor();
+    assert.equal(bindings.length, 2, 'same domain accepts group and private UMO');
+    await sm.locator('[data-tab=sources]').click();
+    await sm.locator('[data-persona-umo]').selectOption('Bot:GroupMessage:123456');
+    for (const checkbox of await sm.locator('[data-memories] input').all()) await checkbox.check();
+    assert.equal(await sm.locator('[data-save-source]').isDisabled(), true, 'private source needs visible consent');
+    await sm.locator('[data-private]').check();
+    await sm.locator('[data-save-source]').click();
+    await sm.locator('[data-rules]').getByText('记忆查询并写回 2 个会话', {exact: true}).waitFor();
+    assert.deepEqual(sourceRules[0].memory_umos, ['Bot:GroupMessage:123456', 'Bot:FriendMessage:456']);
+    for (const width of [1440, 390, 320]) {
+      await page.setViewportSize({width, height: 1000});
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false, 'binding page overflow ' + width);
+      if (process.env.OOPTRA_BROWSER_ARTIFACTS) await page.screenshot({path: path.join(process.env.OOPTRA_BROWSER_ARTIFACTS, 'bindings-' + width + '.png'), fullPage: true});
+    }
+    await sm.locator('[data-tab=maps]').click();
+    await sm.locator('[data-umo]').fill('invalid');
+    await sm.locator('[data-map-form] button[type=submit]').click();
+    await sm.locator('[data-status]').getByText('UMO 格式无效', {exact: true}).waitFor();
+    assert.equal(await sm.locator('[data-umo]').inputValue(), 'invalid', 'failed save retains draft');
+    await sm.locator('[data-list] button').filter({hasText: '移除'}).first().click();
+    await page.locator('dialog.sm-dialog').getByRole('button', {name: '确认', exact: true}).click();
+    await page.waitForFunction(() => document.querySelector('#session-manager [data-count]').textContent === '1');
+    let inheritedPersona = true;
+    await page.route('**/api/persona', route => route.fulfill({json: {ok: true, persona: 'local persona', effective_persona: inheritedPersona ? 'AstrBot persona' : 'local persona', astrbot_context: {active: inheritedPersona}}}));
+    await page.route('**/api/voice/status', route => route.fulfill({json: {ok: true, status: {enabled: true, joined: true, backend: 'gemini_live'}, astrbot_context: {active: inheritedPersona, connected: false, group_id: '123', persona_id: 'selected', provider: 'memory_companion', pending_writes: 0}}}));
+    await nav('voice');
+    await page.locator('#page-voice .subtab[data-tab="persona"]').click();
+    await page.waitForFunction(() => document.querySelector('#persona-text').value === 'AstrBot persona');
+    assert.equal(await page.locator('#persona-text').isEditable(), false);
+    assert.equal(await page.locator('#persona-save').isDisabled(), true);
+    inheritedPersona = false;
+    await page.locator('#page-voice .subtab[data-tab="session"]').click();
+    await page.locator('#page-voice .subtab[data-tab="persona"]').click();
+    await page.waitForFunction(() => document.querySelector('#persona-text').value === 'local persona');
+    assert.equal(await page.locator('#persona-text').isEditable(), true);
+    assert.equal(await page.locator('#persona-save').isDisabled(), false);
     assert.deepEqual(errors, [], 'page scripts must load without errors');
     await nav('config');
     await page.locator('#config-tabs [data-tab="system"]').click();

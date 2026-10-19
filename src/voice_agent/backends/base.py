@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from voice_agent.voice_control import VoiceControlDecision
 
@@ -40,6 +40,14 @@ class VoiceBackend(ABC):
     """语音大脑：输入一段 utterance PCM，输出文字 + 回话 PCM。"""
 
     name: str = "base"
+    context_bridge: Any = None
+    settings: Any
+    _bridge_output_failed: bool = False
+
+    @property
+    def effective_persona(self) -> str:
+        bridge = self.context_bridge
+        return bridge.persona if bridge is not None and bridge.active else self.settings.persona
 
     @abstractmethod
     async def handle_utterance(
