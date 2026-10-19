@@ -707,7 +707,7 @@ def build_voice_routes(
     async def context_bindings(request: web.Request) -> web.Response:
         bridge = current_agent().context_bridge
         if not bridge.connected:
-            return err("插件未连接。请启用 astrbot_plugin_ooptra 1.3.0-dev 或以上版本，并检查 api_base 与 api_token。", 503)
+            return err("插件未连接。请启用 astrbot_plugin_ooptra 2.0.0 或以上版本，并检查 api_base 与 api_token。", 503)
         body = {"action": "list"} if request.method == "GET" else await read_json(request)
         if body.get("action") not in {"list", "save", "delete"}:
             return err("不支持的绑定操作")

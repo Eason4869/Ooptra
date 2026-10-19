@@ -22,9 +22,9 @@
 
 把 Oopz 文字接入 AstrBot 等 OneBot v11 框架，并让机器人进入 Oopz 语音房自然聊天。
 
-当前开发版：**261019.1-dev**。
+当前开发版：**261019-dev**，预设正式版及正式版比较基线：**4.0.0**。本次仅更新 `dev` 分支，尚未发布正式版。
 
-> 此版本的人格与双向记忆同步功能需配合 **[astrbot_plugin_ooptra 1.3.0-dev 及以上版本](https://github.com/Eason4869/astrbot_plugin_ooptra/tree/dev)** 使用。单独运行 Ooptra 时，仍可使用本地人格和语音记录。
+> 此版本的人格与双向记忆同步功能需配合 **[astrbot_plugin_ooptra 2.0.0 及以上版本](https://github.com/Eason4869/astrbot_plugin_ooptra/tree/dev)** 使用。单独运行 Ooptra 时，仍可使用本地人格和语音记录。
 
 ## 可以做什么
 

@@ -1,6 +1,6 @@
 # AstrBot 上下文同步
 
-适用：Ooptra 261019.1-dev 与 astrbot_plugin_ooptra 1.3.0-dev，协议 v1。
+适用：Ooptra 261019-dev（预设正式版 4.0.0）与 astrbot_plugin_ooptra 2.0.0，协议 v1。
 
 ## 运行结构
 
