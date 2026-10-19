@@ -504,7 +504,7 @@ async function loadPersona() {
     const voice = await api('/api/voice/status');
     const shared = voice.astrbot_context || {};
     text('astrbot-context-status', shared.active
-      ? `已接入 QQ 群 ${shared.group_id} · 人格 ${shared.persona_id || '未设置'} · 记忆 ${shared.provider || '未接入'} · 待写 ${shared.pending_writes || 0} 条。${shared.error || shared.memory_error || ''}`
+      ? `人格来源 ${shared.persona_umo || shared.group_id} · 人格 ${shared.persona_id || '未设置'} · 记忆 ${shared.provider || '未接入'}（${(shared.memory_umos || []).length} 个查询／写回会话）· 待写 ${shared.pending_writes || 0} 条。${shared.error || shared.memory_error || ''}`
       : `使用本地设置。${shared.error || ''}`);
     const data = await api('/api/persona');
     const ta = $('persona-text');

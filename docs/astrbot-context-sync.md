@@ -12,7 +12,8 @@
 | POST /voice/astrbot/result | 回传 request_id、client_id 和实际执行结果 |
 | POST /voice/astrbot/refresh | 清理当前模型会话并重新解析来源 |
 | GET /voice/astrbot/bindings | 通过插件读取唯一的 group_map 配置 |
-| POST /voice/astrbot/bindings | action=save/delete 管理对应关系，校验频道归属与重叠范围 |
+| POST /voice/astrbot/bindings | action=save/delete 管理完整 UMO 映射；source-save/source-delete 管理来源，source-options 查询目录 |
+| GET /voice/astrbot/text-channels?area=… | 返回命名文字频道、现有 OneBot 数字 ID 和 bot_id，用于核对 WS 平台身份 |
 
 WebUI 同时提供 /api 前缀别名，独立 VOICE_API 使用相同路由与自己的令牌。
 持久 client_id 为当前插件实例提供租约；其他实例在租约有效时被拒绝。
@@ -20,13 +21,12 @@ WebUI 同时提供 /api 前缀别名，独立 VOICE_API 使用相同路由与自
 bindings 管理请求独立于语音 session_id，自动串门不取消正在保存的配置。
 
 请求包含 protocol、request_id、session_id、room、scope、created_at 和 payload。
-room 是实际 Oopz 域／频道；scope 保存来源群、QQ 平台、人格和主记忆插件。
+room 是实际 Oopz 域／频道；scope 保存完整人格 UMO、人格、主记忆插件、memory_scopes 与 memory_route_id（来源规则摘要）。memory_scopes 含所有选中会话的完整 UMO、平台身份、群聊／私聊类型和各自 memory_persona_id。
 作用域变化后丢弃过期的上下文响应。普通记忆采集保留原始来源，不会重新定向到新群。
 
 ## 人格与记忆边界
 
-人格来源跟随 QQ 群，可手选语音人格。memory_persona_id 单独跟随 QQ 群，避免
-手选语音人格后，语音写出的记忆被 QQ 群原有人格过滤掉。
+人格来源单选，可手选内置人格覆盖；记忆会话多选，查询与写回全部选中目标。每个目标独立跟随其会话人格过滤。控制映射与来源规则分离，频道规则覆盖域默认，旧唯一绑定仍兼容；显式空规则不回退。私聊须管理员确认共享和写回。
 
 Live 使用系统指令、初始群记忆和显式记忆工具。记忆请求在独立任务中执行，
 不会在模型收包循环中等待第三方检索。模型取消尚在排队的工具调用时，取消相应任务。
@@ -38,7 +38,7 @@ MiMo 使用相同来源人格和群作用域，检索后加入受限上下文，
 ## 本地状态
 
 - voice_memory.jsonl：原有语音记录。
-- 同目录 astrbot_voice_outbox.json：待 AstrBot 确认的采集事件，最多 128 条。
+- 同目录 astrbot_voice_outbox.json：待确认的采集事件与失败后补写的 remember 请求，保留原请求 ID，最多 128 条。
 - 配套插件数据目录 voice_context.sqlite3：来源线索、实例 ID、处理回执与阶段检查点。
 
 离线时，已建立的 Live 会话仍保留已加载人格；记忆请求明确失败，语音采集继续排队。
@@ -46,7 +46,7 @@ MiMo 使用相同来源人格和群作用域，检索后加入受限上下文，
 
 回执保护正常重试和重连；外部插件写入成功到本地检查点落盘之间仍有崩溃窗口，
 不能承诺跨进程、跨第三方存储事务的严格 exactly-once。
-普通 captured 表示对话已进入采集；stored 才表示明确长期写入已确认。
+逐目标保存成功回执，部分失败重试只补写失败目标。全部成功才返回整体 ok=true；普通 captured 表示对话已进入采集，stored 才表示明确长期写入已确认。
 
 ## 验证
 

@@ -1138,7 +1138,8 @@ form[inert] { opacity: .65; }
     model_connection: {state: 'ready'}, voice_observation: {recent_decisions: []}};
   const areas = [{id: 'demo-area-1', name: '朋友的游戏小屋'}, {id: 'demo-area-2', name: '周末闲聊'}];
   const channels = [{id: 'demo-channel-1', name: '游戏语音'}, {id: 'demo-channel-2', name: '休息室'}];
-  let bindings = [{group_id: '123456789', area: areas[0].id, areas: [areas[0].id], channel: channels[0].id, label: '演示开黑群'}];
+  let bindings = [{group_id: 'Demo:GroupMessage:123456789', umo: 'Demo:GroupMessage:123456789', area: areas[0].id, areas: [areas[0].id], channel: '', label: '演示开黑群'}];
+  let sourceRules = [];
   const logs = ['14:20:00 INFO [Preview] 离线演示已启动，没有连接真实服务。',
     '14:20:01 INFO [Bridge] 演示数据：Oopz / OneBot 已连接',
     '14:20:02 INFO [Voice] 回复概率 30%，连续对话窗口 30 秒，独处 30 秒退出'];
@@ -1238,12 +1239,16 @@ form[inert] { opacity: .65; }
     if (endpoint === '/api/oopz/channels') return {channels};
     if (endpoint === '/api/voice/astrbot/bindings') {
       if (body.action === 'save') {
-        if (bindings.some(row => row.group_id !== body.group_id && body.areas.includes(row.area) && (!body.channel || !row.channel || row.channel === body.channel))) throw {status: 400, error: '绑定冲突：所选范围已对应其他 QQ 群'};
-        bindings = bindings.filter(row => row.group_id !== body.group_id);
-        bindings.push({...body, area: body.areas[0]});
+        bindings = bindings.filter(row => row.group_id !== body.group_id && row.group_id !== body.previous_key);
+        bindings.push({...body, umo: body.group_id, area: body.areas[0]});
       }
       if (body.action === 'delete') bindings = bindings.filter(row => row.group_id !== body.group_id);
-      return {bindings};
+      if (['source-save', 'source-delete'].includes(body.action)) {
+        sourceRules = sourceRules.filter(row => row.area !== body.area || row.channel !== body.channel);
+        if (body.action === 'source-save') sourceRules.push(body);
+      }
+      if (body.action === 'source-options') return {groups: [{name: '演示开黑群', umo: 'Demo:GroupMessage:123456789', kind: 'qq'}, {name: '演示私聊', umo: 'Demo:FriendMessage:456', kind: 'session'}]};
+      return {ok: true, source_management: true, bindings, context_sources: {rules: sourceRules}, platforms: [{id: 'Demo', name: '演示实例'}], context_sync: {personas: [{id: '语音伙伴', name: '语音伙伴'}]}};
     }
     if (endpoint === '/api/voice/status') return {status: voice, auto_visit: visitStatus};
     if (endpoint === '/api/voice/output') {
@@ -1574,7 +1579,7 @@ form[inert] { opacity: .65; }
         <button class="subtab is-active" data-tab="session">会话控制</button>
         <button class="subtab" data-tab="auto-visit">自动串门</button>
         <button class="subtab" data-tab="members">房间成员</button>
-        <button class="subtab" data-tab="bindings">QQ 群对应</button>
+        <button class="subtab" data-tab="bindings">会话对应</button>
         <button class="subtab" data-tab="persona">人格与记忆</button>
         <button class="subtab" data-tab="tools">自检与试听</button>
       </div>
@@ -1795,29 +1800,11 @@ form[inert] { opacity: .65; }
         </section>
       </div>
 
-      <div class="vpane" id="vpane-bindings">
-        <div class="toolbar"><div class="grow"><h3>语音房与 QQ 群</h3><p class="hint">决定这个房间使用哪个 QQ 群的人格与公共记忆。</p></div><button class="btn" id="binding-refresh">刷新</button><button class="btn primary" id="binding-new">新增对应</button></div>
-        <p class="hint" id="binding-status" role="status">正在连接插件…</p>
-        <div class="binding-layout">
-          <section class="card binding-overview"><header class="card-head"><h3>已有对应 <span class="chip" id="binding-count">0</span></h3></header><input class="control" id="binding-search" type="search" placeholder="搜索域名、频道、群号或备注" aria-label="搜索对应关系"><div id="binding-list" class="binding-list"></div><p class="hint">一个语音房只能对应一个 QQ 群。整个域的绑定包含域内全部语音频道。</p></section>
-          <section class="card binding-editor"><header class="card-head"><h3 id="binding-editor-title">新增对应</h3></header>
-            <form id="binding-form">
-              <label>1 · 选择 Oopz 域<select class="control" id="binding-area" required></select></label>
-              <label>2 · 对应范围<select class="control" id="binding-scope"><option value="channel">指定语音频道（推荐）</option><option value="area">整个域 · 全部语音频道</option></select></label>
-              <label id="binding-channel-field">选择语音频道<select class="control" id="binding-channel" required></select></label>
-              <label>3 · QQ 群号<input class="control" id="binding-group" inputmode="numeric" pattern="[1-9][0-9]{0,19}" maxlength="20" required placeholder="例如 123456789"></label>
-              <label>备注（可选）<input class="control" id="binding-label" maxlength="80" placeholder="例如：周末开黑群"></label>
-              <p class="binding-summary" id="binding-summary" aria-live="polite">选择域和频道后填写 QQ 群号。</p>
-              <p class="hint">每个 QQ 群保存一条对应；修改范围会替换该群原有对应。保存后下次进房生效，当前房间需刷新 AstrBot 上下文。</p>
-              <div class="toolbar"><button class="btn primary" id="binding-save" type="submit">保存对应</button><button class="btn" type="button" id="binding-cancel">取消编辑</button></div>
-            </form>
-          </section>
-        </div>
-      </div>
+      <div class="vpane" id="vpane-bindings"><div id="session-manager"></div></div>
 
       <!-- 人格与记忆 -->
       <div class="vpane" id="vpane-persona">
-        <section class="card"><header class="card-head"><h3>AstrBot 人格与记忆</h3><button class="btn sm" id="astrbot-context-refresh">刷新 AstrBot 上下文</button></header><p class="hint" id="astrbot-context-status">未接入 AstrBot，使用本地设置。</p><p class="hint">在 astrbot_plugin_ooptra 工作台开启同步并选择人格、记忆插件。来源跟随当前语音频道的 QQ 群绑定。</p></section>
+        <section class="card"><header class="card-head"><h3>AstrBot 人格与记忆</h3><button class="btn sm" id="astrbot-context-refresh">刷新 AstrBot 上下文</button></header><p class="hint" id="astrbot-context-status">未接入 AstrBot，使用本地设置。</p><p class="hint">在 astrbot_plugin_ooptra 工作台开启同步并选择人格、记忆插件。在「会话对应」选择一个人格 UMO，并勾选需要查询和写回的全部记忆会话。</p></section>
         <div class="split">
           <section class="card">
             <header class="card-head">
@@ -3866,7 +3853,7 @@ async function loadPersona() {
     const voice = await api('/api/voice/status');
     const shared = voice.astrbot_context || {};
     text('astrbot-context-status', shared.active
-      ? `已接入 QQ 群 ${shared.group_id} · 人格 ${shared.persona_id || '未设置'} · 记忆 ${shared.provider || '未接入'} · 待写 ${shared.pending_writes || 0} 条。${shared.error || shared.memory_error || ''}`
+      ? `人格来源 ${shared.persona_umo || shared.group_id} · 人格 ${shared.persona_id || '未设置'} · 记忆 ${shared.provider || '未接入'}（${(shared.memory_umos || []).length} 个查询／写回会话）· 待写 ${shared.pending_writes || 0} 条。${shared.error || shared.memory_error || ''}`
       : `使用本地设置。${shared.error || ''}`);
     const data = await api('/api/persona');
     const ta = $('persona-text');
@@ -4325,129 +4312,106 @@ async function saveVisitConfig(scope) {
 
 </script>
 <script>
-/* AstrBot group_map is the single source of truth. */
-'use strict';
-let bindingRows = [], bindingAreas = [], bindingChannels = {}, bindingEditing = '', bindingBusy = false;
-let bindingReady = false, bindingLoadVersion = 0, bindingChannelVersion = 0;
-let bindingChannelsLoading = false;
-const bindingEndpoint = '/api/voice/astrbot/bindings';
-function bindingNode(tag, content, cls) {
-  const node = document.createElement(tag);
-  if (content !== undefined) node.textContent = content;
-  if (cls) node.className = cls;
-  return node;
-}
-function bindingAreaName(id) { return bindingAreas.find(row => row.id === id)?.name || id; }
-function bindingChannelName(area, id) { return bindingChannels[area]?.find(row => row.id === id)?.name || id; }
-function bindingAreasOf(row) { return row.areas?.length ? row.areas : row.area ? [row.area] : []; }
-function renderBindings() {
-  const list = $('binding-list'), query = $('binding-search').value.trim().toLowerCase();
-  list.replaceChildren(); text('binding-count', bindingRows.length);
-  let visible = 0;
-  for (const row of bindingRows) {
-    const areas = bindingAreasOf(row), names = areas.map(bindingAreaName).join('、');
-    const channel = row.channel ? areas.map(id => bindingChannelName(id, row.channel)).join(' / ') : '全部语音频道';
-    if (query && ![names, channel, row.group_id, row.label, ...areas, row.channel].join(' ').toLowerCase().includes(query)) continue;
-    visible++;
-    const card = bindingNode('article', undefined, 'binding-row'), route = bindingNode('div', undefined, 'binding-route');
-    const room = bindingNode('div'), group = bindingNode('div');
-    room.append(bindingNode('strong', names || '未设置域'), bindingNode('span', channel, 'binding-channel-name'), bindingNode('small', areas.join(' / ') + (row.channel ? ' · ' + row.channel : ''), 'binding-id'));
-    group.append(bindingNode('small', 'QQ 群', 'hint'), bindingNode('strong', row.group_id), bindingNode('small', row.label || '无备注', 'hint'));
-    route.append(room, bindingNode('span', '→', 'binding-arrow'), group);
-    const actions = bindingNode('div', undefined, 'toolbar');
-    actions.append(bindingNode('span', row.channel ? '指定频道' : '整个域', 'chip'));
-    for (const [label, fn] of [['编辑', () => editBinding(row)], ['移除', () => deleteBinding(row)]]) {
-      const button = bindingNode('button', label, 'btn sm'); button.type = 'button'; button.disabled = bindingBusy;
-      button.onclick = fn; actions.append(button);
+/* Shared source for both Ooptra distributions. Keep the plugin copy identical. */
+(() => {
+  'use strict';
+  window.OoptraSessionManager = {mount(root, options) {
+    root.classList.add('session-manager');
+    root.innerHTML = `<style>
+      .session-manager fieldset{border:0;padding:0;margin:0;min-width:0}.session-manager .sm-target,.session-manager .sm-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.session-manager .sm-target{grid-template-columns:repeat(3,minmax(0,1fr));margin-bottom:18px}.session-manager label{display:grid;gap:7px;font-size:13px}.session-manager input,.session-manager select,.session-manager textarea{width:100%;min-width:0}.session-manager .sm-check{display:flex;align-items:flex-start;gap:9px;font-size:13px;line-height:1.6}.session-manager .sm-check input{width:auto;margin-top:5px;flex:none}.session-manager .sm-stack{display:grid;gap:14px}.session-manager .sm-row{padding:15px;border:1px solid var(--line,#dfe7f0);border-radius:10px;display:grid;gap:8px;overflow-wrap:anywhere}.session-manager code{font-size:12px;overflow-wrap:anywhere;white-space:normal}.session-manager .sm-note{padding:13px;border-radius:9px;background:var(--panel-3,#edf2f9);font-size:13px;line-height:1.7;overflow-wrap:anywhere}.session-manager .sm-list{display:grid;gap:12px;margin:14px 0}.session-manager [hidden]{display:none!important}.session-manager .control{box-sizing:border-box}.session-manager .sm-memory{max-height:340px;overflow:auto}.sm-dialog{width:min(560px,calc(100vw - 40px));box-sizing:border-box;border:1px solid var(--line,#dfe7f0);border-radius:14px;padding:22px;background:var(--panel,#fff);color:var(--text,#173451)}.sm-dialog::backdrop{background:#10203088}.sm-dialog label{display:grid;gap:6px;margin:12px 0}.sm-dialog .control{width:100%;box-sizing:border-box}.sm-dialog .sm-list{display:grid;gap:8px;max-height:42vh;overflow:auto}.sm-dialog .sm-choice{text-align:left;white-space:normal;overflow-wrap:anywhere;padding:12px}.session-manager .toolbar{flex-wrap:wrap}@media(max-width:850px){.session-manager .sm-grid,.session-manager .sm-target{grid-template-columns:minmax(0,1fr)}}
+    </style><fieldset data-lock><section class="card"><header class="card-head"><div><h3>会话映射与共享上下文</h3><p class="hint">先映射会话，再选人格和记忆。UMO 包含实例名、群聊／私聊类型和会话 ID。</p></div><button class="btn" type="button" data-refresh>刷新</button></header>
+      <div class="sm-target"><label>Oopz 域<select class="control" data-area></select></label><label>作用范围<select class="control" data-range><option value="area">整个域 · 默认规则</option><option value="channel">指定语音频道 · 覆盖域默认</option></select></label><label data-channel-field>语音频道<select class="control" data-channel></select></label></div>
+      <div class="toolbar"><button class="btn primary" type="button" data-tab="maps">① 会话映射／控制入口</button><button class="btn" type="button" data-tab="sources">② 人格与记忆</button></div><p class="hint" data-status role="status"></p></section>
+      <div data-pane="maps" class="sm-grid"><section class="card"><header class="card-head"><h3>已映射会话 <span class="chip" data-count>0</span></h3></header><input class="control" type="search" data-search placeholder="搜索完整 UMO、备注或域名" aria-label="搜索会话映射"><div class="sm-list" data-list></div><p class="hint">同一范围可映射多个群聊和私聊。控制权限与共享记忆的选择分别生效。</p></section>
+      <section class="card"><header class="card-head"><h3 data-editor-title>添加会话映射</h3><button class="btn sm" type="button" data-new>新增</button></header><form class="sm-stack" data-map-form><label>完整 UMO<input class="control" data-umo required maxlength="512" placeholder="Bot:GroupMessage:12345678"></label><button class="btn" type="button" data-pick>从 AstrBot 选择会话</button><label>备注<input class="control" data-label maxlength="80" placeholder="例如：Oopz 文字闲聊／QQ 开黑群"></label><label class="sm-check"><input type="checkbox" data-control checked>允许这个会话查询和控制语音房</label><details><summary>高级：一条映射包含多个域</summary><label>域 ID（每行一个；留空使用上面选择的域）<textarea class="control" data-areas rows="3"></textarea></label></details><p class="sm-note" data-map-preview></p><p class="hint">保存到当前选择的域／频道；修改已有映射时会替换该会话原来的范围。旧群号可保留，也可改成完整 UMO。</p><div class="toolbar"><button class="btn primary" type="submit">保存会话映射</button><button class="btn" type="button" data-cancel>取消编辑</button></div></form></section></div>
+      <div data-pane="sources" hidden class="sm-grid"><section class="card"><header class="card-head"><h3>已保存的来源规则</h3></header><div class="sm-list" data-rules></div><p class="hint">指定频道优先使用自己的规则，否则继承域默认。删除最后一条规则后不会回退到控制绑定。</p></section>
+      <section class="card"><header class="card-head"><h3>当前范围的上下文来源</h3></header><form class="sm-stack" data-source-form><p class="sm-note" data-inherit></p><label>人格来源 · 单选<select class="control" data-persona-umo required></select></label><label>人格覆盖（可选）<select class="control" data-persona-id></select></label><div><strong>记忆会话 · 多选</strong><p class="hint">查询所有选中会话，并将语音新记忆写回所有选中会话。每个会话单独记录成功／失败。</p><div class="sm-list sm-memory" data-memories></div></div><label class="sm-check" data-private-field hidden><input type="checkbox" data-private>我确认：选中私聊的人格／记忆可用于这个公共语音房，语音新记忆也会写回这些私聊。</label><p class="sm-note" data-source-preview></p><p class="hint">保存后下次进房生效；当前房间请在「人格与记忆」刷新上下文。同步总开关与记忆插件在 AstrBot 工作台设置。</p><button class="btn primary" type="submit" data-save-source>保存人格与记忆来源</button></form></section></div>
+    </fieldset>`;
+    const $ = key => root.querySelector(`[data-${key}]`);
+    const node = (tag, text, cls) => {const el=document.createElement(tag); if(text!==undefined)el.textContent=text;if(cls)el.className=cls;return el;};
+    let data={}, areas=[], channels={}, editing=null, pickedKind='session', busy=false, channelEpoch=0;
+    const area=()=>$('area').value, channel=()=>$('range').value==='area'?'':$('channel').value;
+    const areaName=id=>areas.find(row=>row.id===id)?.name||id;
+    const scopeLabel=row=>`${(row.areas||[row.area]).map(areaName).join('、')} / ${row.channel?(channels[row.area]?.find(c=>c.id===row.channel)?.name||row.channel):'全部语音频道'}`;
+    const status=(message,error=false)=>{$('status').textContent=message;$('status').style.color=error?'var(--err,#b7384f)':'';};
+    const opts=(select,rows,placeholder,value='')=>{select.replaceChildren(new Option(placeholder,''));for(const row of rows)select.add(new Option(row.name||row.id,row.id));select.value=value;};
+    const eligible=()=>{
+      const result=new Map();
+      for(const row of data.bindings||[])if(row.umo&&(row.areas||[row.area]).includes(area())&&(!row.channel||row.channel===channel()))result.set(row.umo,{id:row.umo,name:`${row.label?row.label+' · ':''}${row.umo}`});
+      return [...result.values()];
+    };
+    function confirmAction(message){return new Promise(resolve=>{const dialog=node('dialog',undefined,'sm-dialog');dialog.append(node('p',message));for(const [label,yes]of [['取消',false],['确认',true]]){const button=node('button',label,'btn');button.onclick=()=>{dialog.close();resolve(yes);};dialog.append(button);}dialog.oncancel=()=>resolve(false);dialog.onclose=()=>dialog.remove();document.body.append(dialog);dialog.showModal();});}
+    function preview(){
+      $('map-preview').textContent=`${scopeLabel({area:area(),channel:channel()})} ← ${$('umo').value||'待选择 UMO'} · ${$('control').checked?'允许控制':'仅映射，不开放控制'}`;
+      const selected=[...$('memories').querySelectorAll('input:checked')].map(el=>el.value);
+      const privateUsed=[$('persona-umo').value,...selected].some(umo=>umo.includes(':FriendMessage:'));
+      $('private-field').hidden=!privateUsed;
+      $('source-preview').textContent=`人格：${$('persona-umo').value||'待选择'}；记忆查询并写回：${selected.length?selected.join('、'):'未选择（仅同步人格）'}`;
+      $('save-source').disabled=busy||selected.length>8||!$('persona-umo').value||!area()||($('range').value==='channel'&&!channel())||(privateUsed&&!$('private').checked);
     }
-    card.append(route, actions);
-    const conflicts = bindingRows.filter(other => other.group_id !== row.group_id && areas.some(id => bindingAreasOf(other).includes(id)) && (!row.channel || !other.channel || row.channel === other.channel));
-    if (conflicts.length) card.append(bindingNode('p', '范围冲突 · 同时对应 QQ 群 ' + conflicts.map(item => item.group_id).join('、') + '，请修改或移除重叠对应。', 'binding-warning'));
-    list.append(card);
-  }
-  if (!visible) list.append(bindingNode('p', query ? '没有匹配的对应关系。' : '还没有对应关系。点击「新增对应」开始。', 'hint'));
-}
-function bindingOptions(select, rows, placeholder, value = '') {
-  select.replaceChildren(new Option(placeholder, ''));
-  for (const row of rows) select.add(new Option(row.name || row.id, row.id));
-  if (value && !rows.some(row => row.id === value)) select.add(new Option('无法读取名称 · ' + value, value));
-  select.value = value;
-}
-async function bindingLoadChannels(area, selected = '') {
-  const version = ++bindingChannelVersion;
-  bindingChannelsLoading = true; $('binding-channel').disabled = true;
-  bindingOptions($('binding-channel'), [], '正在加载频道…'); bindingPreview();
-  try {
-    if (area && !bindingChannels[area]) bindingChannels[area] = (await api('/api/oopz/channels?area=' + encodeURIComponent(area))).channels || [];
-    if (version !== bindingChannelVersion) return;
-    bindingOptions($('binding-channel'), bindingChannels[area] || [], '请选择语音频道', selected); renderBindings();
-  } catch (error) {
-    if (version !== bindingChannelVersion) return;
-    bindingOptions($('binding-channel'), [], '频道加载失败，请刷新', selected); text('binding-status', error.message);
-  } finally {
-    if (version === bindingChannelVersion) { bindingChannelsLoading = false; $('binding-channel').disabled = false; bindingPreview(); }
-  }
-}
-function bindingPreview() {
-  const whole = $('binding-scope').value === 'area';
-  $('binding-channel-field').hidden = whole; $('binding-channel').required = !whole;
-  const area = $('binding-area').value, group = $('binding-group').value, channel = $('binding-channel').value;
-  const multi = bindingAreasOf(bindingRows.find(row => row.group_id === bindingEditing) || {}).length > 1;
-  text('binding-summary', multi ? '这是一条多域绑定。为保留完整范围，请在 AstrBot 工作台编辑；这里可查看或移除。' : area && group ? `${bindingAreaName(area)} / ${whole ? '全部语音频道' : bindingChannelName(area, channel) || '请选择频道'} → QQ 群 ${group}` : '选择域和频道后填写 QQ 群号。');
-  $('binding-save').disabled = bindingBusy || !bindingReady || multi || bindingChannelsLoading;
-}
-async function editBinding(row) {
-  bindingEditing = row?.group_id || ''; $('binding-group').value = bindingEditing; $('binding-group').readOnly = !!row;
-  $('binding-label').value = row?.label || ''; $('binding-scope').value = row && !row.channel ? 'area' : 'channel';
-  bindingOptions($('binding-area'), bindingAreas, '请选择 Oopz 域', row?.area || '');
-  text('binding-editor-title', row ? '编辑 QQ 群 ' + row.group_id : '新增对应'); bindingPreview();
-  await bindingLoadChannels(row?.area || '', row?.channel || '');
-}
+    function renderMaps(){
+      $('count').textContent=(data.bindings||[]).length;const list=$('list');list.replaceChildren();const search=$('search').value.toLowerCase();
+      for(const row of data.bindings||[]){if(search&&![row.group_id,row.label,...(row.areas||[])].join(' ').toLowerCase().includes(search))continue;
+        const card=node('article',undefined,'sm-row');card.append(node('strong',row.label||'未命名会话'),node('code',row.umo||`旧群号 ${row.group_id} · 请补全 UMO`),node('span',scopeLabel(row)),node('span',row.allow_control===false?'仅映射 · 未开放控制':'控制入口已启用','hint'));
+        const actions=node('div',undefined,'toolbar');for(const [name,fn]of [['编辑',()=>edit(row)],['移除',async()=>{if(await confirmAction(`移除 ${row.umo||row.group_id} 的映射？已选它作为来源的规则将需要重新设置。`))await mutate({action:'delete',group_id:row.group_id});}]]){const button=node('button',name,'btn sm');button.type='button';button.onclick=fn;actions.append(button);}card.append(actions);list.append(card);
+      }if(!list.children.length)list.append(node('p','没有匹配的会话映射。','hint'));
+    }
+    function renderRules(){const list=$('rules');list.replaceChildren();for(const row of data.context_sources?.rules||[]){const card=node('article',undefined,'sm-row');card.append(node('strong',scopeLabel(row)),node('code',`人格：${row.persona_umo}`),node('small',`记忆查询并写回 ${(row.memory_umos||[]).length} 个会话`));for(const umo of row.memory_umos||[])card.append(node('code',umo));const actions=node('div',undefined,'toolbar');for(const[name,fn]of [['编辑',()=>setTarget(row.area,row.channel)],['删除规则',async()=>{if(await confirmAction('删除此来源规则？不会自动改用其他会话的记忆。'))await mutate({action:'source-delete',area:row.area,channel:row.channel||''});}]]){const button=node('button',name,'btn sm');button.type='button';button.onclick=fn;actions.append(button);}card.append(actions);list.append(card);}if(!list.children.length)list.append(node('p',data.context_sources?.rules?'尚未配置来源。':'尚未单独设置来源，兼容旧唯一绑定；多映射时请明确保存来源规则。','hint'));}
+    function fillSources(){
+      const exact=(data.context_sources?.rules||[]).find(row=>row.area===area()&&(row.channel||'')===channel());
+      const inherited=!exact&&channel()?(data.context_sources?.rules||[]).find(row=>row.area===area()&&!row.channel):null;
+      const rule=exact||inherited, rows=eligible();opts($('persona-umo'),rows,'请选择一个映射会话',rule?.persona_umo||'');
+      if(rule?.persona_umo&&!rows.some(row=>row.id===rule.persona_umo)){$('persona-umo').add(new Option('已解绑或不可用：'+rule.persona_umo,rule.persona_umo));$('persona-umo').value=rule.persona_umo;}
+      opts($('persona-id'),data.context_sync?.personas||[],'跟随所选会话的人格',rule?.persona_id||'');
+      const missing=(rule?.memory_umos||[]).filter(umo=>!rows.some(row=>row.id===umo)).map(umo=>({id:umo,name:'已解绑或不可用，请取消勾选：'+umo}));
+      const host=$('memories');host.replaceChildren();for(const row of [...rows,...missing]){const label=node('label',undefined,'sm-check'),input=node('input');input.type='checkbox';input.value=row.id;input.checked=(rule?.memory_umos||[]).includes(row.id);input.onchange=()=>{$('private').checked=false;preview();};label.append(input,node('span',row.name));host.append(label);}if(!rows.length)host.append(node('p','此范围没有完整 UMO 映射，请先到「会话映射／控制入口」添加。','hint'));
+      $('private').checked=rule?.allow_private===true;$('inherit').textContent=inherited?'当前继承域默认。保存后将为这个频道建立独立覆盖规则。':exact?'正在编辑这个范围已保存的来源规则。':'这个范围尚未设置来源；人格单选，记忆最多选择 8 个会话。';preview();
+    }
+    function edit(row){editing=row;pickedKind=row?.kind||'session';$('umo').value=row?.umo||row?.group_id||'';$('label').value=row?.label||'';$('control').checked=row?.allow_control!==false;$('areas').value=row?.areas?.length>1?row.areas.join('\n'):'';$('editor-title').textContent=row?'编辑会话映射':'添加会话映射';if(row)setTarget(row.area,row.channel);preview();}
+    async function setTarget(id, cid=''){$('area').value=id;$('range').value=cid?'channel':'area';await loadChannels(cid);fillSources();}
+    async function loadChannels(selected=''){
+      const epoch=++channelEpoch;$('channel-field').hidden=$('range').value==='area';$('lock').disabled=true;
+      try{const id=area();if(id&&!channels[id])channels[id]=(await options.channels(id)).channels||[];if(epoch!==channelEpoch)return;opts($('channel'),channels[id]||[],'请选择语音频道',selected);fillSources();renderRules();preview();}catch(error){status(error.message,true);}finally{if(epoch===channelEpoch)$('lock').disabled=busy;}
+    }
+    async function mutate(body){if(busy)return;busy=true;$('lock').disabled=true;try{const result=await options.rpc(body);update(result,areas);if(body.action==='save')edit(null);status(result.message||'设置已保存，下次进房生效；当前房间请刷新上下文。');options.onChange?.(result);}catch(error){status(error.message,true);}finally{busy=false;$('lock').disabled=false;preview();}}
+    async function pickSession(){
+      const dialog=node('dialog',undefined,'sm-dialog');dialog.innerHTML='<h3>从 AstrBot 选择会话</h3><label>平台实例<select class="control" data-platform></select></label><label>会话类型<select class="control" data-kind><option value="qq">真实 QQ 群</option><option value="friend">QQ 私聊联系人</option><option value="oopz">Oopz 文字频道</option></select></label><label data-text-field hidden>文字频道所在域<select class="control" data-text-area></select></label><button class="btn primary" type="button" data-load>加载会话</button><p class="hint" data-info>也可以取消后直接粘贴完整 UMO；兼容已识别的平台会话。</p><div class="sm-list" data-choices></div><button class="btn" type="button" data-close>取消</button>';
+      const q=key=>dialog.querySelector(`[data-${key}]`);q('kind').add(new Option('最近识别的完整 UMO','known'));opts(q('platform'),data.platforms||[],'请选择实例');opts(q('text-area'),areas,'请选择域',area());q('kind').onchange=()=>q('text-field').hidden=q('kind').value!=='oopz';q('close').onclick=()=>dialog.close();let epoch=0;
+      q('load').onclick=async()=>{const request=++epoch;q('load').disabled=true;try{const result=q('kind').value==='known'?{groups:(data.known_sessions||[]).filter(row=>!q('platform').value||row.umo.startsWith(q('platform').value+':'))}:await options.rpc({action:'source-options',platform_id:q('platform').value,kind:q('kind').value,text_area:q('text-area').value});if(!dialog.open||request!==epoch)return;q('choices').replaceChildren();q('info').textContent=`找到 ${result.total??result.groups.length} 个会话；单击一项填写 UMO。`;for(const row of result.groups){const button=node('button',`${row.name} · ${row.umo}`,'btn sm-choice');button.type='button';button.onclick=()=>{$('umo').value=row.umo;pickedKind=row.kind||'session';$('label').value=$('label').value||row.name;preview();dialog.close();};q('choices').append(button);}}catch(error){q('info').textContent=error.message;}finally{q('load').disabled=false;}};
+      dialog.onclose=()=>{epoch++;dialog.remove();};document.body.append(dialog);dialog.showModal();
+    }
+    function update(next,nextAreas){data=next;areas=nextAreas||areas;const id=area()||areas[0]?.id||'';opts($('area'),areas,'请选择 Oopz 域',id);renderMaps();renderRules();fillSources();preview();}
+    $('map-form').onsubmit=async event=>{event.preventDefault();if(!area()||($('range').value==='channel'&&!channel()))return status('请选择域和语音频道',true);const raw=$('areas').value.trim();await mutate({action:'save',group_id:$('umo').value.trim(),previous_key:editing?.group_id||$('umo').value.trim(),areas:raw?raw.split(/[\s,、]+/u):[area()],channel:channel(),label:$('label').value.trim(),allow_control:$('control').checked,kind:pickedKind});};
+    $('source-form').onsubmit=async event=>{event.preventDefault();if($('save-source').disabled)return;await mutate({action:'source-save',area:area(),channel:channel(),persona_umo:$('persona-umo').value,persona_id:$('persona-id').value,memory_umos:[...$('memories').querySelectorAll('input:checked')].map(el=>el.value),allow_private:$('private').checked});};
+    $('area').onchange=()=>loadChannels();$('range').onchange=()=>loadChannels();$('channel').onchange=()=>{fillSources();preview();};$('search').oninput=renderMaps;$('umo').oninput=()=>{pickedKind='session';preview();};$('control').onchange=preview;$('persona-umo').onchange=()=>{$('private').checked=false;preview();};$('private').onchange=preview;$('pick').onclick=pickSession;$('new').onclick=$('cancel').onclick=()=>edit(null);$('refresh').onclick=async()=>{try{channels={};update(await options.rpc({action:'list'}),areas);await loadChannels(channel());status('已刷新。');}catch(error){status(error.message,true);}};
+    root.querySelectorAll('[data-tab]').forEach(button=>button.onclick=()=>{for(const pane of root.querySelectorAll('[data-pane]'))pane.hidden=pane.dataset.pane!==button.dataset.tab;root.querySelectorAll('[data-tab]').forEach(tab=>tab.classList.toggle('primary',tab===button));});
+    return {update,loadChannels};
+  }};
+})();
+
+</script>
+<script>
+/* Mount the same UMO session manager used by the AstrBot workbench. */
+'use strict';
+let voiceSessionManager = null;
+let sessionLoadVersion = 0;
 async function loadBindings() {
-  if (!$('binding-list') || bindingBusy) return;
-  if (!$('binding-form').onsubmit) {
-    $('binding-form').onsubmit = saveBinding; $('binding-refresh').onclick = loadBindings;
-    $('binding-new').onclick = $('binding-cancel').onclick = () => editBinding(null);
-    $('binding-search').oninput = renderBindings;
-    $('binding-area').onchange = () => bindingLoadChannels($('binding-area').value);
-    for (const id of ['binding-scope', 'binding-channel', 'binding-group', 'binding-label']) $(id).oninput = bindingPreview;
-  }
-  const version = ++bindingLoadVersion; bindingReady = false; bindingPreview(); text('binding-status', '正在读取插件中的对应关系…');
+  const root = $('session-manager'), version = ++sessionLoadVersion;
+  if (!root) return;
   try {
-    const [data, areas] = await Promise.all([api(bindingEndpoint), api('/api/oopz/areas')]);
-    if (version !== bindingLoadVersion) return;
-    bindingRows = data.bindings || []; bindingAreas = areas.areas || []; bindingChannels = {};
-    await Promise.all([...new Set(bindingRows.flatMap(bindingAreasOf))].map(async area => {
-      try { bindingChannels[area] = (await api('/api/oopz/channels?area=' + encodeURIComponent(area))).channels || []; } catch (_) { /* IDs remain visible. */ }
-    }));
-    if (version !== bindingLoadVersion) return;
-    bindingReady = true; renderBindings(); await editBinding(null); text('binding-status', '已连接 astrbot_plugin_ooptra · 与 AstrBot 工作台共用一份配置');
+    const [data, areas] = await Promise.all([api('/api/voice/astrbot/bindings'), api('/api/oopz/areas')]);
+    if (version !== sessionLoadVersion) return;
+    if (!data.source_management) throw new Error('请先更新 astrbot_plugin_ooptra dev，当前插件不支持完整 UMO 与多会话记忆。');
+    if (!voiceSessionManager) voiceSessionManager = window.OoptraSessionManager.mount(root, {
+      rpc: body => api('/api/voice/astrbot/bindings', {method: 'POST', body}),
+      channels: area => api('/api/oopz/channels?area=' + encodeURIComponent(area)),
+    });
+    voiceSessionManager.update(data, areas.areas || []);
+    await voiceSessionManager.loadChannels();
   } catch (error) {
-    if (version !== bindingLoadVersion) return;
-    bindingReady = false; text('binding-status', error.message); text('binding-list', '暂时无法读取对应关系，请检查插件连接后刷新。'); bindingPreview();
+    if (version !== sessionLoadVersion) return;
+    voiceSessionManager = null; root.textContent = error.message;
   }
-}
-async function saveBinding(event) {
-  event.preventDefault();
-  if (bindingBusy || !bindingReady || $('binding-save').disabled) return;
-  const body = {action: 'save', group_id: $('binding-group').value.trim(), areas: [$('binding-area').value], channel: $('binding-scope').value === 'area' ? '' : $('binding-channel').value, label: $('binding-label').value.trim()};
-  if ((!bindingEditing && bindingRows.some(row => row.group_id === body.group_id)) || !body.channel) {
-    if (!await confirmDialog('确认保存对应', !body.channel ? '该域内全部语音频道都将使用这个 QQ 群的上下文。' : '这会替换该 QQ 群原有的对应范围。')) return;
-  }
-  await mutateBinding(body);
-}
-async function deleteBinding(row) {
-  if (bindingBusy || !await confirmDialog('移除对应关系', `移除 QQ 群 ${row.group_id} 的对应？下次进房后不再从这个群继承上下文。`)) return;
-  await mutateBinding({action: 'delete', group_id: row.group_id});
-}
-async function mutateBinding(body) {
-  bindingBusy = true; bindingPreview(); renderBindings();
-  try {
-    const result = await api(bindingEndpoint, {method: 'POST', body});
-    bindingRows = result.bindings || []; renderBindings(); await editBinding(null);
-    text('binding-status', body.action === 'save' ? '对应已保存。下次进房生效；当前房间请刷新 AstrBot 上下文。' : '对应已移除。下次进房生效。');
-  } catch (error) { text('binding-status', error.message); }
-  finally { bindingBusy = false; bindingPreview(); renderBindings(); }
 }
 
 </script>

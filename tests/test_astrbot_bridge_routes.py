@@ -59,3 +59,33 @@ def test_bridge_rpc_is_authenticated_correlated_and_rejects_second_instance():
             assert bridge.active and bridge.persona == "shared"
             assert (await client.put("/persona", headers=headers, json={"persona": "ignored"})).status == 409
     asyncio.run(run())
+
+
+def test_text_channels_reuse_onebot_registry_and_exclude_voice_channels():
+    async def run():
+        records = {}
+        def mapped(source):
+            records.setdefault(source, 1000 + len(records))
+            return SimpleNamespace(number=records[source])
+        async def channels(area):
+            assert area == "area-a"
+            return [SimpleNamespace(channels=[
+                SimpleNamespace(channel_id="text-a", channel_type="TEXT", name="闲聊"),
+                SimpleNamespace(channel_id="voice-a", channel_type="VOICE", name="语音")])]
+        adapter = SimpleNamespace(protocol="onebot.v11", self_id=42, ids=SimpleNamespace(createId=mapped))
+        bot = SimpleNamespace(adapters=[adapter], areas=SimpleNamespace(get_area_channels=channels))
+        runtime = SimpleNamespace(agent=SimpleNamespace(_bot=bot))
+        api = VoiceApiServer(runtime, VoiceApiSettings(token="test-secret"))
+        app = web.Application()
+        app.add_routes(build_voice_routes(runtime, wrap=api._wrap))
+        async with TestClient(TestServer(app)) as client:
+            path = "/voice/astrbot/text-channels?area=area-a"
+            assert (await client.get(path)).status == 401
+            headers = {"Authorization": "Bearer test-secret"}
+            first = await (await client.get(path, headers=headers)).json()
+            second = await (await client.get(path, headers=headers)).json()
+            assert first == second
+            assert first["bot_id"] == "42"
+            assert first["channels"] == [{"id": "text-a", "name": "闲聊", "area": "area-a", "group_id": "1000"}]
+            assert records == {"group:area-a:text-a": 1000}
+    asyncio.run(run())

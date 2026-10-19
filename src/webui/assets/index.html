@@ -239,7 +239,7 @@
         <button class="subtab is-active" data-tab="session">会话控制</button>
         <button class="subtab" data-tab="auto-visit">自动串门</button>
         <button class="subtab" data-tab="members">房间成员</button>
-        <button class="subtab" data-tab="bindings">QQ 群对应</button>
+        <button class="subtab" data-tab="bindings">会话对应</button>
         <button class="subtab" data-tab="persona">人格与记忆</button>
         <button class="subtab" data-tab="tools">自检与试听</button>
       </div>
@@ -460,29 +460,11 @@
         </section>
       </div>
 
-      <div class="vpane" id="vpane-bindings">
-        <div class="toolbar"><div class="grow"><h3>语音房与 QQ 群</h3><p class="hint">决定这个房间使用哪个 QQ 群的人格与公共记忆。</p></div><button class="btn" id="binding-refresh">刷新</button><button class="btn primary" id="binding-new">新增对应</button></div>
-        <p class="hint" id="binding-status" role="status">正在连接插件…</p>
-        <div class="binding-layout">
-          <section class="card binding-overview"><header class="card-head"><h3>已有对应 <span class="chip" id="binding-count">0</span></h3></header><input class="control" id="binding-search" type="search" placeholder="搜索域名、频道、群号或备注" aria-label="搜索对应关系"><div id="binding-list" class="binding-list"></div><p class="hint">一个语音房只能对应一个 QQ 群。整个域的绑定包含域内全部语音频道。</p></section>
-          <section class="card binding-editor"><header class="card-head"><h3 id="binding-editor-title">新增对应</h3></header>
-            <form id="binding-form">
-              <label>1 · 选择 Oopz 域<select class="control" id="binding-area" required></select></label>
-              <label>2 · 对应范围<select class="control" id="binding-scope"><option value="channel">指定语音频道（推荐）</option><option value="area">整个域 · 全部语音频道</option></select></label>
-              <label id="binding-channel-field">选择语音频道<select class="control" id="binding-channel" required></select></label>
-              <label>3 · QQ 群号<input class="control" id="binding-group" inputmode="numeric" pattern="[1-9][0-9]{0,19}" maxlength="20" required placeholder="例如 123456789"></label>
-              <label>备注（可选）<input class="control" id="binding-label" maxlength="80" placeholder="例如：周末开黑群"></label>
-              <p class="binding-summary" id="binding-summary" aria-live="polite">选择域和频道后填写 QQ 群号。</p>
-              <p class="hint">每个 QQ 群保存一条对应；修改范围会替换该群原有对应。保存后下次进房生效，当前房间需刷新 AstrBot 上下文。</p>
-              <div class="toolbar"><button class="btn primary" id="binding-save" type="submit">保存对应</button><button class="btn" type="button" id="binding-cancel">取消编辑</button></div>
-            </form>
-          </section>
-        </div>
-      </div>
+      <div class="vpane" id="vpane-bindings"><div id="session-manager"></div></div>
 
       <!-- 人格与记忆 -->
       <div class="vpane" id="vpane-persona">
-        <section class="card"><header class="card-head"><h3>AstrBot 人格与记忆</h3><button class="btn sm" id="astrbot-context-refresh">刷新 AstrBot 上下文</button></header><p class="hint" id="astrbot-context-status">未接入 AstrBot，使用本地设置。</p><p class="hint">在 astrbot_plugin_ooptra 工作台开启同步并选择人格、记忆插件。来源跟随当前语音频道的 QQ 群绑定。</p></section>
+        <section class="card"><header class="card-head"><h3>AstrBot 人格与记忆</h3><button class="btn sm" id="astrbot-context-refresh">刷新 AstrBot 上下文</button></header><p class="hint" id="astrbot-context-status">未接入 AstrBot，使用本地设置。</p><p class="hint">在 astrbot_plugin_ooptra 工作台开启同步并选择人格、记忆插件。在「会话对应」选择一个人格 UMO，并勾选需要查询和写回的全部记忆会话。</p></section>
         <div class="split">
           <section class="card">
             <header class="card-head">
@@ -632,6 +614,7 @@
 <script src="/assets/app.js"></script>
 <script src="/assets/config.js"></script>
 <script src="/assets/voice.js"></script>
+<script src="/assets/session-manager.js"></script>
 <script src="/assets/bindings.js"></script>
 <script src="/assets/maintenance.js"></script>
 </body>
