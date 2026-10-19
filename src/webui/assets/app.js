@@ -65,13 +65,37 @@ async function api(path, opts = {}) {
 }
 
 function toast(title, text, kind) {
+  const host = $('toasts');
+  const key = JSON.stringify([title, text || '', kind || '']);
+  const existing = [...host.children].find(item => item.dataset.key === key);
+  if (existing) existing.remove();
   const box = document.createElement('div');
   box.className = 'toast ' + (kind || '');
-  box.innerHTML = '<b></b><span></span>';
+  box.dataset.key = key;
+  box.setAttribute('role', kind === 'err' ? 'alert' : 'status');
+  box.innerHTML = '<b></b><span></span><button class="toast-close" type="button" aria-label="关闭通知">×</button>';
   box.querySelector('b').textContent = title;
   box.querySelector('span').textContent = text || '';
-  $('toasts').appendChild(box);
-  setTimeout(() => box.remove(), kind === 'err' ? 6000 : 3600);
+  host.appendChild(box);
+  while (host.childElementCount > 3) host.firstElementChild.remove();
+  host.scrollTop = host.scrollHeight;
+  positionToasts();
+  let timer;
+  const dismiss = () => { clearTimeout(timer); box.remove(); };
+  const resume = () => { clearTimeout(timer); timer = setTimeout(dismiss, kind === 'err' ? 8000 : 4000); };
+  box.querySelector('button').addEventListener('click', dismiss);
+  box.addEventListener('focusin', () => clearTimeout(timer));
+  box.addEventListener('focusout', resume);
+  resume();
+}
+
+function positionToasts() {
+  const host = $('toasts');
+  if (!host?.childElementCount) return;
+  const bar = $('savebar');
+  const bounds = bar && !bar.hidden ? bar.getBoundingClientRect() : null;
+  const offset = bounds?.width && bounds.top < innerHeight ? Math.max(18, Math.ceil(innerHeight - bounds.top + 12)) : 18;
+  host.style.setProperty('--toast-offset', offset + 'px');
 }
 
 function fmtDuration(seconds) {
@@ -153,20 +177,64 @@ function copyText(value) {
   return Promise.resolve();
 }
 
+let dialogPending = false;
+let cancelActiveDialog = null;
+
 function confirmDialog(title, message, yesLabel) {
+  if (dialogPending) return Promise.resolve(false);
+  dialogPending = true;
   return new Promise((resolve) => {
+    const previousFocus = document.activeElement;
+    const backdrop = $('dialog');
+    const panel = backdrop.querySelector('.dialog');
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-modal', 'true');
+    panel.setAttribute('aria-labelledby', 'dialog-title');
+    panel.setAttribute('aria-describedby', 'dialog-text');
+    const surfaces = [$('screen-app'), $('screen-login')].map(el => ({el, inert: el.inert}));
+    surfaces.forEach(({el}) => { el.inert = true; });
     $('dialog-title').textContent = title;
     $('dialog-text').textContent = message;
     $('dialog-yes').textContent = yesLabel || '确定';
-    show($('dialog'), true);
+    show(backdrop, true);
     const done = (ok) => {
-      show($('dialog'), false);
+      show(backdrop, false);
+      dialogPending = false;
+      cancelActiveDialog = null;
+      surfaces.forEach(({el, inert}) => { el.inert = inert; });
+      document.removeEventListener('keydown', onKey, true);
       $('dialog-yes').onclick = $('dialog-no').onclick = null;
+      if (previousFocus && previousFocus.isConnected) previousFocus.focus({preventScroll: true});
       resolve(ok);
     };
+    const onKey = (event) => {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); done(false); }
+      if (event.key === 'Tab') {
+        event.preventDefault();
+        const next = document.activeElement === $('dialog-no') ? $('dialog-yes') : $('dialog-no');
+        next.focus();
+      }
+    };
+    document.addEventListener('keydown', onKey, true);
+    cancelActiveDialog = () => done(false);
     $('dialog-yes').onclick = () => done(true);
     $('dialog-no').onclick = () => done(false);
+    $('dialog-no').focus();
   });
+}
+
+async function withButtonBusy(button, action, label) {
+  if (button.disabled) return;
+  const previousLabel = button.textContent;
+  button.disabled = true;
+  button.setAttribute('aria-busy', 'true');
+  button.textContent = label;
+  try { return await action(); }
+  finally {
+    button.disabled = false;
+    button.removeAttribute('aria-busy');
+    button.textContent = previousLabel;
+  }
 }
 
 function credsUsable(creds) {
@@ -211,6 +279,7 @@ let state = {};
 let loginGate = 'token';
 
 function showLogin(result) {
+  if (cancelActiveDialog) cancelActiveDialog();
   stopPolling();
   stopLogStream();
   clearTimeout(loginPollTimer);
@@ -298,7 +367,7 @@ function enterApp() {
   setupNav();
   refreshCredentials();
   loadLogFiles();
-  switchPage('overview');
+  switchPage(pageFromLocation(), '', {replace: true});
   startPolling();
 }
 
@@ -311,6 +380,7 @@ async function logout() {
   stopPolling();
   dirty = {};
   configSchema = null;
+  if (window.resetVoiceOutput) window.resetVoiceOutput();
   logBuffer = [];
   state = {};
   updateSavebar();
@@ -320,10 +390,54 @@ async function logout() {
 /* ───────── 导航 ───────── */
 
 let navReady = false;
+const PAGE_PATHS = {overview: '/overview', logs: '/logs', voice: '/voice', maintenance: '/maintenance', config: '/config', account: '/account'};
+let pageHistoryIndex = Number(history.state?.ooptraPageIndex) || 0;
+let restoringPageHistory = false;
+let pageHistoryRequest = 0;
+
+function pageFromLocation() {
+  const path = location.protocol === 'file:' ? location.hash.replace(/^#/, '') : location.pathname;
+  return Object.keys(PAGE_PATHS).find(name => PAGE_PATHS[name] === path) || 'overview';
+}
+
+function writePageLocation(name, replace) {
+  const url = new URL(location.href);
+  if (url.protocol === 'file:') url.hash = PAGE_PATHS[name];
+  else {
+    url.pathname = replace && name === 'overview' && url.pathname === '/' ? '/' : PAGE_PATHS[name];
+    url.hash = '';
+  }
+  const same = url.href === location.href;
+  if (!replace && same) return;
+  if (!replace) pageHistoryIndex++;
+  history[replace ? 'replaceState' : 'pushState']({...history.state, ooptraPageIndex: pageHistoryIndex}, '', url);
+}
+
+async function followPageHistory() {
+  const request = ++pageHistoryRequest;
+  if (restoringPageHistory) { restoringPageHistory = false; return; }
+  const nextIndex = Number(history.state?.ooptraPageIndex);
+  if ($('screen-app').hidden) { if (Number.isFinite(nextIndex)) pageHistoryIndex = nextIndex; return; }
+  const current = document.querySelector('.page.is-active')?.id.replace('page-', '') || 'overview';
+  const changed = await switchPage(pageFromLocation(), '', {fromHistory: true});
+  if (request !== pageHistoryRequest) return;
+  if (changed) { if (Number.isFinite(nextIndex)) pageHistoryIndex = nextIndex; }
+  else if (Number.isFinite(nextIndex) && nextIndex !== pageHistoryIndex) {
+    restoringPageHistory = true;
+    history.go(pageHistoryIndex - nextIndex);
+  } else writePageLocation(current, true);
+}
 
 function setupNav() {
   if (navReady) return;
   navReady = true;
+  window.addEventListener('resize', positionToasts);
+  window.addEventListener('scroll', positionToasts, {passive: true});
+  window.addEventListener('popstate', followPageHistory);
+  if (location.protocol === 'file:') window.addEventListener('hashchange', () => {
+    // Hash edits emit popstate too; the active page check avoids opening two dialogs.
+    if (!navigationPending && !isPage(pageFromLocation())) followPageHistory();
+  });
   document.querySelectorAll('.nav-item[data-page]').forEach((item) => {
     item.addEventListener('click', () => switchPage(item.dataset.page, item.dataset.tab || ''));
   });
@@ -341,14 +455,18 @@ function setupNav() {
 
 let navigationPending = false;
 
-async function switchPage(name, tab) {
-  if (navigationPending) return;
+async function switchPage(name, tab, options = {}) {
+  if (!Object.prototype.hasOwnProperty.call(PAGE_PATHS, name)) name = 'overview';
+  if (navigationPending) return false;
   if (name !== 'config' && isPage('config') && draftCount()) {
     navigationPending = true;
     const leave = await confirmDialog('配置尚未保存', '离开后草稿仍会保留在本页，返回配置可继续编辑。刷新或关闭页面前请保存。', '保留草稿并离开');
     navigationPending = false;
-    if (!leave) return;
+    if (!leave) return false;
+    if (options.fromHistory && pageFromLocation() !== name) return false;
   }
+  const changed = !isPage(name);
+  if (!options.fromHistory) writePageLocation(name, !!options.replace);
   const meta = PAGE_META[name] || PAGE_META.overview;
   document.querySelectorAll('.nav-item[data-page]').forEach((item) => {
     const match = item.dataset.page === name && (!item.dataset.tab || item.dataset.tab === (tab || ''));
@@ -375,28 +493,40 @@ async function switchPage(name, tab) {
     if (tab) switchVoiceTab(tab);
     refreshVoiceStatus();
   }
+  if (changed) window.scrollTo(0, 0);
+  return true;
 }
 
 function renderPageTools(name) {
   const tools = $('page-tools');
   if (name === 'overview') {
     tools.innerHTML = '<span class="chip" id="updated-at">—</span><button class="btn ghost sm" id="tool-refresh">立即刷新</button>';
-    $('tool-refresh').addEventListener('click', () => { refreshStatus(); toast('已刷新', '状态已重新读取', 'ok'); });
+    const button = $('tool-refresh');
+    button.addEventListener('click', () => withButtonBusy(button, async () => {
+      if (await refreshStatus()) toast('已刷新', '状态已重新读取', 'ok');
+      else if (!$('screen-app').hidden) toast('刷新失败', '状态尚未更新，请检查后端连接后重试。', 'err');
+    }, '刷新中…'));
   } else if (name === 'account') {
     tools.innerHTML = '<button class="btn ghost sm" id="tool-cred">刷新凭据</button>';
-    $('tool-cred').addEventListener('click', refreshCredentials);
+    const button = $('tool-cred');
+    button.addEventListener('click', () => withButtonBusy(button, refreshCredentials, '读取中…'));
   } else if (name === 'config') {
     tools.innerHTML = '<button class="btn ghost sm" id="tool-adv">高级选项</button>' +
       '<button class="btn ghost sm" id="tool-reload">重新读取</button>';
     const adv = $('tool-adv');
     adv.classList.toggle('toggle-on', showAdvanced);
+    adv.setAttribute('aria-pressed', String(showAdvanced));
     adv.addEventListener('click', () => {
       showAdvanced = !showAdvanced;
       localStorage.setItem(ADV_KEY, showAdvanced ? '1' : '0');
       adv.classList.toggle('toggle-on', showAdvanced);
+      adv.setAttribute('aria-pressed', String(showAdvanced));
       renderConfig();
     });
-    $('tool-reload').addEventListener('click', async () => { await loadConfig(); toast('已重新读取', '保留当前未保存的草稿', 'ok'); });
+    const reload = $('tool-reload');
+    reload.addEventListener('click', () => withButtonBusy(reload, async () => {
+      if (await loadConfig()) toast('已重新读取', '保留当前未保存的草稿', 'ok');
+    }, '读取中…'));
   } else {
     tools.innerHTML = '';
   }
@@ -509,10 +639,13 @@ async function refreshStatus() {
   try {
     state = { ...state, ...(await api('/api/status')) };
   } catch (err) {
-    if (err instanceof AuthError) { stopPolling(); return showLogin({ gate: 'token' }); }
+    if (err instanceof AuthError) { stopPolling(); showLogin({ gate: 'token' }); return false; }
     text('verdict-title', '读取状态失败');
     text('verdict-detail', err.message);
-    return;
+    $('verdict').dataset.tone = 'err';
+    text('updated-at', '连接失败 · 显示上次状态');
+    renderRailMeta('err', '状态读取失败');
+    return false;
   }
   renderPageToolsIfNeeded();
   renderVersion();
@@ -529,6 +662,7 @@ async function refreshStatus() {
     if ($('vpane-auto-visit').classList.contains('is-active')) await refreshAutoVisit(false);
   }
   if (isPage('maintenance') && window.refreshMaintenance) await window.refreshMaintenance();
+  return true;
 }
 
 const isPage = (name) => document.querySelector('.page.is-active')?.id === 'page-' + name;
@@ -602,7 +736,7 @@ function logNode(raw) {
   let time = '', level = '', body = raw;
   if (match) { time = match[1].slice(11); level = match[3]; body = '[' + match[2] + '] ' + match[4]; }
   const node = document.createElement('div');
-  node.className = 'ln ' + levelTone(level);
+  node.className = 'ln ' + levelTone(level) + (match ? '' : ' is-plain');
   node.innerHTML = '<span class="ln-time">' + escapeHtml(time) + '</span>' +
     '<span class="ln-level">' + escapeHtml(level || '·') + '</span>' +
     '<span class="ln-body">' + highlight(escapeHtml(body), logTerms) + '</span>';

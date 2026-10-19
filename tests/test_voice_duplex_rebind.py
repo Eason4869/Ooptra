@@ -58,7 +58,7 @@ class FakeTransport:
         self.listen_calls.append(enabled)
         return {"ok": True}
 
-    async def push_tts_pcm(self, pcm: bytes, rate: int, *, finish: bool = False) -> dict:
+    async def push_tts_pcm(self, pcm: bytes, rate: int, *, finish: bool = False, volume: int = 50) -> dict:
         self.pushes.append((pcm, rate, finish))
         return dict(self.push_result)
 

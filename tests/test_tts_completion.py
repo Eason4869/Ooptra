@@ -86,6 +86,9 @@ let ttsPlaying = false;
 const ttsSources = new Set();
 const TTS_LEAD = 0.03;
 const ttsDest = {};
+const ttsGain = {};
+let ttsVolume = 50;
+window.agoraSetTtsVolume = () => ({ok: true});
 const ttsCtx = {
   currentTime: 0, state: 'running',
   createBuffer: (_, length, rate) => ({ duration: length / rate, getChannelData: () => new Float32Array(length) }),

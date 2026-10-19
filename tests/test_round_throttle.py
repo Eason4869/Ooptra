@@ -69,6 +69,7 @@ def _agent(utterance: bytes | None = None, **overrides) -> tuple[VoiceAgent, _Re
     agent = VoiceAgent.__new__(VoiceAgent)
     overrides.setdefault("reply_probability_percent", 100)
     overrides.setdefault("voice_leave_enabled", False)
+    overrides.setdefault("voice_volume_enabled", False)
     agent.settings = VoiceAgentSettings(enabled=True, barge_in=False, **overrides)
     agent.live_mode = False
     agent.duplex = None

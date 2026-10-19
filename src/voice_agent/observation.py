@@ -43,7 +43,9 @@ class DecisionTrace:
         try:
             yield
         finally:
-            self.timings[stage] = round((time.monotonic() - started) * 1000, 1)
+            self.timings[stage] = round(
+                self.timings.get(stage, 0.0) + (time.monotonic() - started) * 1000, 1,
+            )
 
     def finish(self) -> None:
         self.observation.record(self.reason, self.outcome, started=self.started,

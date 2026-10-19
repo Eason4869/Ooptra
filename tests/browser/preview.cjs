@@ -35,10 +35,36 @@ const {chromium} = require(process.env.OOPTRA_PLAYWRIGHT_MODULE || 'playwright')
     await page.waitForFunction(() => document.querySelectorAll('#channel-grid .channel-card').length >= 2);
     await page.locator('#voice-join').click();
     await page.waitForFunction(() => document.querySelector('#v-joined').textContent === '手动会话' && !document.querySelector('#voice-leave').disabled);
+    await page.locator('#voice-mic-toggle').click();
+    await page.waitForFunction(() => document.querySelector('#voice-mic-toggle').getAttribute('aria-pressed') === 'true' && !document.querySelector('#voice-mic-toggle').disabled);
+    await page.locator('#voice-output-volume').evaluate(el => {el.value = 40; el.dispatchEvent(new Event('input', {bubbles: true}));});
+    await page.locator('#voice-volume-save').click();
+    await page.waitForFunction(() => document.querySelector('#voice-mic-toggle').getAttribute('aria-pressed') === 'false' && !document.querySelector('#voice-mic-toggle').disabled);
+    assert.equal(await page.locator('#voice-output-volume').inputValue(), '40');
+    await page.locator('#voice-mic-toggle').click();
+    await page.waitForFunction(() => document.querySelector('#voice-mic-toggle').getAttribute('aria-pressed') === 'true');
+    if (process.env.OOPTRA_BROWSER_ARTIFACTS) await page.screenshot({path: path.join(process.env.OOPTRA_BROWSER_ARTIFACTS, 'preview-voice-controls.png'), fullPage: true});
     await page.locator('#voice-leave').click();
     await page.waitForFunction(() => document.querySelector('#v-joined').textContent === '不在房');
+    assert.equal(await page.locator('#voice-mic-toggle').getAttribute('aria-pressed'), 'false');
+    assert(await page.locator('#voice-mic-toggle').isDisabled());
     await page.locator('.nav-item[data-page="config"]').click();
     await page.waitForFunction(() => document.querySelectorAll('#config-groups .cfg-group').length > 0);
+    await page.locator('#config-tabs [data-tab="voice"]').click();
+    const voiceVolume = page.locator('[data-group="voice"][data-field="output_volume"] input');
+    assert.equal(await voiceVolume.inputValue(), '40');
+    await voiceVolume.fill('25');
+    await page.locator('#config-save').click();
+    await page.waitForFunction(() => !document.querySelector('#config-save').disabled);
+    await page.locator('#tool-reload').click();
+    await page.waitForFunction(() => document.querySelector('[data-field="output_volume"] input').value === '25');
+    if (process.env.OOPTRA_BROWSER_ARTIFACTS) await page.screenshot({path: path.join(process.env.OOPTRA_BROWSER_ARTIFACTS, 'preview-voice-volume.png'), fullPage: true});
+    for (const width of [390, 320]) {
+      await page.setViewportSize({width, height: 844});
+      assert(await voiceVolume.isVisible(), 'voice volume option must be visible on mobile');
+      assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'voice volume config must fit mobile viewport');
+    }
+    await page.setViewportSize({width: 1280, height: 720});
     await page.locator('#config-tabs [data-tab="system"]').click();
     assert.equal(await page.locator('[data-field="token"]').count(), 1);
     await page.locator('.nav-item[data-page="account"]').click();

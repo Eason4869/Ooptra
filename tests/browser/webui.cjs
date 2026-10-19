@@ -15,6 +15,10 @@ let job = null;
 let slowMaintenance = false;
 let stallMaintenanceStatus = false;
 let configReadDelay = 0;
+let outputVolume = 50;
+let outputMuted = false;
+let outputDelay = 0;
+let voiceStatusDelay = 0;
 let stallCheckBody = false;
 let installedChannel = 'beta';
 let deletableBackup = true;
@@ -27,14 +31,15 @@ wav.writeUInt32LE(48000, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const endpoint = url.pathname;
-  if (endpoint === '/' || endpoint.startsWith('/assets/')) {
-    const file = path.join(assets, endpoint === '/' ? 'index.html' : path.basename(endpoint));
+  if (['/', '/overview', '/logs', '/voice', '/maintenance', '/config', '/account'].includes(endpoint) || endpoint.startsWith('/assets/')) {
+    const file = path.join(assets, endpoint.startsWith('/assets/') ? path.basename(endpoint) : 'index.html');
     res.setHeader('Content-Type', file.endsWith('.js') ? 'application/javascript' : file.endsWith('.css') ? 'text/css' : file.endsWith('.svg') ? 'image/svg+xml' : 'text/html');
     return res.end(fs.readFileSync(file));
   }
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
   const body = chunks.length ? JSON.parse(Buffer.concat(chunks)) : {};
+  const delayedOutput = outputDelay;
   if (['POST', 'DELETE'].includes(req.method)) requests.push({endpoint, body, method: req.method});
   res.setHeader('Content-Type', 'application/json');
   const session = (req.headers.cookie || '').match(/ooptra_session=([^;]+)/)?.[1];
@@ -76,7 +81,12 @@ const server = http.createServer(async (req, res) => {
   }
   if (endpoint === '/api/oopz/areas') data = {areas: [{id: 'qa', name: '验收域'}], default_area: 'qa', default_channel: 'room'};
   if (endpoint === '/api/oopz/channels') data = {channels: [{id: 'room', name: '语音房'}]};
-  if (endpoint === '/api/voice/status') data = {status: {enabled: true, joined: true, backend: 'mimo_cascade', voice_observation: {recent_decisions: [{timestamp: '2026-10-07T08:30:45+00:00', outcome: 'skipped', reason: 'probability', elapsed_ms: 19, timings_ms: {asr: 12, intent: 7}}]}}, auto_visit: {empty_room: {state: 'occupied'}}};
+  if (endpoint === '/api/voice/status') data = {status: {enabled: true, joined: true, output_volume: outputVolume, output_muted: outputMuted, backend: 'mimo_cascade', voice_observation: {recent_decisions: [{timestamp: '2026-10-07T08:30:45+00:00', outcome: 'skipped', reason: 'probability', elapsed_ms: 19, timings_ms: {asr: 12, intent: 7}}]}}, auto_visit: {empty_room: {state: 'occupied'}}};
+  if (endpoint === '/api/voice/output') {
+    if (body.volume !== undefined) {outputVolume = body.volume; outputMuted = false;}
+    if (body.muted !== undefined) outputMuted = body.muted;
+    data = {ok: true, volume: outputVolume, muted: outputMuted, saved: body.volume !== undefined, message: 'fixture applied'};
+  }
   if (endpoint === '/api/voice/preview/prompts') data = {prompts: ['保存的台词一', '保存的台词二']};
   if (endpoint === '/api/voice/preview') data = {text: body.text, wav_base64: wav.toString('base64')};
   if (endpoint === '/api/voice/diagnostics') data = {checks: [{id: 'asr', title: '音频识别', state: 'pass', detail: '样本识别完成', elapsed_ms: 12}]};
@@ -90,6 +100,8 @@ const server = http.createServer(async (req, res) => {
   if (endpoint === '/api/maintenance/preflight') data = {ok: true, preflight: {supported: true, checks: [], pending: false}};
   if (endpoint === '/api/maintenance/storage') data = {ok: true, storage: {total_bytes: 524, backups_count: 11, backups_bytes: 524, pending: false}};
   if (endpoint === '/api/maintenance/cleanup/preview') data = {token: 'fixture-cleanup', items: [{id: 'old-env', path: 'old-env', kind: 'environment', size: 524}], total_bytes: 524};
+  if (endpoint === '/api/voice/output' && delayedOutput) await new Promise(resolve => setTimeout(resolve, delayedOutput));
+  if (endpoint === '/api/voice/status' && voiceStatusDelay) await new Promise(resolve => setTimeout(resolve, voiceStatusDelay));
   res.end(JSON.stringify(data));
 });
 
@@ -381,6 +393,47 @@ async function main() {
     await page.waitForFunction(() => document.querySelector('#maintenance-job').dataset.phase === 'rolled_back');
     assert.match(await page.locator('#maintenance-progress-label').textContent(), /回滚完成/);
     await nav('voice');
+    await page.waitForFunction(() => !document.querySelector('#voice-mic-toggle').disabled);
+    await page.locator('#voice-mic-toggle').click();
+    await page.waitForFunction(() => document.querySelector('#voice-mic-toggle').getAttribute('aria-pressed') === 'true' && !document.querySelector('#voice-mic-toggle').disabled);
+    await page.locator('#voice-output-volume').evaluate(el => {el.value = 60; el.dispatchEvent(new Event('input', {bubbles: true}));});
+    await page.evaluate(() => refreshVoiceStatus());
+    assert.equal(await page.locator('#voice-output-volume').inputValue(), '60', 'polling must retain a pending slider value');
+    await page.locator('#voice-volume-save').click();
+    await page.waitForFunction(() => document.querySelector('#voice-mic-toggle').getAttribute('aria-pressed') === 'false' && !document.querySelector('#voice-mic-toggle').disabled);
+    assert.equal(outputVolume, 60);
+    await page.locator('#voice-mic-toggle').click();
+    await page.waitForFunction(() => document.querySelector('#voice-mic-toggle').getAttribute('aria-pressed') === 'true' && !document.querySelector('#voice-mic-toggle').disabled);
+    failures.add('/api/voice/output');
+    await page.evaluate(() => document.querySelector('#toasts').replaceChildren());
+    await page.locator('#voice-mic-toggle').click();
+    await page.waitForFunction(() => document.querySelector('#toasts').textContent.includes('语音输出设置失败') && !document.querySelector('#voice-mic-toggle').disabled);
+    assert.equal(await page.locator('#voice-mic-toggle').getAttribute('aria-pressed'), 'true', 'failed opening must not claim an open mic');
+    assert.equal(await page.locator('#toasts .toast.ok').count(), 0);
+    failures.delete('/api/voice/output');
+    outputDelay = 500;
+    const outputCount = requests.filter(item => item.endpoint === '/api/voice/output').length;
+    await page.evaluate(() => {window.oldOutputTest = changeVoiceOutput({muted: false});});
+    const outputDeadline = Date.now() + 2000;
+    while (requests.filter(item => item.endpoint === '/api/voice/output').length === outputCount && Date.now() < outputDeadline) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(requests.filter(item => item.endpoint === '/api/voice/output').length, outputCount + 1);
+    outputDelay = 0;
+    await page.evaluate(async () => {resetVoiceOutput(); await refreshVoiceStatus(); await changeVoiceOutput({volume: 70});});
+    await page.evaluate(async () => {await window.oldOutputTest; delete window.oldOutputTest;});
+    assert.equal(await page.locator('#voice-output-volume').inputValue(), '70', 'a request from before reset must not overwrite newer controls');
+    assert.equal(await page.locator('#voice-mic-toggle').getAttribute('aria-pressed'), 'false');
+    failures.add('/api/voice/output');
+    voiceStatusDelay = 350;
+    await page.evaluate(() => document.querySelector('#toasts').replaceChildren());
+    await page.evaluate(() => {window.failedOutputTest = changeVoiceOutput({muted: true});});
+    await page.waitForFunction(() => document.querySelector('#toasts').textContent.includes('语音输出设置失败'));
+    assert(await page.locator('#voice-mic-toggle').isDisabled(), 'controls must remain locked while recovering actual state');
+    const recoveringCount = requests.filter(item => item.endpoint === '/api/voice/output').length;
+    await page.evaluate(() => changeVoiceOutput({volume: 80}));
+    assert.equal(requests.filter(item => item.endpoint === '/api/voice/output').length, recoveringCount);
+    await page.evaluate(async () => {await window.failedOutputTest; delete window.failedOutputTest;});
+    voiceStatusDelay = 0;
+    failures.delete('/api/voice/output');
     await page.getByText('回复决策与耗时', {exact: true}).click();
     await page.locator('#voice-decision-list').waitFor({state: 'visible'});
     assert.match(await page.locator('#voice-decision-list').textContent(), /概率/);

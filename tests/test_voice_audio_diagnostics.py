@@ -35,7 +35,7 @@ def test_sample_probe_is_independent_and_reports_individual_stages(tmp_path, mon
                 if failure == "asr":
                     raise RuntimeError("credential-secret")
                 return "你好，不要离开"
-            async def detect_leave_intent(self, text):
+            async def detect_control_intent(self, text):
                 calls.append("intent")
                 if failure == "intent":
                     raise RuntimeError("credential-secret")
