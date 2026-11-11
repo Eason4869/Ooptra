@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import copy
 import json
 import logging
 import time
@@ -19,6 +20,8 @@ from voice_agent.backends.gemini_live import (
 from voice_agent.vad import EnergyVad
 
 logger = logging.getLogger(__name__)
+MAX_TRANSCRIPTION_DRAIN_SECONDS = 3.0
+REPLY_TIMEOUT_SECONDS = 30.0
 SPEAKER_RULES = (
     "\n【语音房人物】本会话有多位成员。每段音频开头的来源元数据标明本轮说话人。"
     "按 oopz_uid 区分人物和各自的问题、偏好与约定，不能把其他成员的发言归给当前人。"
@@ -51,6 +54,8 @@ class SpeakerInput:
     duration_ms: float = 0
     silence_ms: float = 0
     last_frame: float = field(default_factory=time.monotonic)
+    turn_id: int = 0
+    submitted_at: float | None = None
 
 
 class SpeakerLiveBackend(GeminiLiveBackend):
@@ -79,6 +84,59 @@ class SpeakerLiveBackend(GeminiLiveBackend):
         self._play_until = 0.0
         self._barged = False
         self._last_server_input = 0.0
+        self._speaker_events: deque[dict] = deque(maxlen=40)
+        self._speaker_phase = "idle"
+        self._speaker_error = ""
+        self._first_audio_ms: float | None = None
+
+    def _source_metadata(self, turn: SpeakerInput | None) -> dict | None:
+        if turn is None:
+            return None
+        member, name = self._identity(turn.rtc_uid)
+        confirmed = bool(member and member == turn.member)
+        return {"rtc_uid": turn.rtc_uid, "oopz_uid": member if confirmed else "",
+                "display_name": name if confirmed else "", "confirmed": confirmed,
+                "turn_id": turn.turn_id}
+
+    def _record_speaker_event(self, event: str, *, turn: SpeakerInput | None = None,
+                              elapsed_ms: float | None = None, error_kind: str = "",
+                              reason: str = "", outcome: str = "") -> None:
+        self._speaker_events.append({"event": event, "timestamp": time.time(),
+            "phase": self._speaker_phase,
+            "source": self._source_metadata(turn or (self._input if self._input_ws is self._ws else None)),
+            "elapsed_ms": elapsed_ms, "error_kind": error_kind,
+            "reason": reason, "outcome": outcome})
+
+    def _finish_observed_turn(self, reason: str | None = None) -> None:
+        trace = self._decision_trace
+        if trace is not None:
+            self._record_speaker_event("reply_decision", reason=reason or trace.reason,
+                                       outcome="error" if reason == "error" else trace.outcome)
+        super()._finish_observed_turn(reason)
+
+    def speaker_status(self) -> dict:
+        phase = self._speaker_phase
+        if self._closed:
+            phase = "closed"
+        elif self._connection_state in {"connecting", "reconnecting", "failed"}:
+            phase = self._connection_state
+        elif phase == "idle" and time.monotonic() < self._play_until:
+            phase = "playing"
+        elif phase == "idle" and self._collecting is not None:
+            phase = "listening"
+        states = self._states()
+        mappings = []
+        for rtc_uid in dict.fromkeys(str(row.get("cid", "")) for row in states.values()):
+            member, name = resolve_speaker(rtc_uid, states, self._members)
+            if member:
+                mappings.append({"rtc_uid": rtc_uid, "oopz_uid": member, "display_name": name})
+        return {"enabled": True, "phase": phase, "turn_id": self._input_number,
+                "area": self._room_area, "channel": self._room_channel,
+                "current": self._source_metadata(self._input or self._collecting),
+                "pending": self._source_metadata(self._pending_input),
+                "mappings": mappings[:32], "last_error": self._speaker_error,
+                "first_audio_ms": self._first_audio_ms,
+                "recent_events": copy.deepcopy(list(self._speaker_events)), "limit": 40}
 
     @property
     def effective_persona(self) -> str:
@@ -90,6 +148,9 @@ class SpeakerLiveBackend(GeminiLiveBackend):
 
     async def configure_room(self, bot, area: str, channel: str, transport, barge_out,
                              input_start_out) -> None:
+        self._speaker_events.clear()
+        self._speaker_error = ""
+        self._first_audio_ms = None
         self._room_bot = bot
         self._room_area, self._room_channel = area, channel
         self._room_transport = transport
@@ -147,6 +208,7 @@ class SpeakerLiveBackend(GeminiLiveBackend):
 
     def _end_input(self) -> None:
         if self._collecting is not None:
+            self._record_speaker_event("speech_end", turn=self._collecting)
             self._collecting.ended = True
             self._collecting = None
             self._wake.set()
@@ -185,8 +247,11 @@ class SpeakerLiveBackend(GeminiLiveBackend):
             self._collecting = turn
             if self._pending_input is not None:
                 logger.info("丢弃积压的 Live 发言 rtc_uid=%s", self._pending_input.rtc_uid)
+                self._record_speaker_event("pending_dropped", turn=self._pending_input)
             self._pending_input = turn
+            self._record_speaker_event("speech_start", turn=turn)
             if playing:
+                self._record_speaker_event("barge_in", turn=turn)
                 self._barged = True
                 self._play_until = 0
                 if self._barge_out is not None:
@@ -219,6 +284,12 @@ class SpeakerLiveBackend(GeminiLiveBackend):
     async def _input_loop(self) -> None:
         while True:
             try:
+                if self._connection_state in {"connecting", "reconnecting", "failed"}:
+                    if self._connection_state == "failed":
+                        self._end_input()
+                        self._pending_input = None
+                    await self._wait_input()
+                    continue
                 if (self._pending_input is None or self._explicit_turn or self._announcement
                         or time.monotonic() < self._play_until):
                     await self._wait_input()
@@ -230,14 +301,18 @@ class SpeakerLiveBackend(GeminiLiveBackend):
                 raise
             except Exception as exc:
                 logger.warning("Live 人物回合中断，清理本轮音频（%s）", type(exc).__name__)
+                self._speaker_error = type(exc).__name__
+                self._record_speaker_event("input_failed", error_kind=self._speaker_error)
                 self._end_input()
                 self._pending_input = None
                 if self._ws is self._input_ws:
                     await self._reset_session()
+                    self._connection_state = "reconnecting"
                     self._schedule_reconnect()
             finally:
                 self._input = None
                 self._input_ws = None
+                self._speaker_phase = "idle"
 
     async def _stream_input(self, turn: SpeakerInput) -> None:
         await self.start_session()
@@ -251,10 +326,15 @@ class SpeakerLiveBackend(GeminiLiveBackend):
         self._input_started = None
         self._audio_started = None
         self._input_number += 1
+        turn.turn_id = self._input_number
+        self._first_audio_ms = None
+        self._speaker_error = ""
+        self._speaker_phase = "streaming"
         member, name = self._identity(turn.rtc_uid)
         if member != turn.member:
             member, name = "", ""
         self._input_speakers = {member} if member else set()
+        self._record_speaker_event("input_start", turn=turn)
         if self._input_start_out is not None:
             self._input_start_out()
         context = "【来源元数据】" + json.dumps({"turn_id": self._input_number,
@@ -274,10 +354,13 @@ class SpeakerLiveBackend(GeminiLiveBackend):
                                                "mime_type": f"audio/pcm;rate={turn.rate}"}}
             if first:
                 payload["text"] = context
+                turn.submitted_at = time.monotonic()
                 first = False
             await self.push_audio_payload(payload)
         await self._send({"realtimeInput": {"activityEnd": {}}})
-        response_deadline = time.monotonic() + 30
+        self._speaker_phase = "waiting"
+        self._record_speaker_event("input_end", turn=turn)
+        response_deadline = time.monotonic() + REPLY_TIMEOUT_SECONDS
         while not self._response_done.is_set():
             if self._ws is not ws:
                 raise RuntimeError("Live connection changed while waiting for reply")
@@ -286,10 +369,14 @@ class SpeakerLiveBackend(GeminiLiveBackend):
             await self._wait_input()
         # Late input transcription has no protocol turn ID. Keep the old owner
         # during the existing late-transcription interval, while playback streams.
-        deadline = time.monotonic() + _LATE_TRANSCRIPTION_SECONDS
+        drain_started = time.monotonic()
+        deadline = drain_started + _LATE_TRANSCRIPTION_SECONDS
+        self._speaker_phase = "draining"
         while time.monotonic() < max(deadline, self._last_server_input + 0.15):
             if self._ws is not ws:
                 raise RuntimeError("Live connection changed while draining transcription")
+            if time.monotonic() > drain_started + MAX_TRANSCRIPTION_DRAIN_SECONDS:
+                raise TimeoutError("Live transcription drain timed out")
             await self._wait_input()
 
     async def push_audio_payload(self, payload: dict[str, Any]) -> None:
@@ -308,17 +395,25 @@ class SpeakerLiveBackend(GeminiLiveBackend):
             self._input_speakers.clear()
         if server.get("inputTranscription", {}).get("text"):
             self._last_server_input = time.monotonic()
+            self._record_speaker_event("late_transcription" if self._response_done.is_set()
+                                       else "transcription")
         complete = server.get("turnComplete")
         if complete and self._barged:
             msg = {**msg, "serverContent": {**server, "interrupted": True}}
         await super()._handle_server_msg(msg)
         if complete:
+            self._record_speaker_event("turn_complete")
             self._response_done.set()
 
     async def _deliver_audio(self, pcm: bytes, rate: int) -> None:
         if self._barged:
             return
         await super()._deliver_audio(pcm, rate)
+        submitted_at = (self._input.submitted_at
+                        if self._input is not None and self._input_ws is self._ws else None)
+        if self._first_audio_ms is None and submitted_at is not None:
+            self._first_audio_ms = round(max(0, time.monotonic() - submitted_at) * 1000, 1)
+            self._record_speaker_event("first_audio", elapsed_ms=self._first_audio_ms)
         self._play_until = max(self._play_until, time.monotonic() + 0.08) + len(pcm) / (2 * rate)
 
     async def speak_text(self, text: str) -> None:
@@ -330,6 +425,7 @@ class SpeakerLiveBackend(GeminiLiveBackend):
         await super()._reset_session()
         self._barged = False
         self._play_until = 0
+        self._record_speaker_event("session_reset")
         if self._room_transport is not None:
             with contextlib.suppress(Exception):
                 await self._room_transport.stop_tts()

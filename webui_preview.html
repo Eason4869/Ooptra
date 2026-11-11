@@ -1695,6 +1695,14 @@ form[inert] { opacity: .65; }
           </section>
         </div>
         <details class="tool-details voice-observation"><summary>回复决策与耗时</summary><p class="hint">只显示原因和耗时，不保存原始音频。实时语音的阶段可能重叠。</p><ul class="check-list" id="voice-decision-list"><li class="empty">暂无决策记录</li></ul></details>
+        <details class="tool-details voice-observation" id="voice-speaker-diagnostics" hidden>
+          <summary>Live 人物与回合</summary>
+          <p class="hint" id="voice-speaker-state" role="status" aria-live="polite"></p>
+          <p class="hint" id="voice-speaker-mappings"></p>
+          <button class="btn ghost sm" id="voice-speaker-export" type="button" disabled>导出本次诊断</button>
+          <p class="hint">诊断包含成员标识和最近 40 条回合事件，可用于核对人物归属与首个回复音频的提交时间。</p>
+          <ul class="check-list" id="voice-speaker-events"></ul>
+        </details>
       </div>
 
       <!-- 自动串门：全局默认与域覆盖独立保存 -->
@@ -3363,8 +3371,12 @@ let voiceVolumeDraft = null;
 let voiceOutputBusy = false;
 let voiceOutputRevision = 0;
 let voiceOutputOperation = 0;
+let voiceSpeakerDiagnostics = null;
+let voiceSpeakerRevision = 0;
 
 function resetVoiceOutput() {
+  voiceSpeakerRevision++;
+  renderLiveSpeakerDiagnostics(null);
   voiceOutputOperation++;
   voiceOutputRevision++;
   voiceOutputState = null;
@@ -3582,6 +3594,7 @@ function switchVoiceTab(tab) {
 function setupVoice() {
   if (voiceReady) return;
   voiceReady = true;
+  if ($('voice-speaker-export')) $('voice-speaker-export').onclick = exportLiveSpeakerDiagnostics;
   $('voice-mic-toggle').onclick = () => changeVoiceOutput({muted: !voiceOutputState?.output_muted});
   $('voice-output-volume').addEventListener('input', event => {
     voiceVolumeDraft = Number(event.target.value);
@@ -3701,6 +3714,7 @@ async function voiceSpeak() {
 
 async function refreshVoiceStatus() {
   setupVoice();
+  const speakerRevision = ++voiceSpeakerRevision;
   const outputRevision = voiceOutputRevision;
   try {
     const data = await api('/api/voice/status');
@@ -3740,7 +3754,9 @@ async function refreshVoiceStatus() {
     }
     renderTranscript(st);
     renderVoiceDecisions(st.voice_observation || data.voice_observation);
+    if (speakerRevision === voiceSpeakerRevision) renderLiveSpeakerDiagnostics(st.live_speaker);
   } catch (err) {
+    if (speakerRevision === voiceSpeakerRevision) renderLiveSpeakerDiagnostics(null);
     if (outputRevision === voiceOutputRevision && !voiceOutputBusy) {
       voiceOutputState = null;
       renderVoiceOutput();
@@ -3748,6 +3764,70 @@ async function refreshVoiceStatus() {
     const detail = $('voice-verdict-detail');
     if (detail) detail.textContent = err.message;
   }
+}
+
+function renderLiveSpeakerDiagnostics(diagnostics) {
+  const host = $('voice-speaker-diagnostics');
+  if (!host) return;
+  voiceSpeakerDiagnostics = diagnostics?.enabled ? diagnostics : null;
+  host.hidden = !voiceSpeakerDiagnostics;
+  const download = $('voice-speaker-export');
+  download.disabled = !voiceSpeakerDiagnostics?.recent_events?.length;
+  const events = $('voice-speaker-events');
+  events.replaceChildren();
+  if (!voiceSpeakerDiagnostics) return;
+  const phases = {
+    idle: '等待发言', listening: '正在接听', streaming: '正在上传语音', waiting: '等待模型回复',
+    draining: '等待迟到转写', playing: '正在播放', connecting: '连接模型中',
+    reconnecting: '正在重连', failed: '连接失败', closed: '会话已关闭',
+  };
+  const sourceName = source => {
+    if (!source) return '—';
+    return source.confirmed ? (source.display_name || source.oopz_uid) : '身份待确认';
+  };
+  const current = diagnostics.current;
+  const queued = diagnostics.pending;
+  const state = [
+    phases[diagnostics.phase] || '状态待确认',
+    '当前成员 ' + sourceName(current),
+    queued ? '待处理 ' + sourceName(queued) : '',
+    Number.isFinite(diagnostics.first_audio_ms)
+      ? '最近一轮首帧到回复音频提交 ' + Math.round(diagnostics.first_audio_ms) + ' ms' : '',
+    diagnostics.last_error ? '上次处理失败 ' + diagnostics.last_error : '',
+  ];
+  text('voice-speaker-state', state.filter(Boolean).join(' · '));
+  const mappings = (diagnostics.mappings || []).slice(0, 32);
+  text('voice-speaker-mappings', mappings.length ? '已确认音轨 ' + mappings.map(row => (row.display_name || row.oopz_uid) + '（' + row.rtc_uid + ' → ' + row.oopz_uid + '）').join('、') : '尚未确认音轨与成员的对应关系');
+  const names = {
+    speech_start: '成员开口', speech_end: '成员停顿', input_start: '开始提交', input_end: '提交结束',
+    transcription: '收到转写', late_transcription: '收到迟到转写', first_audio: '提交首个回复音频',
+    turn_complete: '模型回合完成', reply_decision: '回复决策', barge_in: '抢话停止旧回复',
+    pending_dropped: '积压发言已丢弃', input_failed: '回合处理失败', session_reset: '会话状态已清理',
+  };
+  const reasons = {keyword: '关键词触发', window: '连续追问', probability: '概率跳过', reply: '普通接话', explicit: '手动开口', interrupted: '已打断', error: '处理失败', empty: '无识别内容'};
+  for (const row of (diagnostics.recent_events || []).slice(-8).reverse()) {
+    const item = document.createElement('li');
+    item.className = 'check-row';
+    item.textContent = [
+      fmtClock(row.timestamp || 0), names[row.event] || '回合事件', sourceName(row.source),
+      row.source?.turn_id ? '#' + row.source.turn_id : '', reasons[row.reason] || '',
+      Number.isFinite(row.elapsed_ms) ? Math.round(row.elapsed_ms) + ' ms' : '',
+    ].filter(Boolean).join(' · ');
+    events.append(item);
+  }
+}
+
+function exportLiveSpeakerDiagnostics() {
+  if (!voiceSpeakerDiagnostics) return;
+  const payload = {format: 'ooptra-live-speaker-v1', exported_at: new Date().toISOString(), diagnostics: voiceSpeakerDiagnostics};
+  const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], {type: 'application/json'}));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'ooptra-live-speaker.json';
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function renderVoiceDecisions(observation) {

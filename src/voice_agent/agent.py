@@ -908,9 +908,11 @@ class VoiceAgent:
         return {"ok": True}
 
     def status(self) -> dict[str, Any]:
+        speaker_status = getattr(self.backend, "speaker_status", None)
         return {
             "astrbot_context": self._ensure_context_bridge().status(),
             "voice_observation": self.backend.observation.snapshot() if hasattr(self.backend, "observation") else {"recent_decisions": [], "limit": 40},
+            "live_speaker": speaker_status() if speaker_status is not None else {"enabled": False},
             "enabled": self.settings.enabled,
             "model_connection": self.backend.connection_status() if isinstance(self.backend, ConnectionReporter) else None,
             "conversation_window_seconds": self.settings.conversation_window_seconds if self.settings.conversation_window_enabled else 0,

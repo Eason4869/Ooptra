@@ -355,6 +355,14 @@
           </section>
         </div>
         <details class="tool-details voice-observation"><summary>回复决策与耗时</summary><p class="hint">只显示原因和耗时，不保存原始音频。实时语音的阶段可能重叠。</p><ul class="check-list" id="voice-decision-list"><li class="empty">暂无决策记录</li></ul></details>
+        <details class="tool-details voice-observation" id="voice-speaker-diagnostics" hidden>
+          <summary>Live 人物与回合</summary>
+          <p class="hint" id="voice-speaker-state" role="status" aria-live="polite"></p>
+          <p class="hint" id="voice-speaker-mappings"></p>
+          <button class="btn ghost sm" id="voice-speaker-export" type="button" disabled>导出本次诊断</button>
+          <p class="hint">诊断包含成员标识和最近 40 条回合事件，可用于核对人物归属与首个回复音频的提交时间。</p>
+          <ul class="check-list" id="voice-speaker-events"></ul>
+        </details>
       </div>
 
       <!-- 自动串门：全局默认与域覆盖独立保存 -->

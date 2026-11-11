@@ -538,6 +538,52 @@ async function main() {
     await page.locator('dialog.sm-dialog').getByRole('button', {name: '确认', exact: true}).click();
     await page.waitForFunction(() => document.querySelector('#session-manager [data-count]').textContent === '1');
     let inheritedPersona = true;
+    await page.locator('#page-voice .subtab[data-tab="session"]').click();
+    await page.evaluate(() => {
+      clearInterval(voicePoll); voicePoll = null;
+      renderLiveSpeakerDiagnostics({enabled: true, phase: 'draining', turn_id: 2,
+        current: {rtc_uid: '7', oopz_uid: 'a', display_name: '<img src=x onerror=alert(1)>', confirmed: true, turn_id: 2},
+        mappings: [{rtc_uid: '7', oopz_uid: 'a', display_name: '<img src=x onerror=alert(1)>'}],
+        recent_events: [{event: 'first_audio', timestamp: 1, elapsed_ms: 125,
+          source: {display_name: 'Alice', oopz_uid: 'a', confirmed: true, turn_id: 2}}], first_audio_ms: 125});
+    });
+    const speakerPanel = page.locator('#voice-speaker-diagnostics');
+    await speakerPanel.locator('summary').click();
+    assert((await page.locator('#voice-speaker-state').innerText()).includes('125 ms'));
+    assert((await page.locator('#voice-speaker-mappings').innerText()).includes('<img'));
+    assert.equal(await speakerPanel.locator('img').count(), 0, 'member labels render as text');
+    const [speakerDownload] = await Promise.all([
+      page.waitForEvent('download'), page.locator('#voice-speaker-export').click(),
+    ]);
+    const exportedSpeaker = JSON.parse(fs.readFileSync(await speakerDownload.path(), 'utf8'));
+    assert.equal(exportedSpeaker.format, 'ooptra-live-speaker-v1');
+    assert.equal(exportedSpeaker.diagnostics.recent_events[0].source.oopz_uid, 'a');
+    assert(!JSON.stringify(exportedSpeaker).includes('fixture-password'));
+    await page.evaluate(() => renderLiveSpeakerDiagnostics(null));
+    assert(await speakerPanel.isHidden(), 'unavailable status clears stale diagnostics');
+    const staleSpeakerState = await page.evaluate(async () => {
+      const originalApi = api;
+      const replies = [];
+      api = endpoint => endpoint === '/api/voice/status'
+        ? new Promise((resolve, reject) => replies.push({resolve, reject}))
+        : originalApi(endpoint);
+      const status = {status: {live_speaker: {enabled: true, phase: 'idle', recent_events: [{event: 'session_reset', timestamp: 1}], mappings: []}}};
+      try {
+        const oldRequest = refreshVoiceStatus();
+        resetVoiceOutput();
+        replies[0].resolve(status);
+        await oldRequest;
+        const hiddenAfterReset = document.querySelector('#voice-speaker-diagnostics').hidden;
+        const older = refreshVoiceStatus();
+        const newer = refreshVoiceStatus();
+        replies[2].resolve(status);
+        await newer;
+        replies[1].reject(new Error('old failure'));
+        await older;
+        return {hiddenAfterReset, visibleAfterOlderFailure: !document.querySelector('#voice-speaker-diagnostics').hidden};
+      } finally {api = originalApi;}
+    });
+    assert.deepEqual(staleSpeakerState, {hiddenAfterReset: true, visibleAfterOlderFailure: true});
     await page.route('**/api/persona', route => route.fulfill({json: {ok: true, persona: 'local persona', effective_persona: inheritedPersona ? 'AstrBot persona' : 'local persona', astrbot_context: {active: inheritedPersona}}}));
     await page.route('**/api/voice/status', route => route.fulfill({json: {ok: true, status: {enabled: true, joined: true, backend: 'gemini_live'}, astrbot_context: {active: inheritedPersona, connected: false, group_id: '123', persona_id: 'selected', provider: 'memory_companion', pending_writes: 0}}}));
     await nav('voice');
