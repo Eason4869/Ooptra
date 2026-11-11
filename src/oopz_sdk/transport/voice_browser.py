@@ -120,7 +120,13 @@ class BrowserVoiceTransport:
         except (TypeError, ValueError):
             ts = time.time()
 
-        self._voice_states[uid] = {"m": m, "hm": hm, "cid": cid, "ts": ts}
+        old = self._voice_states.get(uid, {})
+        conflict = bool(old.get("identity_conflict") or (
+            old.get("sender_uid") and data.get("sender_uid")
+            and old["sender_uid"] != str(data["sender_uid"])))
+        self._voice_states[uid] = {"m": m, "hm": hm, "cid": cid, "ts": ts,
+                                   "sender_uid": str(data.get("sender_uid") or ""),
+                                   "identity_conflict": conflict}
         self._voice_state_rx += 1
         if self._voice_state_rx == 1:
             # 只报一次：Oopz 客户端到底发不发这条广播，是这套方案的前提
@@ -586,6 +592,10 @@ class BrowserVoiceTransport:
 
     def set_remote_pcm_callback(self, callback) -> None:
         self._remote_pcm_callback = callback
+
+    async def enable_speaker_turns(self, enabled: bool) -> dict[str, Any]:
+        result = await self._run_on_browser("agoraSetSpeakerTurns", enabled)
+        return result if isinstance(result, dict) else {"ok": bool(result)}
 
     async def enable_listen(self, enabled: bool = True) -> dict[str, Any]:
         result = await self._run_on_browser("agoraSetListen", bool(enabled))

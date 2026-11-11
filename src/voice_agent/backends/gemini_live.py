@@ -461,6 +461,9 @@ class GeminiLiveBackend(VoiceBackend):
             raise RuntimeError("Live session transport closed")
         await ws.send(json.dumps(payload, ensure_ascii=False))
 
+    def _input_config(self) -> dict[str, Any]:
+        return _realtime_input_config()
+
     async def _send_setup(self) -> None:
         from voice_agent.voice_control import (
             LEAVE_INTENT_DESCRIPTION,
@@ -487,7 +490,7 @@ class GeminiLiveBackend(VoiceBackend):
                 },
                 "input_audio_transcription": {},
                 "output_audio_transcription": {},
-                "realtime_input_config": _realtime_input_config(),
+                "realtime_input_config": self._input_config(),
             }
         }
         declarations = []

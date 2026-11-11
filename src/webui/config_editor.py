@@ -467,6 +467,12 @@ FIELD_SPECS: dict[str, dict[str, dict[str, Any]]] = {
             "type": "bool", "label": "连续对话窗口", "tier": "basic",
             "hint": "叫到关键词后，同一成员可连续追问；换房清除，需先配置强制回复关键词。",
         },
+        "live_speaker_context": {
+            "type": "bool", "label": "Live 人物上下文（预览）", "tier": "adv",
+            "section": "行为",
+            "default": False,
+            "hint": "Gemini 按成员锁定发言，边说边上传；房间共用一个会话。开启前请在测试房验证身份与抢话，保存后重建模型会话。",
+        },
         "conversation_window_seconds": {
             "type": "int", "label": "连续追问窗口 / 秒", "tier": "basic",
             "min": 1, "max": 300,

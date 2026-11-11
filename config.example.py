@@ -135,6 +135,7 @@ VOICE_AGENT_CONFIG = {
     "barge_in_hold_ms": 300,
     "vad_mode": "local",
     "listen_only_uids": [],
+    "live_speaker_context": False,  # Gemini 单会话人物上下文，需双账号联调后开启
     "reply_text_to_channel": False,
 
     "sample_rate_in": 16000,

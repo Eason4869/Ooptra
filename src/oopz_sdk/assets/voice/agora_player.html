@@ -185,6 +185,7 @@ function rememberVoiceState(state) {
     m: Number.isFinite(m) ? (m ? 1 : 0) : null,
     hm: Number.isFinite(hm) ? (hm ? 1 : 0) : null,
     cid: Number.isFinite(cid) ? cid : null,
+    sender_uid: String(state.sender_uid ?? ""),
     ts: Date.now(),
   });
 
@@ -228,7 +229,7 @@ function ensureVoiceStateHook() {
     }
     voiceStateRxCount += 1;
     // payload 自带 Oopz uid；只有 Agora 数字 uid 的消息映射不到人，只能计数
-    rememberVoiceState(state.uid === undefined ? { ...state, uid: null } : state);
+    rememberVoiceState({ ...state, uid: state.uid ?? null, sender_uid: String(uid) });
   });
 }
 
@@ -809,6 +810,15 @@ window.agoraGetStatus = () => {
 /* -------------------- Duplex: listen remote + push TTS -------------------- */
 
 let listenEnabled = false;
+let speakerTurnMode = false;
+window.agoraSetSpeakerTurns = async (enabled) => {
+  const nextMode = !!enabled;
+  if (speakerTurnMode === nextMode) return { ok: true };
+  speakerTurnMode = nextMode;
+  stopAllRemoteCaptures();
+  if (listenEnabled && client) return await window.agoraSetListen(true);
+  return { ok: true };
+};
 const remoteCaptures = new Map(); // uid -> {processor, source, ctx}
 
 // —— 主讲人选择：**一次只喂一路** ——
@@ -960,16 +970,16 @@ async function startRemoteCapture(user) {
     const mst = user.audioTrack.getMediaStreamTrack();
     const ctx = new AudioContext({ sampleRate: 16000 });
     const src = ctx.createMediaStreamSource(new MediaStream([mst]));
-    const processor = ctx.createScriptProcessor(4096, 1, 1);
+    const processor = ctx.createScriptProcessor(speakerTurnMode ? 1024 : 4096, 1, 1);
     let pending = [];
     let pendingSamples = 0;
-    const flushSamples = 1600; // 100ms @16k
+    const flushSamples = speakerTurnMode ? 640 : 1600;
 
     processor.onaudioprocess = (ev) => {
       if (!listenEnabled) return;
       const input = ev.inputBuffer.getChannelData(0);
       const level = rmsOf(input);
-      if (!selectSpeaker(uid, level)) {
+      if (!speakerTurnMode && !selectSpeaker(uid, level)) {
         // 不是当前主讲人。**丢掉而不是攒着** —— 攒着会在轮到它时吐出过期音频，
         // 那正好又拼出一次时间错位。
         pending = [];

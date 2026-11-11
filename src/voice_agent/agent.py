@@ -503,7 +503,7 @@ class VoiceAgent:
         if "persona" in changed_set:
             self.memory.set_persona(self.settings.persona)
 
-        if "backend" in changed_set:
+        if {"backend", "live_speaker_context"} & changed_set:
             self._operation_epoch += 1
             await self.backend.aclose()
             self.backend = create_backend(self.settings, self.memory)
@@ -518,7 +518,7 @@ class VoiceAgent:
                 await self._stop_round_worker()
             notes.append("语音后端已切换")
 
-        session_dirty = bool(_SESSION_FIELDS & changed_set) or "backend" in changed_set
+        session_dirty = bool((_SESSION_FIELDS | {"backend", "live_speaker_context"}) & changed_set)
         if not session_dirty:
             return notes
 
@@ -705,6 +705,24 @@ class VoiceAgent:
 
         def current() -> bool:
             return epoch == self._operation_epoch
+
+        configure_room = getattr(self.backend, "configure_room", None)
+        if configure_room is not None:
+            async def stop_current_output() -> None:
+                if not current():
+                    return
+                self._discard_live_audio = True
+                async with self._live_output_lock:
+                    if self.duplex is not None:
+                        await self.duplex.stop_tts()
+                    self._speaking = False
+
+            def start_current_input() -> None:
+                if current():
+                    self._rearm_barge_in()
+
+            await configure_room(self._bot, self._area, self._channel,
+                                 duplex.transport, stop_current_output, start_current_input)
 
         # 每回合只报一次推流失败：失败通常整回合都失败，逐分片刷屏反而盖住线索
         push_failed = False
@@ -1031,6 +1049,10 @@ class VoiceAgent:
             return
         uid = str(uid or "unknown")
         _dump_remote_pcm(uid, pcm, sample_rate)
+        room_audio = getattr(self.backend, "push_room_audio", None)
+        if self.live_mode and room_audio is not None:
+            await room_audio(uid, pcm, sample_rate)
+            return
         if self.settings.listen_only_uids and uid not in self.settings.listen_only_uids:
             return
 

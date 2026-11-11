@@ -7,6 +7,10 @@ def create_backend(settings, memory):
     backend = (settings.backend or "").strip().lower()
     # Live 优先：端到端语音，不做「文-想-说」级联
     if backend in {"gemini", "gemini_live", "live", "live_gemini", "speech_to_speech"}:
+        if getattr(settings, "live_speaker_context", False):
+            from voice_agent.backends.live_speakers import SpeakerLiveBackend
+
+            return SpeakerLiveBackend(settings, memory)
         from voice_agent.backends.gemini_live import GeminiLiveBackend
 
         return GeminiLiveBackend(settings, memory)

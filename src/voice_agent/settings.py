@@ -38,6 +38,7 @@ class VoiceAgentSettings:
     barge_in_hold_ms: int = 300
     vad_mode: str = "local"
     listen_only_uids: list[str] = field(default_factory=list)
+    live_speaker_context: bool = False
     reply_text_to_channel: bool = False
     # 自动接话概率；快捷开口与进退房台词始终可用。
     reply_probability_percent: int = 30
@@ -127,6 +128,7 @@ def load_voice_agent_settings() -> tuple[VoiceAgentSettings, VoiceApiSettings]:
         barge_in_hold_ms=int(_get(agent_raw, "barge_in_hold_ms", 300)),
         vad_mode=str(_get(agent_raw, "vad_mode", "local") or "local"),
         listen_only_uids=[str(x) for x in (_get(agent_raw, "listen_only_uids", []) or [])],
+        live_speaker_context=bool(_get(agent_raw, "live_speaker_context", False)),
         reply_text_to_channel=bool(_get(agent_raw, "reply_text_to_channel", False)),
         reply_probability_percent=max(0, min(100, int(_get(agent_raw, "reply_probability_percent", 30)))),
         force_reply_keywords=[str(word).strip() for word in keywords if str(word).strip()],
